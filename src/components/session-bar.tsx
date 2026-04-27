@@ -4,13 +4,14 @@ import { formatRoleLabel } from "@/lib/format";
 
 export function SessionBar({ activeRole }: { activeRole: UserRole }) {
   return (
-    <section className="panel">
+    <section className="panel session-shell">
       <div className="panel-inner-tight session-bar">
-        <div className="stack-tight">
-          <strong>Demo session</strong>
-          <span className="field-note">
-            Role cookie is the only auth layer in this implementation slice.
-          </span>
+        <div className="session-copy">
+          <p className="eyebrow">Demo session</p>
+          <div className="session-meta-inline">
+            <strong>{formatRoleLabel(activeRole)}</strong>
+            <span className="field-note">Cookie auth only in this implementation slice.</span>
+          </div>
         </div>
 
         <div className="session-actions">
