@@ -332,7 +332,7 @@ export function ReviewWorkspace({
                               {segment.speakerLabel}
                             </strong>
                             <span className="field-note">
-                              {segment.id === activeSegmentId ? "Need review" : "Checked"}
+                              {segment.id === activeSegmentId ? "In view" : "Jump point"}
                             </span>
                           </div>
                           <span className="body-copy">
@@ -362,7 +362,7 @@ export function ReviewWorkspace({
                       </p>
                     </div>
                     <span className="badge">
-                      {hasSegments ? "Autosave ready" : "No draft yet"}
+                      {hasSegments ? "Ready to save" : "No draft yet"}
                     </span>
                   </div>
 

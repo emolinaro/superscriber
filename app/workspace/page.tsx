@@ -158,7 +158,10 @@ export default async function WorkspacePage({
               </div>
               <div className="queue-board">
                 {overview.buckets.map((bucket) => (
-                  <article key={bucket.bucket} className="queue-card">
+                  <article
+                    key={bucket.bucket}
+                    className={`queue-card ${bucket.recordings.length === 0 ? "queue-card-empty" : ""}`}
+                  >
                     <div className="status-row">
                       <span className="pill" data-tone={toneForBucket(bucket.bucket)}>
                         {bucket.label}
@@ -168,7 +171,7 @@ export default async function WorkspacePage({
                     <p className="body-copy">{bucket.description}</p>
                     <div className="recording-list">
                       {bucket.recordings.length === 0 ? (
-                        <div className="recording-item">
+                        <div className="recording-item recording-item-empty">
                           <p className="recording-item-title">No items in this state.</p>
                         </div>
                       ) : (

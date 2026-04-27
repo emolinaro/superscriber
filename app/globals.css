@@ -393,12 +393,18 @@ button {
 .queue-board {
   display: grid;
   gap: 16px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  align-items: start;
 }
 
 .queue-card {
   padding: 18px;
   display: grid;
   gap: 12px;
+}
+
+.queue-card-empty {
+  gap: 10px;
 }
 
 .recording-list {
@@ -413,6 +419,11 @@ button {
   border-radius: 16px;
   border: 1px solid rgba(20, 36, 33, 0.08);
   background: rgba(255, 255, 255, 0.78);
+}
+
+.recording-item-empty {
+  padding: 10px 12px;
+  background: rgba(255, 255, 255, 0.52);
 }
 
 .recording-item:hover {
@@ -1101,6 +1112,7 @@ button {
   .review-layout,
   .review-grid,
   .review-summary-grid,
+  .queue-board,
   .annotation-workspace-shell,
   .annotation-body,
   .metric-grid,
