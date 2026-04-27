@@ -1,0 +1,9 @@
+node_modules
+.next
+.design*
+coverage
+data/media
+*plan*.md
+*design*.md
+
+.gstack/

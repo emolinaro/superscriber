@@ -1,0 +1,53 @@
+# .codexignore
+
+# IDE/editor settings
+.vscode/
+.idea/
+.cursor/
+
+# Dependencies (often massive)
+node_modules/
+vendor/
+.venv/
+__pycache__/
+
+# Build outputs
+dist/
+build/
+.next/
+out/
+
+# Large binary files
+*.jpg
+*.png
+*.gif
+*.pdf
+*.zip
+*.tar.gz
+
+# Generated files
+*.min.js
+*.min.css
+*.map
+package-lock.json
+yarn.lock
+pnpm-lock.yaml
+
+# Test coverage
+coverage/
+.nyc_output/
+
+# Large data files
+*.csv
+*.json
+*.sqlite
+*.db
+data/
+fixtures/
+
+# Secrets/credentials
+.env
+*.key
+*.pem
+
+

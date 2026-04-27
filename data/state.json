@@ -1,0 +1,341 @@
+{
+  "workspaces": [
+    {
+      "id": "workspace-regulated",
+      "name": "Regulated Review Workspace",
+      "slug": "regulated-review-workspace",
+      "policyProfileId": "strict"
+    }
+  ],
+  "policyProfiles": [
+    {
+      "id": "strict",
+      "label": "Strict regulated mode",
+      "description": "Raw media never downloads. Approved exports stay policy-gated."
+    },
+    {
+      "id": "reviewable-approved-export",
+      "label": "Approved export mode",
+      "description": "Approved transcripts may be exported by reviewers and approvers. Raw media remains server-bound."
+    }
+  ],
+  "recordings": [
+    {
+      "id": "rec-seed-review",
+      "workspaceId": "workspace-regulated",
+      "title": "Seeded needs-review item",
+      "source": "upload",
+      "mediaKind": "audio",
+      "mimeType": null,
+      "mediaPath": null,
+      "originalFileName": null,
+      "languageHint": "english",
+      "uploadedByRole": "uploader",
+      "integrityState": "verified",
+      "transcriptJobState": "completed",
+      "currentRevisionId": "rev-seed-draft",
+      "approvedRevisionId": null,
+      "pendingRevisionId": null,
+      "verificationSummary": "Seed item verified. No source media shipped in local demo.",
+      "createdAt": "2026-04-26T17:51:36.911Z",
+      "updatedAt": "2026-04-26T17:51:36.911Z",
+      "automationCursor": null,
+      "ingestionSessionId": "ingest-bootstrap-rec-seed-review",
+      "transcriptJobId": "job-bootstrap-rec-seed-review"
+    },
+    {
+      "id": "rec-seed-approval",
+      "workspaceId": "workspace-regulated",
+      "title": "Seeded pending-approval item",
+      "source": "record",
+      "mediaKind": "audio",
+      "mimeType": null,
+      "mediaPath": null,
+      "originalFileName": null,
+      "languageHint": "english",
+      "uploadedByRole": "uploader",
+      "integrityState": "verified",
+      "transcriptJobState": "completed",
+      "currentRevisionId": "rev-seed-pending",
+      "approvedRevisionId": null,
+      "pendingRevisionId": "rev-seed-pending",
+      "verificationSummary": "Seed item verified and awaiting approver decision.",
+      "createdAt": "2026-04-26T17:51:36.911Z",
+      "updatedAt": "2026-04-26T17:51:36.911Z",
+      "automationCursor": null,
+      "ingestionSessionId": "ingest-bootstrap-rec-seed-approval",
+      "transcriptJobId": "job-bootstrap-rec-seed-approval"
+    },
+    {
+      "id": "rec-seed-running",
+      "workspaceId": "workspace-regulated",
+      "title": "Seeded in-flight transcription",
+      "source": "upload",
+      "mediaKind": "audio",
+      "mimeType": null,
+      "mediaPath": null,
+      "originalFileName": null,
+      "languageHint": "english",
+      "uploadedByRole": "uploader",
+      "integrityState": "verified",
+      "transcriptJobState": "completed",
+      "currentRevisionId": "rev-5a6e2477-56aa-41b9-84b3-526109917521",
+      "approvedRevisionId": null,
+      "pendingRevisionId": null,
+      "verificationSummary": "Transcription started by the mock adapter.",
+      "createdAt": "2026-04-26T17:51:36.911Z",
+      "updatedAt": "2026-04-26T17:51:36.914Z",
+      "automationCursor": null,
+      "ingestionSessionId": "ingest-bootstrap-rec-seed-running",
+      "transcriptJobId": "job-bootstrap-rec-seed-running"
+    }
+  ],
+  "revisions": [
+    {
+      "id": "rev-seed-draft",
+      "recordingId": "rec-seed-review",
+      "version": 1,
+      "state": "draft",
+      "basedOnRevisionId": null,
+      "createdByRole": "system",
+      "createdAt": "2026-04-26T17:51:36.911Z",
+      "submittedAt": null,
+      "approvedAt": null,
+      "summary": "Seeded draft for reviewer handoff.",
+      "segments": [
+        {
+          "id": "seg-1",
+          "speakerLabel": "Speaker A",
+          "startMs": 0,
+          "endMs": 12000,
+          "text": "This seeded transcript is ready for review in the browser.",
+          "confidence": 0.94
+        },
+        {
+          "id": "seg-2",
+          "speakerLabel": "Speaker B",
+          "startMs": 12000,
+          "endMs": 24000,
+          "text": "No local download is required to edit or approve it.",
+          "confidence": 0.92
+        }
+      ]
+    },
+    {
+      "id": "rev-seed-pending",
+      "recordingId": "rec-seed-approval",
+      "version": 2,
+      "state": "pending_approval",
+      "basedOnRevisionId": null,
+      "createdByRole": "reviewer",
+      "createdAt": "2026-04-26T17:51:36.911Z",
+      "submittedAt": "2026-04-26T17:51:36.911Z",
+      "approvedAt": null,
+      "summary": "Awaiting approver sign-off.",
+      "segments": [
+        {
+          "id": "seg-3",
+          "speakerLabel": "Speaker A",
+          "startMs": 0,
+          "endMs": 15000,
+          "text": "This item demonstrates the approval queue.",
+          "confidence": 0.91
+        },
+        {
+          "id": "seg-4",
+          "speakerLabel": "Speaker B",
+          "startMs": 15000,
+          "endMs": 29000,
+          "text": "Approvers can lock the record and govern transcript export.",
+          "confidence": 0.89
+        }
+      ]
+    },
+    {
+      "id": "rev-5a6e2477-56aa-41b9-84b3-526109917521",
+      "recordingId": "rec-seed-running",
+      "version": 1,
+      "state": "draft",
+      "basedOnRevisionId": null,
+      "createdByRole": "system",
+      "createdAt": "2026-04-26T17:51:36.914Z",
+      "submittedAt": null,
+      "approvedAt": null,
+      "summary": "Initial server-side transcription draft.",
+      "segments": [
+        {
+          "id": "rec-seed-running-segment-1",
+          "speakerLabel": "Speaker A",
+          "startMs": 0,
+          "endMs": 15000,
+          "text": "Thank you for taking the time to speak with us today.",
+          "confidence": 0.93
+        },
+        {
+          "id": "rec-seed-running-segment-2",
+          "speakerLabel": "Speaker B",
+          "startMs": 17000,
+          "endMs": 32000,
+          "text": "The main concern raised in this interview is the time required to coordinate follow-up actions.",
+          "confidence": 0.93
+        },
+        {
+          "id": "rec-seed-running-segment-3",
+          "speakerLabel": "Speaker A",
+          "startMs": 34000,
+          "endMs": 49000,
+          "text": "We also need to protect the identifiers mentioned during the conversation.",
+          "confidence": 0.86
+        },
+        {
+          "id": "rec-seed-running-segment-4",
+          "speakerLabel": "Speaker B",
+          "startMs": 51000,
+          "endMs": 66000,
+          "text": "Please confirm the next review step before this transcript is approved.",
+          "confidence": 0.93
+        }
+      ]
+    }
+  ],
+  "approvals": [
+    {
+      "id": "approval-cdbd5df2-c46a-468e-8b99-00af710b4418",
+      "recordingId": "rec-seed-approval",
+      "revisionId": "rev-seed-pending",
+      "state": "pending",
+      "actorRole": "reviewer",
+      "createdAt": "2026-04-26T17:51:36.911Z",
+      "note": "Awaiting approver review."
+    }
+  ],
+  "auditEvents": [
+    {
+      "workspaceId": "workspace-regulated",
+      "recordingId": "rec-seed-running",
+      "actorRole": "system",
+      "type": "transcription.completed",
+      "detail": "Mock transcription adapter produced a draft revision.",
+      "id": "audit-9a1fee54-36a4-4e12-a2ac-ce52f82897c0",
+      "createdAt": "2026-04-26T17:51:36.914Z"
+    },
+    {
+      "id": "audit-65dd21f2-20ea-471c-bed8-427638aa1caa",
+      "workspaceId": "workspace-regulated",
+      "recordingId": "rec-seed-review",
+      "actorRole": "system",
+      "type": "transcription.completed",
+      "detail": "Seeded review item materialized for browser editing.",
+      "createdAt": "2026-04-26T17:51:36.911Z"
+    },
+    {
+      "id": "audit-20975d7f-ff8d-45c3-bd71-052ccf501528",
+      "workspaceId": "workspace-regulated",
+      "recordingId": "rec-seed-approval",
+      "actorRole": "reviewer",
+      "type": "revision.submitted",
+      "detail": "Seeded approval item submitted.",
+      "createdAt": "2026-04-26T17:51:36.911Z"
+    }
+  ],
+  "ingestionSessions": [
+    {
+      "id": "ingest-bootstrap-rec-seed-running",
+      "recordingId": "rec-seed-running",
+      "source": "upload",
+      "state": "verified",
+      "adapter": "mock-governed-engine",
+      "createdAt": "2026-04-26T17:51:36.911Z",
+      "updatedAt": "2026-04-26T17:51:36.914Z",
+      "startedAt": "2026-04-26T17:51:36.911Z",
+      "verifiedAt": "2026-04-26T17:51:36.914Z",
+      "lastError": null,
+      "verificationSummary": "Transcription started by the mock adapter.",
+      "resumeToken": "resume-bootstrap-rec-seed-running",
+      "bytesReceived": null,
+      "bytesExpected": null
+    },
+    {
+      "id": "ingest-bootstrap-rec-seed-approval",
+      "recordingId": "rec-seed-approval",
+      "source": "record",
+      "state": "verified",
+      "adapter": "mock-governed-engine",
+      "createdAt": "2026-04-26T17:51:36.911Z",
+      "updatedAt": "2026-04-26T17:51:36.911Z",
+      "startedAt": "2026-04-26T17:51:36.911Z",
+      "verifiedAt": "2026-04-26T17:51:36.911Z",
+      "lastError": null,
+      "verificationSummary": "Seed item verified and awaiting approver decision.",
+      "resumeToken": "resume-bootstrap-rec-seed-approval",
+      "bytesReceived": null,
+      "bytesExpected": null
+    },
+    {
+      "id": "ingest-bootstrap-rec-seed-review",
+      "recordingId": "rec-seed-review",
+      "source": "upload",
+      "state": "verified",
+      "adapter": "mock-governed-engine",
+      "createdAt": "2026-04-26T17:51:36.911Z",
+      "updatedAt": "2026-04-26T17:51:36.911Z",
+      "startedAt": "2026-04-26T17:51:36.911Z",
+      "verifiedAt": "2026-04-26T17:51:36.911Z",
+      "lastError": null,
+      "verificationSummary": "Seed item verified. No source media shipped in local demo.",
+      "resumeToken": null,
+      "bytesReceived": null,
+      "bytesExpected": null
+    }
+  ],
+  "transcriptJobs": [
+    {
+      "id": "job-bootstrap-rec-seed-running",
+      "recordingId": "rec-seed-running",
+      "state": "completed",
+      "adapter": "mock-governed-engine",
+      "createdAt": "2026-04-26T17:51:36.911Z",
+      "updatedAt": "2026-04-26T17:51:36.914Z",
+      "startedAt": "2026-04-26T17:51:36.914Z",
+      "completedAt": "2026-04-26T17:51:36.914Z",
+      "lastHeartbeatAt": null,
+      "etaSeconds": 0,
+      "progressPercent": 100,
+      "outputRevisionId": "rev-5a6e2477-56aa-41b9-84b3-526109917521",
+      "lastError": null,
+      "diarizationStatus": "available"
+    },
+    {
+      "id": "job-bootstrap-rec-seed-approval",
+      "recordingId": "rec-seed-approval",
+      "state": "completed",
+      "adapter": "mock-governed-engine",
+      "createdAt": "2026-04-26T17:51:36.911Z",
+      "updatedAt": "2026-04-26T17:51:36.911Z",
+      "startedAt": "2026-04-26T17:51:36.911Z",
+      "completedAt": "2026-04-26T17:51:36.911Z",
+      "lastHeartbeatAt": null,
+      "etaSeconds": 0,
+      "progressPercent": 100,
+      "outputRevisionId": "rev-seed-pending",
+      "lastError": null,
+      "diarizationStatus": "available"
+    },
+    {
+      "id": "job-bootstrap-rec-seed-review",
+      "recordingId": "rec-seed-review",
+      "state": "completed",
+      "adapter": "mock-governed-engine",
+      "createdAt": "2026-04-26T17:51:36.911Z",
+      "updatedAt": "2026-04-27T07:22:13.136Z",
+      "startedAt": "2026-04-26T17:51:36.911Z",
+      "completedAt": "2026-04-27T07:22:13.136Z",
+      "lastHeartbeatAt": "2026-04-27T07:22:13.136Z",
+      "etaSeconds": 0,
+      "progressPercent": 100,
+      "outputRevisionId": "rev-seed-draft",
+      "lastError": null,
+      "diarizationStatus": "available"
+    }
+  ]
+}
