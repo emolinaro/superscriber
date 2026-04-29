@@ -461,33 +461,27 @@ export function ReviewWorkspace({
 
             {policyDecision.canApprove && recording.pendingRevisionId ? (
               <div className="review-main-footer">
-                <form action={approveAction}>
-                  <input name="recordingId" type="hidden" value={recording.id} />
-                  <input
-                    name="pendingRevisionId"
-                    type="hidden"
-                    value={recording.pendingRevisionId}
-                  />
-                  <button className="button button-primary" type="submit">
-                    Approve current revision
-                  </button>
-                </form>
+                <input
+                  name="pendingRevisionId"
+                  type="hidden"
+                  value={recording.pendingRevisionId}
+                />
+                <FormButton className="button button-primary" formAction={approveAction}>
+                  Approve current revision
+                </FormButton>
               </div>
             ) : null}
 
             {policyDecision.canReopenApprovedTranscript && recording.approvedRevisionId ? (
               <div className="review-main-footer">
-                <form action={reopenAction}>
-                  <input name="recordingId" type="hidden" value={recording.id} />
-                  <input
-                    name="approvedRevisionId"
-                    type="hidden"
-                    value={recording.approvedRevisionId}
-                  />
-                  <button className="button button-secondary" type="submit">
-                    Reopen approved transcript
-                  </button>
-                </form>
+                <input
+                  name="approvedRevisionId"
+                  type="hidden"
+                  value={recording.approvedRevisionId}
+                />
+                <FormButton className="button button-secondary" formAction={reopenAction}>
+                  Reopen approved transcript
+                </FormButton>
               </div>
             ) : null}
           </div>

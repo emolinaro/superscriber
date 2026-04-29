@@ -1041,10 +1041,6 @@ button {
   border-top: 1px solid rgba(15, 43, 53, 0.08);
 }
 
-.review-main-footer form {
-  display: flex;
-}
-
 .review-main-footer .button {
   min-width: 220px;
 }
@@ -1275,7 +1271,6 @@ button {
     font-size: 0.92rem;
   }
 
-  .review-main-footer form,
   .review-main-footer .button {
     width: 100%;
     min-width: 0;
