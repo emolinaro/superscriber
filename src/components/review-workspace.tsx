@@ -458,39 +458,41 @@ export function ReviewWorkspace({
               matching transcript card. Playback, correction, and approval stay in the
               same browser review job.
             </div>
+
+            {policyDecision.canApprove && recording.pendingRevisionId ? (
+              <div className="review-main-footer">
+                <form action={approveAction}>
+                  <input name="recordingId" type="hidden" value={recording.id} />
+                  <input
+                    name="pendingRevisionId"
+                    type="hidden"
+                    value={recording.pendingRevisionId}
+                  />
+                  <button className="button button-primary" type="submit">
+                    Approve current revision
+                  </button>
+                </form>
+              </div>
+            ) : null}
+
+            {policyDecision.canReopenApprovedTranscript && recording.approvedRevisionId ? (
+              <div className="review-main-footer">
+                <form action={reopenAction}>
+                  <input name="recordingId" type="hidden" value={recording.id} />
+                  <input
+                    name="approvedRevisionId"
+                    type="hidden"
+                    value={recording.approvedRevisionId}
+                  />
+                  <button className="button button-secondary" type="submit">
+                    Reopen approved transcript
+                  </button>
+                </form>
+              </div>
+            ) : null}
           </div>
         </div>
       </form>
-
-      <div className="review-actions review-actions-footer">
-        {policyDecision.canApprove && recording.pendingRevisionId ? (
-          <form action={approveAction}>
-            <input name="recordingId" type="hidden" value={recording.id} />
-            <input
-              name="pendingRevisionId"
-              type="hidden"
-              value={recording.pendingRevisionId}
-            />
-            <button className="button button-primary" type="submit">
-              Approve current revision
-            </button>
-          </form>
-        ) : null}
-
-        {policyDecision.canReopenApprovedTranscript && recording.approvedRevisionId ? (
-          <form action={reopenAction}>
-            <input name="recordingId" type="hidden" value={recording.id} />
-            <input
-              name="approvedRevisionId"
-              type="hidden"
-              value={recording.approvedRevisionId}
-            />
-            <button className="button button-secondary" type="submit">
-              Reopen approved transcript
-            </button>
-          </form>
-        ) : null}
-      </div>
     </div>
   );
 }

@@ -1032,8 +1032,21 @@ button {
   justify-content: flex-start;
 }
 
-.review-actions-footer {
+.review-main-footer {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 12px;
   padding-top: 6px;
+  border-top: 1px solid rgba(15, 43, 53, 0.08);
+}
+
+.review-main-footer form {
+  display: flex;
+}
+
+.review-main-footer .button {
+  min-width: 220px;
 }
 
 .annotation-assist-note {
@@ -1260,5 +1273,11 @@ button {
     min-height: 46px;
     padding: 8px 10px;
     font-size: 0.92rem;
+  }
+
+  .review-main-footer form,
+  .review-main-footer .button {
+    width: 100%;
+    min-width: 0;
   }
 }
