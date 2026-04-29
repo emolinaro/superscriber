@@ -190,71 +190,6 @@ export default async function WorkspacePage({
               </div>
             </section>
           )}
-
-          <section className="panel">
-            <div className="panel-inner stack">
-              <div className="stack-tight">
-                <p className="eyebrow">Queue board</p>
-                <h2 className="section-title">One workflow, six clear states.</h2>
-              </div>
-              <div className="queue-board">
-                {overview.buckets.map((bucket) => (
-                  <article
-                    key={bucket.bucket}
-                    className={`queue-card ${bucket.recordings.length === 0 ? "queue-card-empty" : ""}`}
-                  >
-                    <div className="status-row">
-                      <span className="pill" data-tone={toneForBucket(bucket.bucket)}>
-                        {bucket.label}
-                      </span>
-                      <span className="badge">{bucket.recordings.length} items</span>
-                    </div>
-                    <p className="body-copy">{bucket.description}</p>
-                    <div className="recording-list">
-                      {bucket.recordings.length === 0 ? (
-                        <div className="recording-item recording-item-empty">
-                          <p className="recording-item-title">No items in this state.</p>
-                        </div>
-                      ) : (
-                        bucket.recordings.map((recording) => (
-                          <Link
-                            key={recording.id}
-                            href={`/recordings/${recording.id}`}
-                            className="recording-item"
-                          >
-                            <div className="status-row">
-                              <p className="recording-item-title">{recording.title}</p>
-                              <span className="badge">{recording.mediaKind}</span>
-                            </div>
-                            <div className="recording-item-meta">
-                              <span>{recording.source}</span>
-                              <span>{recording.languageHint}</span>
-                              <span>{formatDateTime(recording.updatedAt)}</span>
-                            </div>
-                            {overview.assignmentsByRecordingId.get(recording.id)?.length ? (
-                              <div className="meta-row">
-                                {overview.assignmentsByRecordingId
-                                  .get(recording.id)
-                                  ?.slice(0, 3)
-                                  .map((assignment) => (
-                                    <span className="badge" key={assignment.id}>
-                                      {assignment.userDisplayName}
-                                    </span>
-                                  ))}
-                              </div>
-                            ) : null}
-                            {recording.verificationSummary ? (
-                              <p className="body-copy">{recording.verificationSummary}</p>
-                            ) : null}
-                          </Link>
-                        ))
-                      )}
-                    </div>
-                  </article>
-                ))}
-              </div>
-            </div>
-          </section>
         </div>
 
         <div className="stack">
@@ -325,19 +260,85 @@ export default async function WorkspacePage({
             </div>
           </section>
 
-          {role === "admin" ? (
-            <AdminControlPanel
-              assignments={assignmentRows}
-              assignableUsers={assignableUsers}
-              recordings={overview.visibleRecordings.map((recording) => ({
-                id: recording.id,
-                title: recording.title,
-              }))}
-              users={directory}
-            />
-          ) : null}
         </div>
       </section>
+
+      <section className="panel">
+        <div className="panel-inner stack">
+          <div className="stack-tight">
+            <p className="eyebrow">Queue board</p>
+            <h2 className="section-title">One workflow, six clear states.</h2>
+          </div>
+          <div className="queue-board">
+            {overview.buckets.map((bucket) => (
+              <article
+                key={bucket.bucket}
+                className={`queue-card ${bucket.recordings.length === 0 ? "queue-card-empty" : ""}`}
+              >
+                <div className="status-row">
+                  <span className="pill" data-tone={toneForBucket(bucket.bucket)}>
+                    {bucket.label}
+                  </span>
+                  <span className="badge">{bucket.recordings.length} items</span>
+                </div>
+                <p className="body-copy">{bucket.description}</p>
+                <div className="recording-list">
+                  {bucket.recordings.length === 0 ? (
+                    <div className="recording-item recording-item-empty">
+                      <p className="recording-item-title">No items in this state.</p>
+                    </div>
+                  ) : (
+                    bucket.recordings.map((recording) => (
+                      <Link
+                        key={recording.id}
+                        href={`/recordings/${recording.id}`}
+                        className="recording-item"
+                      >
+                        <div className="status-row">
+                          <p className="recording-item-title">{recording.title}</p>
+                          <span className="badge">{recording.mediaKind}</span>
+                        </div>
+                        <div className="recording-item-meta">
+                          <span>{recording.source}</span>
+                          <span>{recording.languageHint}</span>
+                          <span>{formatDateTime(recording.updatedAt)}</span>
+                        </div>
+                        {overview.assignmentsByRecordingId.get(recording.id)?.length ? (
+                          <div className="meta-row">
+                            {overview.assignmentsByRecordingId
+                              .get(recording.id)
+                              ?.slice(0, 3)
+                              .map((assignment) => (
+                                <span className="badge" key={assignment.id}>
+                                  {assignment.userDisplayName}
+                                </span>
+                              ))}
+                          </div>
+                        ) : null}
+                        {recording.verificationSummary ? (
+                          <p className="body-copy">{recording.verificationSummary}</p>
+                        ) : null}
+                      </Link>
+                    ))
+                  )}
+                </div>
+              </article>
+            ))}
+          </div>
+        </div>
+      </section>
+
+      {role === "admin" ? (
+        <AdminControlPanel
+          assignments={assignmentRows}
+          assignableUsers={assignableUsers}
+          recordings={overview.visibleRecordings.map((recording) => ({
+            id: recording.id,
+            title: recording.title,
+          }))}
+          users={directory}
+        />
+      ) : null}
     </main>
   );
 }
