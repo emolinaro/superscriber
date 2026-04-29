@@ -56,7 +56,7 @@ export default async function LandingPage({
   const reason = firstValue(params.reason);
 
   return (
-    <main className="shell">
+    <main className="shell shell-auth">
       <div className="hero-grid">
         <section className="panel panel-dark">
           <div className="panel-inner stack">
