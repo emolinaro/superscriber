@@ -1,8 +1,9 @@
-import { basename, extname, join } from "node:path";
-import { mkdirSync, statSync, writeFileSync, existsSync } from "node:fs";
+import { basename } from "node:path";
+import { statSync, existsSync } from "node:fs";
 import {
   AuditEvent,
   IngestionSession,
+  Principal,
   Recording,
   TranscriptJob,
   TranscriptRevision,
@@ -10,15 +11,16 @@ import {
   Workspace,
   WorkspaceBucket,
 } from "@/domain/models";
-import { bucketRecording, createRecordingEntry, saveDraftRevision, submitRevision, approveRevision, reopenApprovedRevision } from "@/domain/workflow";
+import { bucketRecording, saveDraftRevision, submitRevision, approveRevision, reopenApprovedRevision } from "@/domain/workflow";
 import { describePolicyProfile, evaluatePolicy } from "@/domain/policy";
-import { getConfiguredAdapterId } from "@/server/orchestration/config";
+import {
+  assignmentMapByRecordingId,
+  canAccessRecording,
+  visibleRecordingIdsForPrincipal,
+  type AssignmentSummary,
+} from "@/server/access/service";
 import { noteOrchestrationDispatchFailure } from "@/server/orchestration/service";
-import { MEDIA_DIR, readState, withState } from "@/server/store";
-
-function mediaKindForMime(mimeType: string | null): Recording["mediaKind"] {
-  return mimeType?.startsWith("video/") ? "video" : "audio";
-}
+import { readSynchronizedState, withState } from "@/server/store";
 
 function fileSafeName(name: string) {
   return basename(name).replace(/[^a-zA-Z0-9._-]/g, "-");
@@ -62,6 +64,9 @@ export type WorkspaceOverview = {
   workspace: Workspace;
   policySummary: string;
   policyDecision: ReturnType<typeof evaluatePolicy>;
+  visibleRecordings: Recording[];
+  nextAssignedRecording: Recording | null;
+  assignmentsByRecordingId: Map<string, AssignmentSummary[]>;
   buckets: Array<{
     bucket: WorkspaceBucket;
     label: string;
@@ -100,12 +105,32 @@ const BUCKET_META: Record<
   },
 };
 
-export function listWorkspaceOverview(role: UserRole): WorkspaceOverview {
-  const state = readState();
-  const workspace = state.workspaces[0];
-  const policyDecision = evaluatePolicy(workspace.policyProfileId, role);
+function preferredBucketForRole(role: UserRole) {
+  if (role === "reviewer") {
+    return "needs_review" satisfies WorkspaceBucket;
+  }
 
-  const grouped = state.recordings.reduce<Record<WorkspaceBucket, Recording[]>>(
+  if (role === "approver") {
+    return "pending_approval" satisfies WorkspaceBucket;
+  }
+
+  return null;
+}
+
+export function listWorkspaceOverview(principal: Principal): WorkspaceOverview {
+  const state = readSynchronizedState();
+  const workspace = state.workspaces[0];
+  const policyDecision = evaluatePolicy(workspace.policyProfileId, principal.role);
+  const visibleIds = visibleRecordingIdsForPrincipal(principal);
+  const visibleRecordings =
+    visibleIds === null
+      ? state.recordings
+      : state.recordings.filter((recording) => visibleIds.has(recording.id));
+  const assignmentsByRecordingId = assignmentMapByRecordingId(
+    visibleRecordings.map((recording) => recording.id),
+  );
+
+  const grouped = visibleRecordings.reduce<Record<WorkspaceBucket, Recording[]>>(
     (accumulator, recording) => {
       const bucket = bucketRecording(recording);
       accumulator[bucket].push(recording);
@@ -121,10 +146,19 @@ export function listWorkspaceOverview(role: UserRole): WorkspaceOverview {
     },
   );
 
+  const preferredBucket = preferredBucketForRole(principal.role);
+  const nextAssignedRecording =
+    (preferredBucket ? grouped[preferredBucket][0] : null) ??
+    visibleRecordings[0] ??
+    null;
+
   return {
     workspace,
     policySummary: describePolicyProfile(workspace.policyProfileId),
     policyDecision,
+    visibleRecordings,
+    nextAssignedRecording,
+    assignmentsByRecordingId,
     buckets: Object.entries(BUCKET_META).map(([bucket, meta]) => ({
       bucket: bucket as WorkspaceBucket,
       label: meta.label,
@@ -138,7 +172,7 @@ export function getRecordingDetail(
   recordingId: string,
   role: UserRole,
 ): RecordingDetail | null {
-  const state = readState();
+  const state = readSynchronizedState();
   const recording = state.recordings.find((entry) => entry.id === recordingId);
   if (!recording) {
     return null;
@@ -177,36 +211,6 @@ export function getRecordingDetail(
   };
 }
 
-export async function createRecordingFromFile(params: {
-  file: File;
-  title: string;
-  role: UserRole;
-  languageHint: string;
-  source: Recording["source"];
-}) {
-  const buffer = Buffer.from(await params.file.arrayBuffer());
-  const safeName = `${crypto.randomUUID()}${extname(params.file.name || ".bin")}`;
-  mkdirSync(MEDIA_DIR, { recursive: true });
-  const mediaPath = join(MEDIA_DIR, safeName);
-  writeFileSync(mediaPath, buffer);
-
-  return withState((state) =>
-    createRecordingEntry({
-      state,
-      workspaceId: state.workspaces[0].id,
-      title: params.title.trim() || params.file.name || "Untitled recording",
-      source: params.source,
-      mediaKind: mediaKindForMime(params.file.type || null),
-      mimeType: params.file.type || null,
-      mediaPath,
-      originalFileName: params.file.name ? fileSafeName(params.file.name) : null,
-      languageHint: params.languageHint || "english",
-      role: params.role,
-      adapterId: getConfiguredAdapterId(),
-    }),
-  );
-}
-
 export function noteRecordingDispatchFailure(params: {
   recordingId: string;
   detail: string;
@@ -219,6 +223,7 @@ export function noteRecordingDispatchFailure(params: {
 export function saveRecordingDraft(params: {
   recordingId: string;
   role: UserRole;
+  expectedCurrentRevisionId: string;
   segments: TranscriptRevision["segments"];
   summary: string;
 }) {
@@ -227,18 +232,24 @@ export function saveRecordingDraft(params: {
       state,
       recordingId: params.recordingId,
       role: params.role,
+      expectedCurrentRevisionId: params.expectedCurrentRevisionId,
       segments: params.segments,
       summary: params.summary,
     }),
   );
 }
 
-export function submitRecording(params: { recordingId: string; role: UserRole }) {
+export function submitRecording(params: {
+  recordingId: string;
+  role: UserRole;
+  expectedCurrentRevisionId: string;
+}) {
   return withState((state) =>
     submitRevision({
       state,
       recordingId: params.recordingId,
       role: params.role,
+      expectedCurrentRevisionId: params.expectedCurrentRevisionId,
     }),
   );
 }
@@ -246,12 +257,14 @@ export function submitRecording(params: { recordingId: string; role: UserRole })
 export function approveRecordingRevision(params: {
   recordingId: string;
   role: UserRole;
+  expectedPendingRevisionId: string;
 }) {
   return withState((state) =>
     approveRevision({
       state,
       recordingId: params.recordingId,
       role: params.role,
+      expectedPendingRevisionId: params.expectedPendingRevisionId,
     }),
   );
 }
@@ -259,12 +272,14 @@ export function approveRecordingRevision(params: {
 export function reopenRecordingRevision(params: {
   recordingId: string;
   role: UserRole;
+  expectedApprovedRevisionId: string;
 }) {
   return withState((state) =>
     reopenApprovedRevision({
       state,
       recordingId: params.recordingId,
       role: params.role,
+      expectedApprovedRevisionId: params.expectedApprovedRevisionId,
     }),
   );
 }
@@ -298,6 +313,18 @@ export function resolveMedia(recordingId: string, role: UserRole) {
     size: stats.size,
     mimeType: detail.recording.mimeType ?? "application/octet-stream",
   };
+}
+
+export function resolveMediaForPrincipal(recordingId: string, principal: Principal) {
+  const access = canAccessRecording(principal, recordingId);
+  if (!access.allowed) {
+    return {
+      denied: true as const,
+      reason: access.reason,
+    };
+  }
+
+  return resolveMedia(recordingId, principal.role);
 }
 
 export function resolveApprovedTranscriptExport(
@@ -337,4 +364,19 @@ export function resolveApprovedTranscriptExport(
     fileName: `${safeBase || "transcript"}-approved-v${approvedRevision.version}.txt`,
     content: formatTranscriptExport(detail.recording, approvedRevision),
   };
+}
+
+export function resolveApprovedTranscriptExportForPrincipal(
+  recordingId: string,
+  principal: Principal,
+) {
+  const access = canAccessRecording(principal, recordingId);
+  if (!access.allowed) {
+    return {
+      denied: true as const,
+      reason: access.reason,
+    };
+  }
+
+  return resolveApprovedTranscriptExport(recordingId, principal.role);
 }

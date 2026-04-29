@@ -1,4 +1,6 @@
-export type OrchestrationMode = "mock" | "webhook";
+import { resolveEngineSharedSecret } from "@/server/orchestration/secret";
+
+export type OrchestrationMode = "mock" | "internal" | "webhook";
 
 export type OrchestrationConfig = {
   mode: OrchestrationMode;
@@ -9,7 +11,11 @@ export type OrchestrationConfig = {
 };
 
 function normalizeMode(raw: string | undefined): OrchestrationMode {
-  return raw === "webhook" ? "webhook" : "mock";
+  if (raw === "mock" || raw === "webhook") {
+    return raw;
+  }
+
+  return "internal";
 }
 
 function normalizeUrl(raw: string | undefined) {
@@ -30,7 +36,7 @@ export function getOrchestrationConfig(): OrchestrationConfig {
     mode: normalizeMode(process.env.SUPERSCRIBER_ENGINE_MODE),
     externalDispatchUrl: normalizeUrl(process.env.SUPERSCRIBER_ENGINE_DISPATCH_URL),
     appBaseUrl: normalizeUrl(process.env.SUPERSCRIBER_APP_BASE_URL),
-    sharedSecret: process.env.SUPERSCRIBER_ENGINE_SHARED_SECRET ?? null,
+    sharedSecret: resolveEngineSharedSecret(),
     dispatchTimeoutMs:
       Number.isFinite(dispatchTimeoutMs) && dispatchTimeoutMs > 0
         ? dispatchTimeoutMs
@@ -39,7 +45,13 @@ export function getOrchestrationConfig(): OrchestrationConfig {
 }
 
 export function getConfiguredAdapterId() {
-  return getOrchestrationConfig().mode === "webhook"
-    ? "external-webhook-engine"
-    : "mock-governed-engine";
+  const mode = getOrchestrationConfig().mode;
+  if (mode === "webhook") {
+    return "external-webhook-engine";
+  }
+  if (mode === "mock") {
+    return "mock-governed-engine";
+  }
+
+  return "internal-python-worker";
 }

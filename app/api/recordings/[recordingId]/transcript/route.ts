@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
-import { resolveApprovedTranscriptExport } from "@/server/repository";
-import { getActiveRole } from "@/server/session";
+import { resolveApprovedTranscriptExportForPrincipal } from "@/server/repository";
+import { getActivePrincipal } from "@/server/session";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -11,13 +11,13 @@ export async function GET(
   _request: Request,
   context: { params: Params },
 ) {
-  const role = await getActiveRole();
-  if (!role) {
+  const principal = await getActivePrincipal();
+  if (!principal) {
     return new NextResponse("Unauthorized", { status: 401 });
   }
 
   const { recordingId } = await context.params;
-  const exportResult = resolveApprovedTranscriptExport(recordingId, role);
+  const exportResult = resolveApprovedTranscriptExportForPrincipal(recordingId, principal);
   if (!exportResult) {
     return new NextResponse("Not found", { status: 404 });
   }

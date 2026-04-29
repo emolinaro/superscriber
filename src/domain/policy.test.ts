@@ -2,6 +2,13 @@ import { describe, expect, it } from "vitest";
 import { evaluatePolicy } from "@/domain/policy";
 
 describe("evaluatePolicy", () => {
+  it("keeps raw media playback out of uploader-only hands", () => {
+    expect(evaluatePolicy("strict", "uploader").canViewMedia).toBe(false);
+    expect(evaluatePolicy("strict", "reviewer").canViewMedia).toBe(true);
+    expect(evaluatePolicy("strict", "approver").canViewMedia).toBe(true);
+    expect(evaluatePolicy("strict", "admin").canViewMedia).toBe(true);
+  });
+
   it("blocks raw media download for every role", () => {
     expect(evaluatePolicy("strict", "uploader").canDownloadRawMedia).toBe(false);
     expect(evaluatePolicy("strict", "reviewer").canDownloadRawMedia).toBe(false);

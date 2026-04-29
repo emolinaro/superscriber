@@ -2,20 +2,27 @@
 
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
+import { isRedirectError } from "next/dist/client/components/redirect-error";
 import { TranscriptSegment, USER_ROLES, UserRole } from "@/domain/models";
+import { type BootstrapFormState } from "@/lib/auth-forms";
 import {
   approveRecordingRevision,
-  createRecordingFromFile,
   reopenRecordingRevision,
   saveRecordingDraft,
   submitRecording,
 } from "@/server/repository";
-import { dispatchRecordingToConfiguredEngine } from "@/server/orchestration/dispatch";
 import {
-  clearActiveRole,
-  requireActiveRole,
-  setActiveRole,
-} from "@/server/session";
+  assignRecordingToUser,
+  canAccessRecording,
+  removeRecordingAssignment,
+} from "@/server/access/service";
+import {
+  createBootstrapAdmin as createBootstrapAdminAccount,
+  createLocalUser,
+  hasAnyUsers,
+} from "@/server/auth/service";
+import { bootstrapAdminSchema, localUserSchema } from "@/server/auth/validation";
+import { requireActivePrincipal } from "@/server/session";
 
 function asString(
   formData: FormData,
@@ -49,9 +56,10 @@ function redirectWithMessage(
   redirect(buildPath(pathname, messages));
 }
 
-function parseRole(formData: FormData) {
-  const role = asString(formData, "role");
-  return USER_ROLES.includes(role as UserRole) ? (role as UserRole) : null;
+function rethrowIfRedirect(error: unknown) {
+  if (isRedirectError(error)) {
+    throw error;
+  }
 }
 
 function parseSegmentsJson(formData: FormData) {
@@ -95,103 +103,208 @@ function parseSegmentsJson(formData: FormData) {
   });
 }
 
-function assertCanIngest(role: UserRole) {
-  if (role !== "uploader" && role !== "admin") {
-    throw new Error("Only uploader and admin roles can create new recordings.");
+function assertAdminRole(role: UserRole) {
+  if (role !== "admin") {
+    throw new Error("Only admin accounts can manage users and assignments.");
   }
 }
 
-export async function enterWorkspaceAction(formData: FormData) {
-  const role = parseRole(formData);
-  if (!role) {
-    redirectWithMessage("/", { error: "Choose a valid role to enter the workspace." });
+function assertAssignedRecordingAccess(principal: Awaited<ReturnType<typeof requireActivePrincipal>>, recordingId: string) {
+  const access = canAccessRecording(principal, recordingId);
+  if (!access.allowed) {
+    throw new Error(access.reason ?? "This recording is not assigned to your account.");
+  }
+}
+
+function requireFormValue(formData: FormData, key: string, message: string) {
+  const value = asString(formData, key).trim();
+  if (!value) {
+    throw new Error(message);
   }
 
-  await setActiveRole(role);
-  redirect("/workspace");
+  return value;
 }
 
-export async function switchRoleAction(formData: FormData) {
-  const role = parseRole(formData);
-  if (!role) {
-    redirectWithMessage("/workspace", {
-      error: "The requested role is not valid for this demo session.",
-    });
+function parseRole(formData: FormData) {
+  const role = asString(formData, "role");
+  return USER_ROLES.includes(role as UserRole) ? (role as UserRole) : null;
+}
+
+function mapBootstrapFieldErrors(issues: Array<{ path: PropertyKey[]; message: string }>) {
+  const errors: BootstrapFormState["fieldErrors"] = {};
+  for (const issue of issues) {
+    const key = issue.path[0];
+    if (
+      key === "displayName" ||
+      key === "email" ||
+      key === "password" ||
+      key === "confirmPassword"
+    ) {
+      errors[key] = issue.message;
+    }
   }
 
-  await setActiveRole(role);
-  redirect("/workspace");
+  return errors;
 }
 
-export async function logoutAction() {
-  await clearActiveRole();
-  redirect("/");
-}
+export async function createBootstrapAdminAction(
+  _previousState: BootstrapFormState,
+  formData: FormData,
+): Promise<BootstrapFormState> {
+  const values = {
+    displayName: asString(formData, "displayName"),
+    email: asString(formData, "email"),
+  };
 
-export async function ingestRecordingAction(formData: FormData) {
-  const role = await requireActiveRole();
+  if (await hasAnyUsers()) {
+    return {
+      formError: "First-run setup is already complete. Sign in with an existing account.",
+      values,
+    };
+  }
+
+  const parsed = bootstrapAdminSchema.safeParse({
+    displayName: values.displayName,
+    email: values.email,
+    password: asString(formData, "password"),
+    confirmPassword: asString(formData, "confirmPassword"),
+  });
+
+  if (!parsed.success) {
+    return {
+      formError: "Review the highlighted fields and try again.",
+      fieldErrors: mapBootstrapFieldErrors(parsed.error.issues),
+      values,
+    };
+  }
 
   try {
-    assertCanIngest(role);
-
-    const file = formData.get("file");
-    if (!(file instanceof File) || file.size === 0) {
-      throw new Error("Attach or record an audio or video file first.");
-    }
-
-    const source = asString(formData, "source", "upload");
-    const recording = await createRecordingFromFile({
-      file,
-      role,
-      title: asString(formData, "title", file.name || "Untitled recording"),
-      languageHint: asString(formData, "languageHint", "english"),
-      source: source === "record" ? "record" : "upload",
-    });
-
-    let notice =
-      source === "record"
-        ? "Recording received and queued for governed verification."
-        : "Upload received and queued for governed verification.";
-
-    try {
-      const dispatchResult = await dispatchRecordingToConfiguredEngine(recording.id);
-      if (dispatchResult.mode === "webhook" && dispatchResult.dispatched) {
-        notice = `${notice} External engine dispatch succeeded.`;
-      }
-    } catch (error) {
-      revalidatePath("/workspace");
-      revalidatePath(`/recordings/${recording.id}`);
-      redirectWithMessage(`/recordings/${recording.id}`, {
-        error:
-          error instanceof Error
-            ? `Recording stored, but backend dispatch failed: ${error.message}`
-            : "Recording stored, but backend dispatch failed.",
-      });
-    }
-
-    revalidatePath("/workspace");
-    revalidatePath(`/recordings/${recording.id}`);
-    redirectWithMessage(`/recordings/${recording.id}`, {
-      notice,
+    await createBootstrapAdminAccount({
+      displayName: parsed.data.displayName,
+      email: parsed.data.email,
+      password: parsed.data.password,
     });
   } catch (error) {
+    return {
+      formError:
+        error instanceof Error
+          ? error.message
+          : "The first administrator account could not be created.",
+      values,
+    };
+  }
+
+  redirectWithMessage("/", {
+    notice: "bootstrap-complete",
+  });
+}
+
+export async function createUserAction(formData: FormData) {
+  const principal = await requireActivePrincipal();
+
+  try {
+    assertAdminRole(principal.role);
+    const role = parseRole(formData);
+    if (!role) {
+      throw new Error("Choose a valid role for the new account.");
+    }
+
+    const parsed = localUserSchema.parse({
+      displayName: asString(formData, "displayName"),
+      email: asString(formData, "email"),
+      password: asString(formData, "password"),
+      role,
+    });
+
+    await createLocalUser(parsed);
+    revalidatePath("/workspace");
+    redirectWithMessage("/workspace", {
+      notice: `${parsed.displayName} can now sign in as ${parsed.role}.`,
+    });
+  } catch (error) {
+    rethrowIfRedirect(error);
+    redirectWithMessage("/workspace", {
+      error:
+        error instanceof Error ? error.message : "The local account could not be created.",
+    });
+  }
+}
+
+export async function assignRecordingAction(formData: FormData) {
+  const principal = await requireActivePrincipal();
+
+  try {
+    assertAdminRole(principal.role);
+    const recordingId = asString(formData, "recordingId");
+    const userId = asString(formData, "userId");
+    if (!recordingId || !userId) {
+      throw new Error("Choose both a recording and an assigned user.");
+    }
+
+    assignRecordingToUser({
+      recordingId,
+      userId,
+      assignedByUserId: principal.userId,
+    });
+
+    revalidatePath("/workspace");
+    redirectWithMessage("/workspace", {
+      notice: "Recording assignment updated.",
+    });
+  } catch (error) {
+    rethrowIfRedirect(error);
     redirectWithMessage("/workspace", {
       error:
         error instanceof Error
           ? error.message
-          : "The recording could not be ingested.",
+          : "The recording assignment could not be updated.",
+    });
+  }
+}
+
+export async function unassignRecordingAction(formData: FormData) {
+  const principal = await requireActivePrincipal();
+
+  try {
+    assertAdminRole(principal.role);
+    const assignmentId = asString(formData, "assignmentId");
+    if (!assignmentId) {
+      throw new Error("Choose an assignment to remove.");
+    }
+
+    removeRecordingAssignment(assignmentId);
+
+    revalidatePath("/workspace");
+    redirectWithMessage("/workspace", {
+      notice: "Recording assignment removed.",
+    });
+  } catch (error) {
+    rethrowIfRedirect(error);
+    redirectWithMessage("/workspace", {
+      error:
+        error instanceof Error
+          ? error.message
+          : "The recording assignment could not be removed.",
     });
   }
 }
 
 export async function saveDraftAction(formData: FormData) {
-  const role = await requireActiveRole();
+  const principal = await requireActivePrincipal();
+  const role = principal.role;
   const recordingId = asString(formData, "recordingId");
 
   try {
+    const currentRevisionId = requireFormValue(
+      formData,
+      "currentRevisionId",
+      "No draft revision is loaded. Reload this recording and try again.",
+    );
+    assertAssignedRecordingAccess(principal, recordingId);
     saveRecordingDraft({
       recordingId,
       role,
+      expectedCurrentRevisionId: currentRevisionId,
       segments: parseSegmentsJson(formData),
       summary: asString(formData, "summary", "Updated transcript draft."),
     });
@@ -202,6 +315,7 @@ export async function saveDraftAction(formData: FormData) {
       notice: "Draft revision saved server-side.",
     });
   } catch (error) {
+    rethrowIfRedirect(error);
     redirectWithMessage(`/recordings/${recordingId}`, {
       error:
         error instanceof Error ? error.message : "The draft could not be saved.",
@@ -210,27 +324,42 @@ export async function saveDraftAction(formData: FormData) {
 }
 
 export async function submitRevisionAction(formData: FormData) {
-  const role = await requireActiveRole();
+  const principal = await requireActivePrincipal();
+  const role = principal.role;
   const recordingId = asString(formData, "recordingId");
 
   try {
+    const loadedRevisionId = requireFormValue(
+      formData,
+      "currentRevisionId",
+      "No draft revision is loaded. Reload this recording and try again.",
+    );
+    assertAssignedRecordingAccess(principal, recordingId);
     const segments = parseSegmentsJson(formData);
+    let revisionIdToSubmit = loadedRevisionId;
     if (segments.length > 0) {
-      saveRecordingDraft({
+      const savedRevision = saveRecordingDraft({
         recordingId,
         role,
+        expectedCurrentRevisionId: loadedRevisionId,
         segments,
         summary: asString(formData, "summary", "Updated transcript draft."),
       });
+      revisionIdToSubmit = savedRevision.id;
     }
 
-    submitRecording({ recordingId, role });
+    submitRecording({
+      recordingId,
+      role,
+      expectedCurrentRevisionId: revisionIdToSubmit,
+    });
     revalidatePath("/workspace");
     revalidatePath(`/recordings/${recordingId}`);
     redirectWithMessage(`/recordings/${recordingId}`, {
       notice: "Revision submitted for approval.",
     });
   } catch (error) {
+    rethrowIfRedirect(error);
     redirectWithMessage(`/recordings/${recordingId}`, {
       error:
         error instanceof Error
@@ -241,17 +370,29 @@ export async function submitRevisionAction(formData: FormData) {
 }
 
 export async function approveRevisionAction(formData: FormData) {
-  const role = await requireActiveRole();
+  const principal = await requireActivePrincipal();
+  const role = principal.role;
   const recordingId = asString(formData, "recordingId");
 
   try {
-    approveRecordingRevision({ recordingId, role });
+    const pendingRevisionId = requireFormValue(
+      formData,
+      "pendingRevisionId",
+      "No pending revision is loaded. Reload this recording and try again.",
+    );
+    assertAssignedRecordingAccess(principal, recordingId);
+    approveRecordingRevision({
+      recordingId,
+      role,
+      expectedPendingRevisionId: pendingRevisionId,
+    });
     revalidatePath("/workspace");
     revalidatePath(`/recordings/${recordingId}`);
     redirectWithMessage(`/recordings/${recordingId}`, {
       notice: "Transcript approved and locked under policy.",
     });
   } catch (error) {
+    rethrowIfRedirect(error);
     redirectWithMessage(`/recordings/${recordingId}`, {
       error:
         error instanceof Error
@@ -262,17 +403,29 @@ export async function approveRevisionAction(formData: FormData) {
 }
 
 export async function reopenRevisionAction(formData: FormData) {
-  const role = await requireActiveRole();
+  const principal = await requireActivePrincipal();
+  const role = principal.role;
   const recordingId = asString(formData, "recordingId");
 
   try {
-    reopenRecordingRevision({ recordingId, role });
+    const approvedRevisionId = requireFormValue(
+      formData,
+      "approvedRevisionId",
+      "No approved revision is loaded. Reload this recording and try again.",
+    );
+    assertAssignedRecordingAccess(principal, recordingId);
+    reopenRecordingRevision({
+      recordingId,
+      role,
+      expectedApprovedRevisionId: approvedRevisionId,
+    });
     revalidatePath("/workspace");
     revalidatePath(`/recordings/${recordingId}`);
     redirectWithMessage(`/recordings/${recordingId}`, {
       notice: "Approved transcript reopened as a new draft cycle.",
     });
   } catch (error) {
+    rethrowIfRedirect(error);
     redirectWithMessage(`/recordings/${recordingId}`, {
       error:
         error instanceof Error

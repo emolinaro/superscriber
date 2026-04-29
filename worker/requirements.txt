@@ -1,0 +1,2 @@
+# Install this to enable real local transcription in the Python worker.
+faster-whisper>=1.1.0

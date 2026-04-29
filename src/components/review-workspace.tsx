@@ -178,6 +178,7 @@ export function ReviewWorkspace({
 
       <form className="annotation-form">
         <input name="recordingId" type="hidden" value={recording.id} />
+        <input name="currentRevisionId" type="hidden" value={currentRevision?.id ?? ""} />
         <input name="segmentsJson" type="hidden" value={JSON.stringify(segments)} />
 
         <div className="annotation-workspace-shell">
@@ -465,6 +466,11 @@ export function ReviewWorkspace({
         {policyDecision.canApprove && recording.pendingRevisionId ? (
           <form action={approveAction}>
             <input name="recordingId" type="hidden" value={recording.id} />
+            <input
+              name="pendingRevisionId"
+              type="hidden"
+              value={recording.pendingRevisionId}
+            />
             <button className="button button-primary" type="submit">
               Approve current revision
             </button>
@@ -474,6 +480,11 @@ export function ReviewWorkspace({
         {policyDecision.canReopenApprovedTranscript && recording.approvedRevisionId ? (
           <form action={reopenAction}>
             <input name="recordingId" type="hidden" value={recording.id} />
+            <input
+              name="approvedRevisionId"
+              type="hidden"
+              value={recording.approvedRevisionId}
+            />
             <button className="button button-secondary" type="submit">
               Reopen approved transcript
             </button>

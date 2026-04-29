@@ -8,17 +8,33 @@
     "build": "next build",
     "start": "next start",
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "e2e": "playwright test",
+    "e2e:install": "playwright install chromium",
+    "e2e:container": "bash scripts/run-e2e-appliance.sh test",
+    "typecheck": "tsc --noEmit",
+    "worker:check": "python3 -m py_compile worker/main.py worker/prefetch_model.py worker/runtime_support.py",
+    "worker:prefetch": "python3 worker/prefetch_model.py",
+    "worker:python": "python3 worker/main.py"
   },
   "dependencies": {
+    "bcryptjs": "^3.0.3",
+    "better-sqlite3": "^12.9.0",
+    "drizzle-orm": "^0.45.2",
     "next": "^16.2.4",
+    "next-auth": "^4.24.14",
     "react": "^19.2.5",
-    "react-dom": "^19.2.5"
+    "react-dom": "^19.2.5",
+    "zod": "^4.3.6"
   },
   "devDependencies": {
+    "@playwright/test": "^1.59.1",
+    "@types/better-sqlite3": "^7.6.13",
     "@types/node": "^25.6.0",
     "@types/react": "^19.2.14",
     "@types/react-dom": "^19.2.3",
+    "drizzle-kit": "^0.31.10",
+    "tsx": "^4.21.0",
     "typescript": "^6.0.3",
     "vitest": "^3.2.4"
   }

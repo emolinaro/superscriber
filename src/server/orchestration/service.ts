@@ -110,6 +110,11 @@ function bootstrapTranscriptJob(recording: Recording): TranscriptJob {
     recordingId: recording.id,
     state: recording.transcriptJobState,
     adapter: "mock-governed-engine",
+    claimedByWorkerId: null,
+    attemptCount:
+      recording.transcriptJobState === "completed" || recording.transcriptJobState === "failed"
+        ? 1
+        : 0,
     createdAt: recording.createdAt,
     updatedAt: recording.updatedAt,
     startedAt:
@@ -281,6 +286,7 @@ export function synchronizeOrchestration(
     const previousState = job.state;
     job.state = transcriptStep.nextState;
     job.adapter = adapter.id;
+    job.claimedByWorkerId = transcriptStep.nextState === "completed" ? null : job.claimedByWorkerId;
     job.updatedAt = nowIsoFromMs(nowMs);
     job.lastHeartbeatAt = nowIsoFromMs(nowMs);
     job.progressPercent = transcriptStep.progressPercent;

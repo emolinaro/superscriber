@@ -1,28 +1,30 @@
 # Superscriber
 
-Superscriber is a Next.js prototype for a governed transcription workspace for sensitive audio and video.
+Superscriber is a self-contained governed transcription appliance for sensitive audio and video.
 
-The current app models a browser-bound workflow for regulated teams:
+The current app models a regulated workflow:
 
-`record or upload -> verify -> transcribe with diarization -> review in browser -> approve server-side`
+`record or upload -> verify -> transcribe -> review in browser -> approve server-side`
 
-This repository is a product and architecture prototype, not a production deployment. It uses demo auth cookies, local JSON persistence, and mock orchestration by default, while keeping the core workflow and policy boundaries explicit.
+It now runs as a single-institution deployment with local accounts, SQLite persistence, mounted media storage, and an internal Python worker by default.
 
 ## What It Includes
 
-- Role-based entry for `uploader`, `reviewer`, `approver`, and `admin`
-- Unified ingest flow for upload and recording
-- Queue board organized by workflow state
-- Review workspace with transcript editing, segment jumping, and governed playback
-- Policy-aware approval and export controls
-- Orchestration boundary with mock mode and external webhook mode
-- Seeded demo data in `data/state.json`
+- Bootstrap admin setup plus local accounts for `uploader`, `reviewer`, `approver`, and `admin`
+- Unified resumable ingest flow for upload and recording
+- Assignment-aware worklists and governed review/approval surfaces
+- SQLite-backed workflow persistence with mounted media storage
+- Internal Python worker with GPU-preferred transcription when compatible hardware is available
+- Alternate orchestration modes for `mock` and `webhook`
 
 ## Tech Stack
 
 - Next.js 16
 - React 19
 - TypeScript
+- SQLite via `better-sqlite3` and Drizzle
+- Auth.js credentials auth
+- Python worker runtime
 - Vitest
 
 ## Getting Started
@@ -45,29 +47,86 @@ npm run dev
 http://localhost:3000
 ```
 
+## Container Runtime
+
+Build the appliance image:
+
+```bash
+docker build -t superscriber .
+```
+
+Run it with a mounted data volume:
+
+```bash
+docker run --rm -p 3000:3000 -v "$(pwd)/data:/app/data" superscriber
+```
+
+The container starts the Next.js server and the internal Python worker together. By default it uses:
+
+- `SUPERSCRIBER_ENGINE_MODE=internal`
+- SQLite at `/app/data/superscriber.db`
+- media files in `/app/data/media`
+- upload temp files in `/app/data/uploads`
+- a baked offline transcription model at `/app/models`
+- `SUPERSCRIBER_TRANSCRIBE_OFFLINE=1`
+- `SUPERSCRIBER_TRANSCRIBE_ALLOW_RUNTIME_DOWNLOAD=0`
+
+If CUDA libraries and a compatible GPU are available to the container, the worker prefers GPU transcription automatically. Otherwise it falls back to CPU.
+
+You can choose a different baked model at build time:
+
+```bash
+docker build \
+  --build-arg SUPERSCRIBER_TRANSCRIBE_MODEL=tiny \
+  -t superscriber .
+```
+
+The default build prefetches the configured model into the image. Runtime downloads are disabled by default so the appliance can transcribe without network access after the image is built.
+
 ## Available Scripts
 
 - `npm run dev` — start the local development server
 - `npm run build` — build the app for production
 - `npm run start` — run the production build locally
+- `npm run typecheck` — run the TypeScript checker
 - `npm test` — run the test suite once
 - `npm run test:watch` — run tests in watch mode
+- `npm run e2e` — run the Playwright suite against an already-running app
+- `npm run e2e:install` — install the local Chromium browser for Playwright
+- `npm run e2e:container` — build and test the single Docker image end to end
+- `npm run worker:check` — syntax-check the Python worker
+- `npm run worker:prefetch` — download the configured speech model into the local worker cache
+- `npm run worker:python` — run the Python worker against a live app
 
 ## Project Structure
 
-- [`app/`](./app/) — Next.js app routes and server actions
+- [`app/`](./app/) — Next.js app routes and APIs
 - [`src/components/`](./src/components/) — UI components
 - [`src/domain/`](./src/domain/) — domain models and workflow rules
-- [`src/server/`](./src/server/) — persistence, session handling, orchestration, repository layer
-- [`data/`](./data/) — local demo state and uploaded media
+- [`src/server/`](./src/server/) — auth, persistence, orchestration, ingest, and repository logic
+- [`data/`](./data/) — local SQLite data, secrets, temp uploads, and media files
+- [`worker/`](./worker/) — internal Python transcription worker
+- [`scripts/`](./scripts/) — container/runtime helpers
 
 ## Orchestration Modes
 
-By default, the app runs in mock orchestration mode.
+By default, the app runs in internal orchestration mode.
 
-To connect an external backend through the callback contract, configure:
+- `SUPERSCRIBER_ENGINE_MODE=internal` starts the local Python worker contract
+- `SUPERSCRIBER_ENGINE_MODE=mock` keeps the deterministic in-process mock engine
+- `SUPERSCRIBER_ENGINE_MODE=webhook` dispatches to an external backend through the callback contract
 
-- `SUPERSCRIBER_ENGINE_MODE=webhook`
+For the internal worker, the main model/runtime controls are:
+
+- `SUPERSCRIBER_TRANSCRIBE_MODEL`
+- `SUPERSCRIBER_TRANSCRIBE_MODEL_DIR`
+- `SUPERSCRIBER_TRANSCRIBE_DEVICE=auto|cpu|cuda`
+- `SUPERSCRIBER_TRANSCRIBE_OFFLINE`
+- `SUPERSCRIBER_TRANSCRIBE_ALLOW_RUNTIME_DOWNLOAD`
+- `SUPERSCRIBER_TRANSCRIBE_ALLOW_STUB_FALLBACK`
+
+For webhook mode, configure:
+
 - `SUPERSCRIBER_ENGINE_DISPATCH_URL`
 - `SUPERSCRIBER_APP_BASE_URL`
 - `SUPERSCRIBER_ENGINE_SHARED_SECRET`
@@ -75,10 +134,9 @@ To connect an external backend through the callback contract, configure:
 
 ## Current Limitations
 
-- Authentication is demo-only and cookie-based
-- Persistence is local and file-backed
-- Verification and transcription are mocked unless webhook mode is configured
-- The app is seeded for workflow demonstration, not multi-tenant production use
+- GPU acceleration depends on compatible host/runtime support being available to the worker process
+- Diarization is still degraded; the worker currently produces a transcript-first result without full speaker separation
+- This is still a single-institution appliance, not a shared multi-tenant SaaS deployment
 
 ## Testing
 
@@ -88,7 +146,16 @@ Run:
 npm test
 ```
 
-Current tests cover domain policy, workflow transitions, and orchestration behavior.
+Current tests cover workflow rules, auth/access services, resumable ingest, the internal queue lifecycle, and orchestration behavior.
+
+For the browser path against the real single-image appliance:
+
+```bash
+npm run e2e:install
+npm run e2e:container
+```
+
+The container-backed E2E runner deliberately builds a lightweight test image with model prefetch disabled, then starts the worker in explicit stub-fallback mode. That keeps the browser suite deterministic while still exercising the real Docker entrypoint, Next.js server, SQLite volume, upload pipeline, internal queue, and Python worker contract in one image.
 
 ## License
 

@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
+import { canAccessRecording } from "@/server/access/service";
 import { getRecordingDetail } from "@/server/repository";
-import { getActiveRole } from "@/server/session";
+import { getActivePrincipal } from "@/server/session";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -11,13 +12,18 @@ export async function GET(
   _request: Request,
   context: { params: Params },
 ) {
-  const role = await getActiveRole();
-  if (!role) {
+  const principal = await getActivePrincipal();
+  if (!principal) {
     return new NextResponse("Unauthorized", { status: 401 });
   }
 
   const { recordingId } = await context.params;
-  const detail = getRecordingDetail(recordingId, role);
+  const access = canAccessRecording(principal, recordingId);
+  if (!access.allowed) {
+    return new NextResponse(access.reason ?? "Forbidden", { status: 403 });
+  }
+
+  const detail = getRecordingDetail(recordingId, principal.role);
   if (!detail) {
     return new NextResponse("Not found", { status: 404 });
   }

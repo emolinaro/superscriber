@@ -5,7 +5,7 @@ import {
   TranscriptSegment,
   TranscriptJobState,
 } from "@/domain/models";
-import { getOrchestrationConfig } from "@/server/orchestration/config";
+import { requireOrchestrationAuthorization } from "@/server/orchestration/request-auth";
 import {
   applyOrchestrationWebhookUpdate,
   OrchestrationWebhookPayload,
@@ -103,12 +103,9 @@ function parsePayload(input: unknown): OrchestrationWebhookPayload {
 }
 
 export async function POST(request: Request) {
-  const config = getOrchestrationConfig();
-  if (config.sharedSecret) {
-    const authHeader = request.headers.get("authorization");
-    if (authHeader !== `Bearer ${config.sharedSecret}`) {
-      return new NextResponse("Unauthorized", { status: 401 });
-    }
+  const unauthorized = requireOrchestrationAuthorization(request);
+  if (unauthorized) {
+    return unauthorized;
   }
 
   try {

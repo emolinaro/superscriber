@@ -1,9 +1,9 @@
-import { readState } from "@/server/store";
+import { readSynchronizedState } from "@/server/store";
 import { getOrchestrationConfig } from "@/server/orchestration/config";
 import { noteRecordingDispatchFailure } from "@/server/repository";
 
 export type DispatchResult = {
-  mode: "mock" | "webhook";
+  mode: "mock" | "internal" | "webhook";
   dispatched: boolean;
   message: string;
 };
@@ -17,6 +17,14 @@ export async function dispatchRecordingToConfiguredEngine(
       mode: "mock",
       dispatched: false,
       message: "Using mock orchestration mode. No external engine dispatch was attempted.",
+    };
+  }
+
+  if (config.mode === "internal") {
+    return {
+      mode: "internal",
+      dispatched: false,
+      message: "Using internal worker mode. Queued jobs are picked up by the local Python worker.",
     };
   }
 
@@ -34,7 +42,7 @@ export async function dispatchRecordingToConfiguredEngine(
     throw new Error(message);
   }
 
-  const state = readState();
+  const state = readSynchronizedState();
   const recording = state.recordings.find((entry) => entry.id === recordingId);
   const workspace = recording
     ? state.workspaces.find((entry) => entry.id === recording.workspaceId)

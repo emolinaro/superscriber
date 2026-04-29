@@ -2,8 +2,19 @@ node_modules
 .next
 .design*
 coverage
+*.tsbuildinfo
+__pycache__/
+*.pyc
+.tmp/
+playwright-report/
+test-results/
 data/media
+data/uploads
+models/
+data/*.db*
+data/*.secret
 *plan*.md
 *design*.md
+!/DESIGN.md
 
 .gstack/

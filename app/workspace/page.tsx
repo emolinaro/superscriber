@@ -1,6 +1,6 @@
 import Link from "next/link";
-import { ingestRecordingAction } from "@/app/actions";
-import { USER_ROLES, UserRole } from "@/domain/models";
+import { UserRole } from "@/domain/models";
+import { AdminControlPanel } from "@/components/admin/admin-control-panel";
 import { IngestPanel } from "@/components/ingest-panel";
 import { SessionBar } from "@/components/session-bar";
 import {
@@ -8,8 +8,9 @@ import {
   formatRoleLabel,
   toneForBucket,
 } from "@/lib/format";
+import { listAssignableUsers, listLocalUsers, listAssignments } from "@/server/access/service";
 import { listWorkspaceOverview } from "@/server/repository";
-import { requireActiveRole } from "@/server/session";
+import { requireActivePrincipal } from "@/server/session";
 
 export const dynamic = "force-dynamic";
 
@@ -61,9 +62,10 @@ export default async function WorkspacePage({
 }: {
   searchParams: SearchParams;
 }) {
-  const role = await requireActiveRole();
+  const principal = await requireActivePrincipal();
+  const role = principal.role;
   const params = await searchParams;
-  const overview = listWorkspaceOverview(role);
+  const overview = listWorkspaceOverview(principal);
   const notice = firstValue(params.notice);
   const error = firstValue(params.error);
   const primaryCount = countForRole(role, overview.buckets);
@@ -74,10 +76,23 @@ export default async function WorkspacePage({
   const transcribingCount =
     overview.buckets.find((bucket) => bucket.bucket === "transcribing")?.recordings.length ?? 0;
   const canIngest = role === "uploader" || role === "admin";
+  const directory = role === "admin" ? listLocalUsers() : [];
+  const assignableUsers = role === "admin" ? listAssignableUsers() : [];
+  const assignmentRows =
+    role === "admin"
+      ? listAssignments({ recordingIds: overview.visibleRecordings.map((recording) => recording.id) }).map(
+          (assignment) => ({
+            ...assignment,
+            recordingTitle:
+              overview.visibleRecordings.find((recording) => recording.id === assignment.recordingId)
+                ?.title ?? assignment.recordingId,
+          }),
+        )
+      : [];
 
   return (
     <main className="shell shell-wide stack">
-      <SessionBar activeRole={role} />
+      <SessionBar principal={principal} />
 
       <section className="panel panel-dark">
         <div className="panel-inner workspace-header">
@@ -96,8 +111,8 @@ export default async function WorkspacePage({
             <span className="pill" data-tone="ok">
               Policy: {overview.workspace.policyProfileId}
             </span>
-            <span className="pill" data-tone="warn">
-              Demo auth cookie
+            <span className="pill" data-tone="info">
+              Signed in as {principal.email}
             </span>
           </div>
         </div>
@@ -135,16 +150,42 @@ export default async function WorkspacePage({
 
       <section className="workspace-layout">
         <div className="stack">
+          {role === "reviewer" || role === "approver" ? (
+            <section className="panel">
+              <div className="panel-inner stack-tight">
+                <p className="eyebrow">Assigned desk</p>
+                <h2 className="section-title">
+                  {overview.nextAssignedRecording
+                    ? `Next assigned: ${overview.nextAssignedRecording.title}`
+                    : "No recordings are assigned to this account yet."}
+                </h2>
+                <p className="body-copy">
+                  {overview.nextAssignedRecording
+                    ? "This desk now filters the governed queue to recordings explicitly assigned to you."
+                    : "An admin needs to assign recordings before this reviewer or approver desk becomes active."}
+                </p>
+                {overview.nextAssignedRecording ? (
+                  <Link
+                    className="button button-primary"
+                    href={`/recordings/${overview.nextAssignedRecording.id}`}
+                  >
+                    Open next assigned item
+                  </Link>
+                ) : null}
+              </div>
+            </section>
+          ) : null}
+
           {canIngest ? (
-            <IngestPanel action={ingestRecordingAction} />
+            <IngestPanel />
           ) : (
             <section className="panel">
               <div className="panel-inner stack-tight">
                 <p className="eyebrow">Ingest locked</p>
                 <h2 className="section-title">This role cannot create new recordings.</h2>
                 <p className="body-copy">
-                  Switch to the uploader or admin role if you want to test the governed
-                  capture and upload flow in this demo.
+                  This signed-in role cannot create new recordings. Use an uploader or
+                  admin account when you want to test governed capture and upload.
                 </p>
               </div>
             </section>
@@ -190,6 +231,18 @@ export default async function WorkspacePage({
                               <span>{recording.languageHint}</span>
                               <span>{formatDateTime(recording.updatedAt)}</span>
                             </div>
+                            {overview.assignmentsByRecordingId.get(recording.id)?.length ? (
+                              <div className="meta-row">
+                                {overview.assignmentsByRecordingId
+                                  .get(recording.id)
+                                  ?.slice(0, 3)
+                                  .map((assignment) => (
+                                    <span className="badge" key={assignment.id}>
+                                      {assignment.userDisplayName}
+                                    </span>
+                                  ))}
+                              </div>
+                            ) : null}
                             {recording.verificationSummary ? (
                               <p className="body-copy">{recording.verificationSummary}</p>
                             ) : null}
@@ -250,25 +303,39 @@ export default async function WorkspacePage({
 
           <section className="panel">
             <div className="panel-inner stack-tight">
-              <p className="eyebrow">Demo notes</p>
-              <h2 className="section-title">What this slice implements now.</h2>
+              <p className="eyebrow">Implementation notes</p>
+              <h2 className="section-title">What this appliance slice implements now.</h2>
               <div className="stack-tight">
                 <p className="body-copy">
-                  The workspace persists to local JSON files on the server, not to browser
-                  storage. Upload and recording both enter the same governed ingestion flow.
+                  Local accounts and reviewer or approver assignments are now real and
+                  stored outside the browser. The recording workflow now persists into
+                  local SQLite instead of the old JSON prototype store.
                 </p>
                 <p className="body-copy">
-                  Verification and transcription are mocked today, but they now run behind
-                  a canonical orchestration service with explicit ingestion-session and
+                  Verification and transcription are still mocked, but they run behind a
+                  canonical orchestration service with explicit ingestion-session and
                   transcript-job state.
                 </p>
                 <p className="body-copy">
-                  Use the role switcher above to test the different home screens and
-                  action permissions across uploader, reviewer, approver, and admin.
+                  Reviewer and approver desks now depend on explicit assignment rather
+                  than a role-wide queue. Admin accounts can create local users and
+                  assign recordings from this workspace.
                 </p>
               </div>
             </div>
           </section>
+
+          {role === "admin" ? (
+            <AdminControlPanel
+              assignments={assignmentRows}
+              assignableUsers={assignableUsers}
+              recordings={overview.visibleRecordings.map((recording) => ({
+                id: recording.id,
+                title: recording.title,
+              }))}
+              users={directory}
+            />
+          ) : null}
         </div>
       </section>
     </main>

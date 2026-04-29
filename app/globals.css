@@ -448,6 +448,35 @@ button {
   gap: 12px;
 }
 
+.admin-list {
+  display: grid;
+  gap: 12px;
+}
+
+.ingest-status-card {
+  display: grid;
+  gap: 10px;
+  padding: 16px;
+  border-radius: 18px;
+  border: 1px solid rgba(20, 36, 33, 0.08);
+  background: rgba(255, 255, 255, 0.74);
+}
+
+.ingest-progress-track {
+  width: 100%;
+  height: 10px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: rgba(20, 36, 33, 0.08);
+}
+
+.ingest-progress-bar {
+  height: 100%;
+  border-radius: 999px;
+  background: linear-gradient(90deg, #d36b3e 0%, #ce8758 100%);
+  transition: width 140ms ease;
+}
+
 .policy-row {
   display: flex;
   justify-content: space-between;
@@ -501,10 +530,32 @@ button {
   resize: vertical;
 }
 
+.field input[aria-invalid="true"],
+.field select[aria-invalid="true"],
+.field textarea[aria-invalid="true"] {
+  border-color: rgba(158, 68, 56, 0.4);
+  background: rgba(255, 247, 245, 0.95);
+}
+
 .field-note {
   margin: 0;
   color: var(--muted);
   font-size: 0.84rem;
+}
+
+.field-error-message {
+  margin: 0;
+  color: var(--danger);
+  font-size: 0.84rem;
+  line-height: 1.5;
+}
+
+.auth-form {
+  align-content: start;
+}
+
+.auth-status {
+  min-height: 24px;
 }
 
 .review-shell {

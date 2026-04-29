@@ -1,11 +1,12 @@
 import Link from "next/link";
-import { notFound } from "next/navigation";
+import { notFound, redirect } from "next/navigation";
 import {
   approveRevisionAction,
   reopenRevisionAction,
   saveDraftAction,
   submitRevisionAction,
 } from "@/app/actions";
+import { canAccessRecording } from "@/server/access/service";
 import { OrchestrationStatusPoller } from "@/components/orchestration-status-poller";
 import { ReviewWorkspace } from "@/components/review-workspace";
 import { SessionBar } from "@/components/session-bar";
@@ -18,7 +19,7 @@ import {
   toneForJobState,
 } from "@/lib/format";
 import { getRecordingDetail } from "@/server/repository";
-import { requireActiveRole } from "@/server/session";
+import { requireActivePrincipal } from "@/server/session";
 
 export const dynamic = "force-dynamic";
 
@@ -40,9 +41,14 @@ export default async function RecordingPage({
   params: Params;
   searchParams: SearchParams;
 }) {
-  const role = await requireActiveRole();
+  const principal = await requireActivePrincipal();
+  const role = principal.role;
   const resolvedParams = await params;
   const resolvedSearchParams = await searchParams;
+  const access = canAccessRecording(principal, resolvedParams.recordingId);
+  if (!access.allowed) {
+    redirect(`/workspace?error=${encodeURIComponent(access.reason ?? "This recording is not assigned to your account.")}`);
+  }
   const detail = getRecordingDetail(resolvedParams.recordingId, role);
 
   if (!detail) {
@@ -68,7 +74,7 @@ export default async function RecordingPage({
 
   return (
     <main className="shell shell-wide stack review-page-shell">
-      <SessionBar activeRole={role} />
+      <SessionBar principal={principal} />
 
       <section className="review-hero">
         <div className="review-hero-top">

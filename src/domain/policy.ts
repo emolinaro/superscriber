@@ -5,7 +5,7 @@ export function evaluatePolicy(
   role: UserRole,
 ): PolicyDecision {
   const base: PolicyDecision = {
-    canViewMedia: true,
+    canViewMedia: role === "reviewer" || role === "approver" || role === "admin",
     canDownloadRawMedia: false,
     canEditDraft: role === "reviewer" || role === "admin",
     canSubmitForApproval: role === "reviewer" || role === "admin",
@@ -34,4 +34,3 @@ export function describePolicyProfile(profileId: PolicyProfileId) {
 
   return "Strict regulated mode. Raw media stays server-side. Approved transcripts require approver or admin export rights.";
 }
-

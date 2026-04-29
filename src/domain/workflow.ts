@@ -20,7 +20,14 @@ function createId(prefix: string) {
 }
 
 export function bucketRecording(recording: Recording): WorkspaceBucket {
-  if (recording.integrityState === "capturing" || recording.integrityState === "uploading") {
+  if (
+    recording.integrityState === "capturing" ||
+    recording.integrityState === "uploading" ||
+    recording.integrityState === "interrupted" ||
+    recording.integrityState === "verification_failed" ||
+    recording.transcriptJobState === "failed" ||
+    recording.transcriptJobState === "cancelled"
+  ) {
     return "needs_ingest";
   }
 
@@ -66,22 +73,30 @@ function createIngestionSession(
   recording: Recording,
   mediaBytes: number | null,
   adapterId: string,
+  options?: {
+    state?: IngestionSession["state"];
+    verificationSummary?: string;
+    bytesReceived?: number | null;
+    startedAt?: string | null;
+  },
 ): IngestionSession {
   const timestamp = nowIso();
+  const nextState = options?.state ?? "verifying";
   return {
     id: createId("ingest"),
     recordingId: recording.id,
     source: recording.source,
-    state: "verifying",
+    state: nextState,
     adapter: adapterId,
     createdAt: timestamp,
     updatedAt: timestamp,
-    startedAt: timestamp,
-    verifiedAt: null,
+    startedAt: options?.startedAt ?? timestamp,
+    verifiedAt: nextState === "verified" ? timestamp : null,
     lastError: null,
-    verificationSummary: "Awaiting server-side verification.",
+    verificationSummary:
+      options?.verificationSummary ?? "Awaiting server-side verification.",
     resumeToken: createId("resume"),
-    bytesReceived: mediaBytes,
+    bytesReceived: options?.bytesReceived ?? mediaBytes,
     bytesExpected: mediaBytes,
   };
 }
@@ -93,6 +108,8 @@ function createTranscriptJob(recording: Recording, adapterId: string): Transcrip
     recordingId: recording.id,
     state: "queued",
     adapter: adapterId,
+    claimedByWorkerId: null,
+    attemptCount: 0,
     createdAt: timestamp,
     updatedAt: timestamp,
     startedAt: null,
@@ -203,10 +220,214 @@ export function createRecordingEntry(params: {
   return recording;
 }
 
+function resolveUploadRefs(state: AppState, sessionId: string) {
+  const session = state.ingestionSessions.find((entry) => entry.id === sessionId);
+  if (!session) {
+    throw new Error("Upload session not found.");
+  }
+
+  const recording = state.recordings.find((entry) => entry.id === session.recordingId);
+  if (!recording) {
+    throw new Error("Recording not found.");
+  }
+
+  const job = state.transcriptJobs.find((entry) => entry.id === recording.transcriptJobId);
+  if (!job) {
+    throw new Error("Transcript job not found.");
+  }
+
+  return { session, recording, job };
+}
+
+export function createUploadSessionEntry(params: {
+  state: AppState;
+  workspaceId: string;
+  title: string;
+  source: Recording["source"];
+  mediaKind: Recording["mediaKind"];
+  mimeType: string | null;
+  originalFileName: string | null;
+  languageHint: string;
+  role: UserRole;
+  bytesExpected: number;
+  adapterId?: string;
+}) {
+  const adapterId = params.adapterId ?? "mock-governed-engine";
+  const timestamp = nowIso();
+  const recording: Recording = {
+    id: createId("rec"),
+    workspaceId: params.workspaceId,
+    title: params.title,
+    source: params.source,
+    mediaKind: params.mediaKind,
+    mimeType: params.mimeType,
+    mediaPath: null,
+    originalFileName: params.originalFileName,
+    languageHint: params.languageHint,
+    uploadedByRole: params.role,
+    ingestionSessionId: null,
+    transcriptJobId: null,
+    integrityState: "uploading",
+    transcriptJobState: "queued",
+    currentRevisionId: null,
+    approvedRevisionId: null,
+    pendingRevisionId: null,
+    verificationSummary:
+      "Upload session started. Continue from the last committed byte if the transfer is interrupted.",
+    createdAt: timestamp,
+    updatedAt: timestamp,
+    automationCursor: null,
+  };
+
+  const ingestionSession = createIngestionSession(recording, params.bytesExpected, adapterId, {
+    state: "uploading",
+    verificationSummary:
+      "Upload session started. Continue from the last committed byte if the transfer is interrupted.",
+    bytesReceived: 0,
+  });
+  const transcriptJob = createTranscriptJob(recording, adapterId);
+  recording.ingestionSessionId = ingestionSession.id;
+  recording.transcriptJobId = transcriptJob.id;
+
+  params.state.recordings.unshift(recording);
+  params.state.ingestionSessions.unshift(ingestionSession);
+  params.state.transcriptJobs.unshift(transcriptJob);
+  addAuditEvent(params.state, {
+    workspaceId: recording.workspaceId,
+    recordingId: recording.id,
+    actorRole: params.role,
+    type: "recording.created",
+    detail: `${params.source === "record" ? "Browser recording" : "Upload"} session started.`,
+  });
+
+  return { recording, ingestionSession, transcriptJob };
+}
+
+export function noteUploadProgress(params: {
+  state: AppState;
+  sessionId: string;
+  bytesReceived: number;
+}) {
+  const { session, recording } = resolveUploadRefs(params.state, params.sessionId);
+  session.bytesReceived = params.bytesReceived;
+  session.state = "uploading";
+  session.updatedAt = nowIso();
+  session.lastError = null;
+  session.verificationSummary =
+    params.bytesReceived === session.bytesExpected
+      ? "Upload bytes received. Finalize to begin governed verification."
+      : "Upload in progress. Resume continues from the last committed byte.";
+
+  recording.integrityState = "uploading";
+  recording.verificationSummary = session.verificationSummary;
+  recording.updatedAt = nowIso();
+
+  return { session, recording };
+}
+
+export function expireUploadSession(params: {
+  state: AppState;
+  sessionId: string;
+  detail: string;
+}) {
+  const { session, recording, job } = resolveUploadRefs(params.state, params.sessionId);
+  session.state = "interrupted";
+  session.lastError = params.detail;
+  session.verificationSummary = params.detail;
+  session.updatedAt = nowIso();
+
+  recording.integrityState = "interrupted";
+  recording.verificationSummary = params.detail;
+  recording.updatedAt = nowIso();
+
+  job.lastError = params.detail;
+  job.updatedAt = nowIso();
+
+  addAuditEvent(params.state, {
+    workspaceId: recording.workspaceId,
+    recordingId: recording.id,
+    actorRole: "system",
+    type: "recording.verification_failed",
+    detail: params.detail,
+  });
+}
+
+export function failUploadSession(params: {
+  state: AppState;
+  sessionId: string;
+  detail: string;
+}) {
+  const { session, recording, job } = resolveUploadRefs(params.state, params.sessionId);
+  session.state = "verification_failed";
+  session.lastError = params.detail;
+  session.verificationSummary = params.detail;
+  session.updatedAt = nowIso();
+
+  recording.integrityState = "verification_failed";
+  recording.verificationSummary = params.detail;
+  recording.updatedAt = nowIso();
+
+  job.state = "failed";
+  job.lastError = params.detail;
+  job.updatedAt = nowIso();
+  recording.transcriptJobState = "failed";
+
+  addAuditEvent(params.state, {
+    workspaceId: recording.workspaceId,
+    recordingId: recording.id,
+    actorRole: "system",
+    type: "recording.verification_failed",
+    detail: params.detail,
+  });
+}
+
+export function finalizeUploadSession(params: {
+  state: AppState;
+  sessionId: string;
+  mediaPath: string;
+  mimeType: string | null;
+}) {
+  const { session, recording, job } = resolveUploadRefs(params.state, params.sessionId);
+  const timestamp = nowIso();
+  const isExternalVerification = session.adapter === "external-webhook-engine";
+  const nextIntegrityState = isExternalVerification ? "verifying" : "verified";
+  const verificationSummary = isExternalVerification
+    ? "Upload complete. Server-side verification is starting."
+    : "Upload verified locally and queued for transcription.";
+
+  session.state = nextIntegrityState;
+  session.updatedAt = timestamp;
+  session.lastError = null;
+  session.verificationSummary = verificationSummary;
+  session.verifiedAt = nextIntegrityState === "verified" ? timestamp : null;
+
+  recording.mediaPath = params.mediaPath;
+  recording.mimeType = params.mimeType;
+  recording.integrityState = nextIntegrityState;
+  recording.transcriptJobState = "queued";
+  recording.verificationSummary = verificationSummary;
+  recording.updatedAt = timestamp;
+
+  job.state = "queued";
+  job.updatedAt = timestamp;
+  job.lastError = null;
+
+  addAuditEvent(params.state, {
+    workspaceId: recording.workspaceId,
+    recordingId: recording.id,
+    actorRole: recording.uploadedByRole,
+    type: "recording.created",
+    detail: verificationSummary,
+  });
+
+  return { session, recording, job };
+}
+
 export function saveDraftRevision(params: {
   state: AppState;
   recordingId: string;
   role: UserRole;
+  expectedCurrentRevisionId: string;
   segments: TranscriptRevision["segments"];
   summary: string;
 }) {
@@ -236,6 +457,10 @@ export function saveDraftRevision(params: {
       detail: "Draft edit denied by regulated-mode policy.",
     });
     throw new Error("Your role cannot edit draft transcripts.");
+  }
+
+  if (recording.currentRevisionId !== params.expectedCurrentRevisionId) {
+    throw new Error("A newer draft revision exists. Reload this recording and apply your changes again.");
   }
 
   const priorRevision = params.state.revisions.find(
@@ -296,6 +521,7 @@ export function submitRevision(params: {
   state: AppState;
   recordingId: string;
   role: UserRole;
+  expectedCurrentRevisionId: string;
 }) {
   const recording = params.state.recordings.find(
     (entry) => entry.id === params.recordingId,
@@ -321,6 +547,10 @@ export function submitRevision(params: {
       detail: "Approval submission denied by policy.",
     });
     throw new Error("Your role cannot submit transcripts for approval.");
+  }
+
+  if (recording.currentRevisionId !== params.expectedCurrentRevisionId) {
+    throw new Error("A newer draft revision exists. Reload this recording before submitting it.");
   }
 
   const revision = params.state.revisions.find(
@@ -363,6 +593,7 @@ export function approveRevision(params: {
   state: AppState;
   recordingId: string;
   role: UserRole;
+  expectedPendingRevisionId: string;
 }) {
   const recording = params.state.recordings.find(
     (entry) => entry.id === params.recordingId,
@@ -388,6 +619,10 @@ export function approveRevision(params: {
       detail: "Approval denied by policy.",
     });
     throw new Error("Your role cannot approve transcripts.");
+  }
+
+  if (recording.pendingRevisionId !== params.expectedPendingRevisionId) {
+    throw new Error("A different revision is now pending approval. Reload this recording before approving it.");
   }
 
   const revision = params.state.revisions.find(
@@ -428,6 +663,7 @@ export function reopenApprovedRevision(params: {
   state: AppState;
   recordingId: string;
   role: UserRole;
+  expectedApprovedRevisionId: string;
 }) {
   const recording = params.state.recordings.find(
     (entry) => entry.id === params.recordingId,
@@ -454,6 +690,10 @@ export function reopenApprovedRevision(params: {
       detail: "Reopen denied by policy.",
     });
     throw new Error("Your role cannot reopen approved transcripts.");
+  }
+
+  if (recording.approvedRevisionId !== params.expectedApprovedRevisionId) {
+    throw new Error("A newer approved revision exists. Reload this recording before reopening it.");
   }
 
   const approvedRevision = params.state.revisions.find(
