@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="./app/icon.svg" alt="Superscriber logo" width="96" height="96" />
+</p>
+
 # Superscriber
 
 Superscriber is a self-contained governed transcription appliance for sensitive audio and video.

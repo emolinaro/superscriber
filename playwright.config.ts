@@ -6,6 +6,8 @@ export default defineConfig({
   testDir: "./e2e",
   timeout: 90_000,
   fullyParallel: false,
+  // The suite exercises one shared appliance instance, including first-run bootstrap.
+  workers: 1,
   reporter: process.env.CI ? [["github"], ["html", { open: "never" }]] : "list",
   use: {
     baseURL,
