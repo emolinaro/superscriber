@@ -11,7 +11,7 @@ def main() -> int:
     try:
         with request.urlopen(sys.argv[1], timeout=5) as response:
             return 0 if 200 <= response.status < 300 else 1
-    except (error.URLError, TimeoutError):
+    except (error.URLError, TimeoutError, ConnectionResetError):
         return 1
 
 

@@ -51,6 +51,56 @@ npm run dev
 http://localhost:3000
 ```
 
+For UI-only development, that is enough. For the default internal transcription path on a local non-Docker deployment, you also need the Python worker setup below.
+
+## Local Non-Docker Runtime
+
+The default appliance mode uses a separate Python worker process. On a local host, install its dependencies into a `uv`-managed virtual environment and run it alongside the Next.js app.
+
+1. Install the Node.js dependencies:
+
+```bash
+npm install
+```
+
+2. Create and activate a Python virtual environment with `uv`:
+
+```bash
+uv venv
+source .venv/bin/activate
+```
+
+3. Install the worker dependencies:
+
+```bash
+uv pip install -r worker/requirements.txt
+```
+
+4. Optional but recommended: prefetch the local speech model while network access is available:
+
+```bash
+SUPERSCRIBER_TRANSCRIBE_ALLOW_RUNTIME_DOWNLOAD=1 npm run worker:prefetch
+```
+
+5. In one terminal, start the app:
+
+```bash
+npm run dev
+```
+
+6. In a second terminal, activate the same virtual environment and start the worker:
+
+```bash
+source .venv/bin/activate
+SUPERSCRIBER_APP_BASE_URL=http://127.0.0.1:3000 npm run worker:python
+```
+
+Local worker notes:
+
+- The worker defaults to `SUPERSCRIBER_ENGINE_MODE=internal`, `SUPERSCRIBER_APP_BASE_URL=http://127.0.0.1:3000`, and model storage under `./models`.
+- Runtime model downloads are disabled by default. If you skip the prefetch step, set `SUPERSCRIBER_TRANSCRIBE_ALLOW_RUNTIME_DOWNLOAD=1` before starting the worker.
+- If you only want the browser workflow without the real speech stack, use `SUPERSCRIBER_ENGINE_MODE=mock` for the app instead of running the Python worker.
+
 ## Container Runtime
 
 Build the appliance image:
