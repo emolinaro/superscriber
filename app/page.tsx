@@ -1,5 +1,6 @@
 import { redirect } from "next/navigation";
 import { BootstrapSetupForm } from "@/components/auth/bootstrap-setup-form";
+import { SuperscriberLogo } from "@/components/brand/superscriber-logo";
 import { LoginForm } from "@/components/auth/login-form";
 import { hasAnyUsers } from "@/server/auth/service";
 import { getActivePrincipal } from "@/server/session";
@@ -60,7 +61,12 @@ export default async function LandingPage({
       <div className="hero-grid">
         <section className="panel panel-dark">
           <div className="panel-inner stack">
-            <p className="eyebrow">Superscriber</p>
+            <SuperscriberLogo
+              className="hero-brand-shell"
+              showDescriptor
+              size="lg"
+              tone="inverse"
+            />
             <h1 className="headline">One governed workspace for sensitive recordings.</h1>
             <p className="lede" style={{ color: "rgba(238, 246, 242, 0.8)" }}>
               Local accounts now gate the workspace. The media pipeline is still
