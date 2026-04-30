@@ -983,6 +983,16 @@ button {
   font-weight: 600;
 }
 
+.annotation-summary-field .field-readonly {
+  min-height: 52px;
+  padding: 14px 16px;
+  border-radius: 16px;
+  border: 1px solid rgba(15, 43, 53, 0.12);
+  background: rgba(252, 255, 255, 0.98);
+  font-weight: 600;
+  line-height: 1.55;
+}
+
 .segment-annotation textarea,
 .segment-annotation input {
   font-size: 0.97rem;
@@ -1016,6 +1026,12 @@ button {
   color: inherit;
 }
 
+.segment-readonly-copy {
+  margin: 0;
+  white-space: pre-wrap;
+  line-height: 1.7;
+}
+
 .segment-jump-button {
   display: inline-flex;
   align-items: center;
@@ -1030,6 +1046,19 @@ button {
 
 .review-actions-annotation {
   justify-content: flex-start;
+}
+
+.review-compact-note {
+  padding: 14px 16px;
+  border-radius: 18px;
+  border: 1px solid rgba(48, 125, 120, 0.22);
+  background: rgba(217, 243, 240, 0.72);
+  line-height: 1.6;
+}
+
+.review-compact-note-muted {
+  background: rgba(255, 250, 245, 0.88);
+  border-color: rgba(211, 107, 62, 0.18);
 }
 
 .review-main-footer {

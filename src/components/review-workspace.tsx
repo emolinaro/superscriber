@@ -1,7 +1,7 @@
 "use client";
 
 import type { ButtonHTMLAttributes, CSSProperties, ReactNode } from "react";
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useFormStatus } from "react-dom";
 import {
   PolicyDecision,
@@ -13,6 +13,7 @@ import { formatSegmentWindow } from "@/lib/format";
 type Action = (formData: FormData) => void | Promise<void>;
 
 const WAVE_BARS = Array.from({ length: 54 }, (_, index) => index);
+const COMPACT_REVIEW_BREAKPOINT_PX = 760;
 
 function FormButton({
   children,
@@ -77,6 +78,7 @@ export function ReviewWorkspace({
   );
   const [currentMs, setCurrentMs] = useState(0);
   const [durationMs, setDurationMs] = useState(0);
+  const [isCompactViewport, setIsCompactViewport] = useState(false);
   const hasSegments = segments.length > 0;
 
   const activeSegmentIndex = segments.findIndex(
@@ -89,6 +91,23 @@ export function ReviewWorkspace({
   const waveStyle = {
     "--playhead-position": `${playbackProgress}%`,
   } as CSSProperties;
+
+  useEffect(() => {
+    const mediaQuery = window.matchMedia(
+      `(max-width: ${COMPACT_REVIEW_BREAKPOINT_PX}px)`,
+    );
+
+    function syncViewport() {
+      setIsCompactViewport(mediaQuery.matches);
+    }
+
+    syncViewport();
+    mediaQuery.addEventListener("change", syncViewport);
+
+    return () => {
+      mediaQuery.removeEventListener("change", syncViewport);
+    };
+  }, []);
 
   function updateSegment(
     segmentId: string,
@@ -163,7 +182,11 @@ export function ReviewWorkspace({
           </p>
         </div>
         <div className="kicker-row review-chip-row">
-          {policyDecision.canEditDraft ? (
+          {isCompactViewport ? (
+            <span className="pill" data-tone="info">
+              Phone view: read-only
+            </span>
+          ) : policyDecision.canEditDraft ? (
             <span className="pill" data-tone="ok">
               Draft editing enabled
             </span>
@@ -367,17 +390,28 @@ export function ReviewWorkspace({
                     </span>
                   </div>
 
+                  {isCompactViewport ? (
+                    <div className="review-compact-note">
+                      Phone-sized review stays read-only. Use a wider screen to edit,
+                      submit, or approve this transcript.
+                    </div>
+                  ) : null}
+
                   <div className="field annotation-summary-field">
                     <label className="field-label" htmlFor="revision-summary">
                       Revision summary
                     </label>
-                    <input
-                      id="revision-summary"
-                      name="summary"
-                      onChange={(event) => setSummary(event.currentTarget.value)}
-                      type="text"
-                      value={summary}
-                    />
+                    {isCompactViewport ? (
+                      <div className="field-readonly">{summary}</div>
+                    ) : (
+                      <input
+                        id="revision-summary"
+                        name="summary"
+                        onChange={(event) => setSummary(event.currentTarget.value)}
+                        type="text"
+                        value={summary}
+                      />
+                    )}
                   </div>
 
                   <div className="segment-list segment-list-annotation">
@@ -389,18 +423,22 @@ export function ReviewWorkspace({
                           data-active={segment.id === activeSegmentId}
                         >
                           <div className="segment-header">
-                            <input
-                              aria-label={`Speaker label for ${segment.id}`}
-                              onChange={(event) =>
-                                updateSegment(
-                                  segment.id,
-                                  "speakerLabel",
-                                  event.currentTarget.value,
-                                )
-                              }
-                              type="text"
-                              value={segment.speakerLabel}
-                            />
+                            {isCompactViewport ? (
+                              <strong>{segment.speakerLabel}</strong>
+                            ) : (
+                              <input
+                                aria-label={`Speaker label for ${segment.id}`}
+                                onChange={(event) =>
+                                  updateSegment(
+                                    segment.id,
+                                    "speakerLabel",
+                                    event.currentTarget.value,
+                                  )
+                                }
+                                type="text"
+                                value={segment.speakerLabel}
+                              />
+                            )}
                             <button
                               className="segment-jump-button"
                               onClick={() => seekTo(segment.startMs)}
@@ -410,13 +448,17 @@ export function ReviewWorkspace({
                             </button>
                           </div>
                           <div className="segment-copy-shell">
-                            <textarea
-                              aria-label={`Transcript text for ${segment.id}`}
-                              onChange={(event) =>
-                                updateSegment(segment.id, "text", event.currentTarget.value)
-                              }
-                              value={segment.text}
-                            />
+                            {isCompactViewport ? (
+                              <p className="segment-readonly-copy">{segment.text}</p>
+                            ) : (
+                              <textarea
+                                aria-label={`Transcript text for ${segment.id}`}
+                                onChange={(event) =>
+                                  updateSegment(segment.id, "text", event.currentTarget.value)
+                                }
+                                value={segment.text}
+                              />
+                            )}
                           </div>
                           <span className="field-note">
                             Confidence {(segment.confidence * 100).toFixed(0)}%
@@ -433,22 +475,32 @@ export function ReviewWorkspace({
                     )}
                   </div>
 
-                  <div className="review-actions review-actions-annotation" id="review-approval">
-                    {policyDecision.canEditDraft ? (
-                      <FormButton className="button button-secondary" formAction={saveAction}>
-                        Save draft
-                      </FormButton>
-                    ) : null}
-                    {policyDecision.canSubmitForApproval ? (
-                      <FormButton
-                        className="button button-primary"
-                        disabled={!hasSegments}
-                        formAction={submitAction}
-                      >
-                        Submit revision
-                      </FormButton>
-                    ) : null}
-                  </div>
+                  {isCompactViewport ? (
+                    <div className="review-compact-note review-compact-note-muted">
+                      Editing and approval actions are hidden on phone-sized screens
+                      to keep the review flow constrained.
+                    </div>
+                  ) : (
+                    <div
+                      className="review-actions review-actions-annotation"
+                      id="review-approval"
+                    >
+                      {policyDecision.canEditDraft ? (
+                        <FormButton className="button button-secondary" formAction={saveAction}>
+                          Save draft
+                        </FormButton>
+                      ) : null}
+                      {policyDecision.canSubmitForApproval ? (
+                        <FormButton
+                          className="button button-primary"
+                          disabled={!hasSegments}
+                          formAction={submitAction}
+                        >
+                          Submit revision
+                        </FormButton>
+                      ) : null}
+                    </div>
+                  )}
                 </div>
               </section>
             </div>
@@ -459,7 +511,7 @@ export function ReviewWorkspace({
               same browser review job.
             </div>
 
-            {policyDecision.canApprove && recording.pendingRevisionId ? (
+            {!isCompactViewport && policyDecision.canApprove && recording.pendingRevisionId ? (
               <div className="review-main-footer">
                 <input
                   name="pendingRevisionId"
@@ -472,7 +524,9 @@ export function ReviewWorkspace({
               </div>
             ) : null}
 
-            {policyDecision.canReopenApprovedTranscript && recording.approvedRevisionId ? (
+            {!isCompactViewport &&
+            policyDecision.canReopenApprovedTranscript &&
+            recording.approvedRevisionId ? (
               <div className="review-main-footer">
                 <input
                   name="approvedRevisionId"
