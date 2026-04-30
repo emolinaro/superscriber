@@ -235,31 +235,6 @@ export default async function WorkspacePage({
               </div>
             </div>
           </section>
-
-          <section className="panel">
-            <div className="panel-inner stack-tight">
-              <p className="eyebrow">Implementation notes</p>
-              <h2 className="section-title">What this appliance slice implements now.</h2>
-              <div className="stack-tight">
-                <p className="body-copy">
-                  Local accounts and reviewer or approver assignments are now real and
-                  stored outside the browser. The recording workflow now persists into
-                  local SQLite instead of the old JSON prototype store.
-                </p>
-                <p className="body-copy">
-                  Verification and transcription are still mocked, but they run behind a
-                  canonical orchestration service with explicit ingestion-session and
-                  transcript-job state.
-                </p>
-                <p className="body-copy">
-                  Reviewer and approver desks now depend on explicit assignment rather
-                  than a role-wide queue. Admin accounts can create local users and
-                  assign recordings from this workspace.
-                </p>
-              </div>
-            </div>
-          </section>
-
         </div>
       </section>
 
@@ -339,6 +314,30 @@ export default async function WorkspacePage({
           users={directory}
         />
       ) : null}
+
+      <section className="panel panel-subtle">
+        <div className="panel-inner stack-tight">
+          <p className="eyebrow">Current implementation scope</p>
+          <h2 className="card-title">What this appliance slice implements now.</h2>
+          <div className="stack-tight workspace-notes-copy">
+            <p className="body-copy">
+              Local accounts and reviewer or approver assignments are now real and
+              stored outside the browser. The recording workflow now persists into
+              local SQLite instead of the old JSON prototype store.
+            </p>
+            <p className="body-copy">
+              Verification and transcription are still mocked, but they run behind a
+              canonical orchestration service with explicit ingestion-session and
+              transcript-job state.
+            </p>
+            <p className="body-copy">
+              Reviewer and approver desks now depend on explicit assignment rather
+              than a role-wide queue. Admin accounts can create local users and
+              assign recordings from this workspace.
+            </p>
+          </div>
+        </div>
+      </section>
     </main>
   );
 }
