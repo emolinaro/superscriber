@@ -16,6 +16,27 @@ from runtime_support import (
 )
 
 
+LANGUAGE_HINT_ALIASES = {
+    "english": "en",
+    "danish": "da",
+    "german": "de",
+    "spanish": "es",
+}
+
+
+def resolve_model_language(language_hint: Any) -> str | None:
+    normalized = str(language_hint or "").strip().lower()
+    if normalized in {"", "mixed", "unknown"}:
+        return None
+
+    normalized = LANGUAGE_HINT_ALIASES.get(normalized, normalized)
+    for separator in ("-", "_"):
+        if separator in normalized:
+            return normalized.split(separator, 1)[0]
+
+    return normalized
+
+
 def post_json(
     config: WorkerConfig,
     path: str,
@@ -113,8 +134,7 @@ class Transcriber:
             raise FileNotFoundError(f"Media file does not exist: {media_path}")
 
         model, model_path = self._load_model()
-        language_hint = str(job.get("languageHint") or "").strip().lower()
-        language = None if language_hint in {"", "mixed"} else language_hint
+        language = resolve_model_language(job.get("languageHint"))
         segments_iter, _info = model.transcribe(
             media_path,
             language=language,

@@ -19,6 +19,13 @@ function createId(prefix: string) {
   return `${prefix}-${crypto.randomUUID()}`;
 }
 
+function nextRevisionVersion(state: AppState, recordingId: string) {
+  const versions = state.revisions
+    .filter((entry) => entry.recordingId === recordingId)
+    .map((entry) => entry.version);
+  return versions.length > 0 ? Math.max(...versions) + 1 : 1;
+}
+
 export function bucketRecording(recording: Recording): WorkspaceBucket {
   if (
     recording.integrityState === "capturing" ||
@@ -136,15 +143,10 @@ export function createSystemDraftRevision(params: {
     throw new Error("Recording not found.");
   }
 
-  const priorVersions = params.state.revisions
-    .filter((entry) => entry.recordingId === recording.id)
-    .map((entry) => entry.version);
-  const nextVersion = priorVersions.length > 0 ? Math.max(...priorVersions) + 1 : 1;
-
   const revision: TranscriptRevision = {
     id: createId("rev"),
     recordingId: params.recordingId,
-    version: nextVersion,
+    version: nextRevisionVersion(params.state, recording.id),
     state: "draft",
     basedOnRevisionId: null,
     createdByRole: "system",
@@ -470,6 +472,12 @@ export function saveDraftRevision(params: {
     throw new Error("Current revision not found.");
   }
 
+  if (params.segments.length === 0 && priorRevision.segments.length > 0) {
+    throw new Error(
+      "The loaded draft is missing transcript segments. Reload this recording before saving changes.",
+    );
+  }
+
   if (
     priorRevision.state === "approved" &&
     recording.approvedRevisionId === priorRevision.id &&
@@ -485,7 +493,7 @@ export function saveDraftRevision(params: {
     throw new Error("This transcript must be reopened by an approver before it can be edited again.");
   }
 
-  const version = priorRevision.version + 1;
+  const version = nextRevisionVersion(params.state, recording.id);
 
   const revision: TranscriptRevision = {
     id: createId("rev"),
@@ -706,7 +714,7 @@ export function reopenApprovedRevision(params: {
   const draft: TranscriptRevision = {
     id: createId("rev"),
     recordingId: recording.id,
-    version: approvedRevision.version + 1,
+    version: nextRevisionVersion(params.state, recording.id),
     state: "draft",
     basedOnRevisionId: approvedRevision.id,
     createdByRole: params.role,

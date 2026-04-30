@@ -38,6 +38,18 @@ def env_flag(name: str, default: bool) -> bool:
     return normalized not in {"0", "false", "no", "off", ""}
 
 
+def running_in_container() -> bool:
+    return Path("/.dockerenv").exists()
+
+
+def default_offline_mode() -> bool:
+    return running_in_container()
+
+
+def default_allow_runtime_download() -> bool:
+    return not running_in_container()
+
+
 def slugify_model_name(model_name: str) -> str:
     return model_name.replace("/", "--").replace(":", "--")
 
@@ -139,9 +151,10 @@ class WorkerConfig:
                     str(REPO_ROOT / "models"),
                 )
             ),
-            offline=env_flag("SUPERSCRIBER_TRANSCRIBE_OFFLINE", True),
+            offline=env_flag("SUPERSCRIBER_TRANSCRIBE_OFFLINE", default_offline_mode()),
             allow_runtime_download=env_flag(
-                "SUPERSCRIBER_TRANSCRIBE_ALLOW_RUNTIME_DOWNLOAD", False
+                "SUPERSCRIBER_TRANSCRIBE_ALLOW_RUNTIME_DOWNLOAD",
+                default_allow_runtime_download(),
             ),
             allow_stub_fallback=env_flag(
                 "SUPERSCRIBER_TRANSCRIBE_ALLOW_STUB_FALLBACK", False

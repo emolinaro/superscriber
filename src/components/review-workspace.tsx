@@ -12,7 +12,11 @@ import { formatSegmentWindow } from "@/lib/format";
 
 type Action = (formData: FormData) => void | Promise<void>;
 
-const WAVE_BARS = Array.from({ length: 54 }, (_, index) => index);
+const WAVE_BAR_COUNT = 54;
+const IDLE_WAVE_BARS = Array.from({ length: WAVE_BAR_COUNT }, (_, index) => {
+  const pattern = [24, 56, 74, 48, 84, 36];
+  return pattern[index % pattern.length] ?? 48;
+});
 const COMPACT_REVIEW_BREAKPOINT_PX = 760;
 
 function FormButton({
@@ -72,6 +76,10 @@ export function ReviewWorkspace({
   reopenAction,
 }: ReviewWorkspaceProps) {
   const mediaRef = useRef<HTMLAudioElement | HTMLVideoElement | null>(null);
+  const animationFrameRef = useRef<number | null>(null);
+  const audioContextRef = useRef<AudioContext | null>(null);
+  const analyserRef = useRef<AnalyserNode | null>(null);
+  const sourceNodeRef = useRef<MediaElementAudioSourceNode | null>(null);
   const [segments, setSegments] = useState(currentRevision?.segments ?? []);
   const [summary, setSummary] = useState(
     currentRevision?.summary ?? "Transcript draft is not ready yet.",
@@ -79,7 +87,20 @@ export function ReviewWorkspace({
   const [currentMs, setCurrentMs] = useState(0);
   const [durationMs, setDurationMs] = useState(0);
   const [isCompactViewport, setIsCompactViewport] = useState(false);
+  const [mediaElement, setMediaElement] = useState<HTMLAudioElement | HTMLVideoElement | null>(
+    null,
+  );
+  const [waveBars, setWaveBars] = useState(IDLE_WAVE_BARS);
   const hasSegments = segments.length > 0;
+
+  useEffect(() => {
+    setSegments(currentRevision?.segments ?? []);
+    setSummary(currentRevision?.summary ?? "Transcript draft is not ready yet.");
+  }, [currentRevision?.id]);
+
+  useEffect(() => {
+    setWaveBars(IDLE_WAVE_BARS);
+  }, [currentRevision?.id, mediaUrl]);
 
   const activeSegmentIndex = segments.findIndex(
     (segment) => currentMs >= segment.startMs && currentMs <= segment.endMs,
@@ -109,6 +130,102 @@ export function ReviewWorkspace({
     };
   }, []);
 
+  useEffect(() => {
+    const element = mediaElement;
+    if (!element || !mediaUrl) {
+      return;
+    }
+    const activeElement = element;
+
+    let cancelled = false;
+
+    function stopAnimation() {
+      if (animationFrameRef.current !== null) {
+        cancelAnimationFrame(animationFrameRef.current);
+        animationFrameRef.current = null;
+      }
+    }
+
+    function sampleWaveform() {
+      const analyser = analyserRef.current;
+      if (!analyser || cancelled) {
+        return;
+      }
+
+      const data = new Uint8Array(analyser.frequencyBinCount);
+      analyser.getByteFrequencyData(data);
+
+      const bucketSize = Math.max(1, Math.floor(data.length / WAVE_BAR_COUNT));
+      const nextBars = Array.from({ length: WAVE_BAR_COUNT }, (_, index) => {
+        const start = index * bucketSize;
+        const end = Math.min(start + bucketSize, data.length);
+        let total = 0;
+        for (let cursor = start; cursor < end; cursor += 1) {
+          total += data[cursor] ?? 0;
+        }
+        const average = total / Math.max(1, end - start);
+        return Math.max(18, Math.min(92, Math.round((average / 255) * 100)));
+      });
+
+      setWaveBars(nextBars);
+      animationFrameRef.current = requestAnimationFrame(sampleWaveform);
+    }
+
+    async function startAnimation() {
+      try {
+        if (!audioContextRef.current) {
+          audioContextRef.current = new AudioContext();
+        }
+        const audioContext = audioContextRef.current;
+        if (audioContext.state === "suspended") {
+          await audioContext.resume();
+        }
+
+        if (!sourceNodeRef.current) {
+          sourceNodeRef.current = audioContext.createMediaElementSource(activeElement);
+        }
+
+        if (!analyserRef.current) {
+          const analyser = audioContext.createAnalyser();
+          analyser.fftSize = 256;
+          analyser.smoothingTimeConstant = 0.82;
+          sourceNodeRef.current.connect(analyser);
+          analyser.connect(audioContext.destination);
+          analyserRef.current = analyser;
+        }
+
+        stopAnimation();
+        sampleWaveform();
+      } catch {
+        setWaveBars(IDLE_WAVE_BARS);
+      }
+    }
+
+    function handlePlay() {
+      void startAnimation();
+    }
+
+    function handlePause() {
+      stopAnimation();
+    }
+
+    activeElement.addEventListener("play", handlePlay);
+    activeElement.addEventListener("pause", handlePause);
+    activeElement.addEventListener("ended", handlePause);
+
+    if (!activeElement.paused && !activeElement.ended) {
+      void startAnimation();
+    }
+
+    return () => {
+      cancelled = true;
+      stopAnimation();
+      activeElement.removeEventListener("play", handlePlay);
+      activeElement.removeEventListener("pause", handlePause);
+      activeElement.removeEventListener("ended", handlePause);
+    };
+  }, [mediaElement, mediaUrl]);
+
   function updateSegment(
     segmentId: string,
     key: "speakerLabel" | "text",
@@ -123,6 +240,7 @@ export function ReviewWorkspace({
 
   function attachMedia(node: HTMLAudioElement | HTMLVideoElement | null) {
     mediaRef.current = node;
+    setMediaElement(node);
   }
 
   function syncPlaybackPosition(nextSeconds: number) {
@@ -281,10 +399,10 @@ export function ReviewWorkspace({
                 </span>
               </div>
 
-              <div className="transport-wave-shell" style={waveStyle}>
+                <div className="transport-wave-shell" style={waveStyle}>
                 <div className="transport-wave-bars" aria-hidden="true">
-                  {WAVE_BARS.map((bar) => (
-                    <span key={bar} />
+                  {waveBars.map((height, index) => (
+                    <span key={index} style={{ height: `${height}%` }} />
                   ))}
                 </div>
                 <div className="transport-playhead" />

@@ -198,6 +198,59 @@ describe("workflow", () => {
     ).toThrow(/newer draft revision/i);
   });
 
+  it("rejects saving an empty draft over an existing transcript", () => {
+    const state = createState();
+
+    expect(() =>
+      saveDraftRevision({
+        state,
+        recordingId: "rec-1",
+        role: "reviewer",
+        expectedCurrentRevisionId: "rev-1",
+        summary: "Transcript draft is not ready yet.",
+        segments: [],
+      }),
+    ).toThrow(/missing transcript segments/i);
+  });
+
+  it("allocates the next draft version from revision history, not the current pointer", () => {
+    const state = createState();
+
+    state.revisions.push({
+      id: "rev-2-orphan",
+      recordingId: "rec-1",
+      version: 2,
+      state: "draft",
+      basedOnRevisionId: "rev-1",
+      createdByRole: "admin",
+      createdAt: nowIso(),
+      submittedAt: null,
+      approvedAt: null,
+      summary: "Orphaned draft",
+      segments: [],
+    });
+
+    const saved = saveDraftRevision({
+      state,
+      recordingId: "rec-1",
+      role: "reviewer",
+      expectedCurrentRevisionId: "rev-1",
+      summary: "Fresh draft after orphan",
+      segments: [
+        {
+          id: "seg-1",
+          speakerLabel: "Speaker A",
+          startMs: 0,
+          endMs: 5_000,
+          text: "Fresh draft text.",
+          confidence: 0.92,
+        },
+      ],
+    });
+
+    expect(saved.version).toBe(3);
+  });
+
   it("rejects approving a stale pending revision id", () => {
     const state = createState();
 
