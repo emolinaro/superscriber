@@ -134,6 +134,12 @@ async function createLocalAccount(page: Page, user: LocalUser) {
   ).toBeVisible();
 }
 
+async function expectAdminWorkspace(page: Page) {
+  await expect(page.locator("h1.workspace-title")).toHaveText(
+    "Institutional oversight workspace",
+  );
+}
+
 test.describe.serial("single-image appliance", () => {
   test("bootstraps local auth and surfaces wrong-password recovery", async ({ page }) => {
     await page.goto("/");
@@ -160,7 +166,7 @@ test.describe.serial("single-image appliance", () => {
     ).toBeVisible();
 
     await login(page, adminUser);
-    await expect(page.getByText("Institutional oversight workspace")).toBeVisible();
+    await expectAdminWorkspace(page);
 
     await createLocalAccount(page, reviewerUser);
     await createLocalAccount(page, approverUser);
@@ -175,7 +181,7 @@ test.describe.serial("single-image appliance", () => {
   test("redirects expired sessions back through local sign-in", async ({ page }) => {
     await ensureAdminExists(page);
     await login(page, adminUser);
-    await expect(page.getByText("Institutional oversight workspace")).toBeVisible();
+    await expectAdminWorkspace(page);
 
     await page.context().clearCookies();
     await page.goto("/workspace");
@@ -184,7 +190,7 @@ test.describe.serial("single-image appliance", () => {
     await expect(page.getByText("Session expired. Sign in again to continue.")).toBeVisible();
 
     await login(page, adminUser);
-    await expect(page.getByText("Institutional oversight workspace")).toBeVisible();
+    await expectAdminWorkspace(page);
   });
 
   test("uploads, assigns, reviews, denies unassigned access, and approves", async ({
