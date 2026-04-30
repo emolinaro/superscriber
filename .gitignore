@@ -16,5 +16,7 @@ data/*.secret
 *plan*.md
 *design*.md
 !/DESIGN.md
+docs/superpowers/
 
 .gstack/
+.superpowers/
