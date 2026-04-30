@@ -43,3 +43,6 @@
 **Depends on:** Playwright E2E harness and the new auth/review screens existing in code
 
 ## Completed
+
+- 2026-04-30: Shipped the self-contained backend appliance with local accounts, assignment-gated review and approval, resumable ingest, and internal transcript-job orchestration.
+- 2026-04-30: Added Playwright coverage for first-run auth, governed upload resume, assignment enforcement, phone-sized read-only review, and the single-image container path.
