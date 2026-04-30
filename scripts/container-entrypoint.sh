@@ -35,12 +35,62 @@ export SUPERSCRIBER_TRANSCRIBE_DEVICE="${SUPERSCRIBER_TRANSCRIBE_DEVICE:-auto}"
 
 APP_PID=""
 WORKER_PID=""
+RUN_AS_APP_USER=()
 
-mkdir -p \
-  "$(dirname "${SUPERSCRIBER_DB_PATH}")" \
-  "${SUPERSCRIBER_MEDIA_DIR}" \
-  "${SUPERSCRIBER_UPLOAD_TMP_DIR}" \
-  "${SUPERSCRIBER_TRANSCRIBE_MODEL_DIR}"
+prepare_runtime_root() {
+  local path="$1"
+  if [[ ! -e "${path}" ]]; then
+    return
+  fi
+
+  chown "${NODE_UID}:${NODE_GID}" "${path}"
+  chmod u+rwx "${path}"
+}
+
+if [[ "$(id -u)" == "0" ]]; then
+  NODE_UID="$(id -u node)"
+  NODE_GID="$(id -g node)"
+
+  prepare_runtime_root "${APP_DATA_DIR}"
+  prepare_runtime_root "$(dirname "${SUPERSCRIBER_DB_PATH}")"
+  prepare_runtime_root "$(dirname "${SUPERSCRIBER_MEDIA_DIR}")"
+  prepare_runtime_root "$(dirname "${SUPERSCRIBER_UPLOAD_TMP_DIR}")"
+  prepare_runtime_root "${SUPERSCRIBER_TRANSCRIBE_MODEL_DIR}"
+
+  mkdir -p \
+    "$(dirname "${SUPERSCRIBER_DB_PATH}")" \
+    "${SUPERSCRIBER_MEDIA_DIR}" \
+    "${SUPERSCRIBER_UPLOAD_TMP_DIR}" \
+    "${SUPERSCRIBER_TRANSCRIBE_MODEL_DIR}"
+
+  # Bind mounts often inherit host ownership. Normalize writable runtime paths
+  # before dropping privileges so the container works on stock Linux runners.
+  chown -R "${NODE_UID}:${NODE_GID}" \
+    "${APP_DATA_DIR}" \
+    "${SUPERSCRIBER_TRANSCRIBE_MODEL_DIR}"
+
+  RUN_AS_APP_USER=(
+    setpriv
+    "--reuid=${NODE_UID}"
+    "--regid=${NODE_GID}"
+    --clear-groups
+  )
+else
+  mkdir -p \
+    "$(dirname "${SUPERSCRIBER_DB_PATH}")" \
+    "${SUPERSCRIBER_MEDIA_DIR}" \
+    "${SUPERSCRIBER_UPLOAD_TMP_DIR}" \
+    "${SUPERSCRIBER_TRANSCRIBE_MODEL_DIR}"
+fi
+
+run_as_app_user() {
+  if [[ ${#RUN_AS_APP_USER[@]} -gt 0 ]]; then
+    "${RUN_AS_APP_USER[@]}" "$@"
+    return
+  fi
+
+  "$@"
+}
 
 terminate() {
   if [[ -n "${WORKER_PID}" ]] && kill -0 "${WORKER_PID}" 2>/dev/null; then
@@ -88,7 +138,7 @@ monitor_children() {
 
 echo "Starting Superscriber app on ${PORT} in ${SUPERSCRIBER_ENGINE_MODE} mode."
 cd "${APP_WORKDIR}"
-node "${SERVER_ENTRYPOINT}" &
+run_as_app_user node "${SERVER_ENTRYPOINT}" &
 APP_PID=$!
 
 if ! wait_for_app; then
@@ -100,7 +150,7 @@ fi
 if [[ "${SUPERSCRIBER_ENGINE_MODE}" == "internal" ]]; then
   echo "Using offline transcription model ${SUPERSCRIBER_TRANSCRIBE_MODEL} from ${SUPERSCRIBER_TRANSCRIBE_MODEL_DIR}."
   echo "Starting internal Python worker."
-  python3 -u "${WORKER_ENTRYPOINT}" &
+  run_as_app_user python3 -u "${WORKER_ENTRYPOINT}" &
   WORKER_PID=$!
 fi
 

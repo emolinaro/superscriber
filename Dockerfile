@@ -47,8 +47,6 @@ RUN python3 -m venv /opt/venv \
   && mkdir -p /app/data /app/models \
   && chown -R node:node /app
 
-USER node
-
 VOLUME ["/app/data"]
 EXPOSE 3000
 

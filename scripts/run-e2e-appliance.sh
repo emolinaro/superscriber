@@ -46,7 +46,6 @@ start_container() {
   mkdir -p "${DATA_DIR}"
 
   docker run \
-    --rm \
     --detach \
     --name "${CONTAINER_NAME}" \
     --publish "${PORT}:3000" \
