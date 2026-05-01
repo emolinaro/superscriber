@@ -196,6 +196,7 @@ test.describe.serial("single-image appliance", () => {
   test("uploads, assigns, reviews, denies unassigned access, and approves", async ({
     page,
   }) => {
+    await page.setViewportSize({ width: 1280, height: 960 });
     await login(page, adminUser);
 
     await page.getByLabel("Title").fill(recordingTitle);
@@ -243,20 +244,15 @@ test.describe.serial("single-image appliance", () => {
     await expect(firstSegmentRow.getByLabel("Transcript text for seg-1")).toContainText(
       "Fallback transcript generated",
     );
-    await expect(
-      firstSegmentRow.getByRole("button", { name: /Jump to .* for / }),
-    ).toBeVisible();
-    const jumpButtonBox = await firstSegmentRow
-      .getByRole("button", { name: /Jump to .* for / })
-      .boundingBox();
-    const transcriptBox = await firstSegmentRow
-      .getByLabel("Transcript text for seg-1")
-      .boundingBox();
+    const jumpButton = firstSegmentRow.getByRole("button", { name: /Jump to .* for / });
+    await expect(jumpButton).toBeVisible();
+    const railBox = await firstSegmentRow.locator(".review-segment-rail").boundingBox();
+    const editorBox = await firstSegmentRow.locator(".review-segment-editor").boundingBox();
 
-    expect(jumpButtonBox).not.toBeNull();
-    expect(transcriptBox).not.toBeNull();
-    expect((jumpButtonBox?.x ?? 0) + (jumpButtonBox?.width ?? 0)).toBeLessThan(
-      transcriptBox?.x ?? 0,
+    expect(railBox).not.toBeNull();
+    expect(editorBox).not.toBeNull();
+    expect((railBox?.x ?? 0) + (railBox?.width ?? 0)).toBeLessThan(
+      editorBox?.x ?? 0,
     );
 
     const firstTranscriptField = page.getByLabel("Transcript text for seg-1");
