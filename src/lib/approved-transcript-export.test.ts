@@ -64,5 +64,12 @@ describe("approved transcript export registry", () => {
     ).toBe(
       "https://example.com/workspaces/demo/transcripts/123/export?download=1&format=json",
     );
+
+    expect(
+      buildApprovedTranscriptExportUrl(
+        "/workspaces/demo/transcripts/123/export?download=1",
+        "txt",
+      ),
+    ).toBe("/workspaces/demo/transcripts/123/export?download=1&format=txt");
   });
 });
