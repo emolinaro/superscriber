@@ -1,16 +1,8 @@
+import "server-only";
+
 import { Document, Packer, Paragraph, TextRun } from "docx";
 import type { Recording, TranscriptRevision } from "@/domain/models";
 import type { ApprovedTranscriptExportFormat } from "@/lib/approved-transcript-export";
-
-function assertServerOnly() {
-  if (typeof globalThis.window !== "undefined") {
-    throw new Error(
-      "src/server/transcript-export.ts can only be imported from the server runtime.",
-    );
-  }
-}
-
-assertServerOnly();
 
 export type ApprovedTranscriptExportRecording = Pick<
   Recording,
