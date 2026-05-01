@@ -55,6 +55,23 @@ export type PolicyProfile = {
   description: string;
 };
 
+export type AppUser = {
+  id: string;
+  email: string;
+  displayName: string;
+  role: UserRole;
+  isActive: boolean;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type Principal = {
+  userId: string;
+  email: string;
+  displayName: string;
+  role: UserRole;
+};
+
 export type Workspace = {
   id: string;
   name: string;
@@ -108,6 +125,8 @@ export type TranscriptJob = {
   recordingId: string;
   state: TranscriptJobState;
   adapter: string;
+  claimedByWorkerId: string | null;
+  attemptCount: number;
   createdAt: string;
   updatedAt: string;
   startedAt: string | null;
@@ -157,6 +176,7 @@ export type AuditEvent = {
     | "transcription.started"
     | "transcription.partial"
     | "transcription.completed"
+    | "transcription.failed"
     | "revision.saved"
     | "revision.submitted"
     | "approval.approved"
@@ -164,6 +184,16 @@ export type AuditEvent = {
     | "policy.denied";
   detail: string;
   createdAt: string;
+};
+
+export type RecordingAssignment = {
+  id: string;
+  recordingId: string;
+  userId: string;
+  assignedByUserId: string | null;
+  isActive: boolean;
+  createdAt: string;
+  updatedAt: string;
 };
 
 export type AppState = {

@@ -1,36 +1,47 @@
-import { cookies } from "next/headers";
+import { getServerSession } from "next-auth";
 import { redirect } from "next/navigation";
-import { USER_ROLES, UserRole } from "@/domain/models";
+import { type Principal, type UserRole } from "@/domain/models";
+import { authOptions } from "@/server/auth/options";
 
-const COOKIE_NAME = "superscriber-role";
+export type ActiveSession = {
+  user: Principal;
+  expiresAt: string;
+};
+
+export async function getActiveSession(): Promise<ActiveSession | null> {
+  const session = await getServerSession(authOptions);
+  if (!session?.user?.id || !session.user.role) {
+    return null;
+  }
+
+  return {
+    user: {
+      userId: session.user.id,
+      email: session.user.email ?? "",
+      displayName: session.user.name ?? session.user.email ?? "Local account",
+      role: session.user.role,
+    },
+    expiresAt: session.expires,
+  };
+}
+
+export async function getActivePrincipal() {
+  return (await getActiveSession())?.user ?? null;
+}
 
 export async function getActiveRole(): Promise<UserRole | null> {
-  const store = await cookies();
-  const raw = store.get(COOKIE_NAME)?.value;
-  return USER_ROLES.includes(raw as UserRole) ? (raw as UserRole) : null;
+  return (await getActivePrincipal())?.role ?? null;
+}
+
+export async function requireActivePrincipal() {
+  const principal = await getActivePrincipal();
+  if (!principal) {
+    redirect("/?reason=session-expired");
+  }
+
+  return principal;
 }
 
 export async function requireActiveRole() {
-  const role = await getActiveRole();
-  if (!role) {
-    redirect("/");
-  }
-
-  return role;
+  return (await requireActivePrincipal()).role;
 }
-
-export async function setActiveRole(role: UserRole) {
-  const store = await cookies();
-  store.set(COOKIE_NAME, role, {
-    httpOnly: true,
-    sameSite: "lax",
-    secure: false,
-    path: "/",
-  });
-}
-
-export async function clearActiveRole() {
-  const store = await cookies();
-  store.delete(COOKIE_NAME);
-}
-

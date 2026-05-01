@@ -1,8 +1,8 @@
 import { createReadStream } from "node:fs";
 import { Readable } from "node:stream";
 import { NextRequest, NextResponse } from "next/server";
-import { resolveMedia } from "@/server/repository";
-import { getActiveRole } from "@/server/session";
+import { resolveMediaForPrincipal } from "@/server/repository";
+import { getActivePrincipal } from "@/server/session";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -34,13 +34,13 @@ export async function GET(
   request: NextRequest,
   context: { params: Params },
 ) {
-  const role = await getActiveRole();
-  if (!role) {
+  const principal = await getActivePrincipal();
+  if (!principal) {
     return new NextResponse("Unauthorized", { status: 401 });
   }
 
   const { recordingId } = await context.params;
-  const media = resolveMedia(recordingId, role);
+  const media = resolveMediaForPrincipal(recordingId, principal);
   if (!media) {
     return new NextResponse("Not found", { status: 404 });
   }

@@ -1,68 +1,87 @@
 import { redirect } from "next/navigation";
-import { enterWorkspaceAction } from "@/app/actions";
-import { USER_ROLES } from "@/domain/models";
-import { getActiveRole } from "@/server/session";
+import { BootstrapSetupForm } from "@/components/auth/bootstrap-setup-form";
+import { SuperscriberLogo } from "@/components/brand/superscriber-logo";
+import { LoginForm } from "@/components/auth/login-form";
+import { hasAnyUsers } from "@/server/auth/service";
+import { getActivePrincipal } from "@/server/session";
 
 export const dynamic = "force-dynamic";
 
-const ROLE_COPY: Record<
-  (typeof USER_ROLES)[number],
-  { title: string; description: string; badge: string }
-> = {
-  uploader: {
-    title: "Capture and ingest",
-    description:
-      "Use the governed entry point to upload or record sensitive material directly into the institutional workspace.",
-    badge: "Ingest role",
-  },
-  reviewer: {
-    title: "Review and correct",
-    description:
-      "Listen in the browser, verify diarization, and correct transcript text without pulling media onto a local device.",
-    badge: "Review role",
-  },
-  approver: {
-    title: "Approve and control release",
-    description:
-      "Lock approved transcripts, reopen when policy allows, and govern who can export approved text.",
-    badge: "Approval role",
-  },
-  admin: {
-    title: "Oversee governed flow",
-    description:
-      "Inspect the entire pipeline, switch roles for support, and validate the policy profile across every queue.",
-    badge: "Admin role",
-  },
-};
+type SearchParams = Promise<Record<string, string | string[] | undefined>>;
 
-export default async function LandingPage() {
-  const role = await getActiveRole();
-  if (role) {
+function firstValue(value: string | string[] | undefined) {
+  return Array.isArray(value) ? value[0] : value;
+}
+
+function renderAuthNotice(reason: string | undefined, notice: string | undefined) {
+  if (notice === "bootstrap-complete") {
+    return (
+      <div className="banner" data-tone="ok">
+        First-run setup is complete. Sign in with the admin account you just created.
+      </div>
+    );
+  }
+
+  if (reason === "logged-out") {
+    return (
+      <div className="banner" data-tone="ok">
+        Your session ended safely. Sign in again when you want to continue.
+      </div>
+    );
+  }
+
+  if (reason === "session-expired") {
+    return (
+      <div className="banner" data-tone="danger">
+        Session expired. Sign in again to continue.
+      </div>
+    );
+  }
+
+  return null;
+}
+
+export default async function LandingPage({
+  searchParams,
+}: {
+  searchParams: SearchParams;
+}) {
+  const principal = await getActivePrincipal();
+  if (principal) {
     redirect("/workspace");
   }
 
+  const params = await searchParams;
+  const anyUsers = await hasAnyUsers();
+  const notice = firstValue(params.notice);
+  const reason = firstValue(params.reason);
+
   return (
-    <main className="shell">
+    <main className="shell shell-auth">
       <div className="hero-grid">
         <section className="panel panel-dark">
           <div className="panel-inner stack">
-            <p className="eyebrow">Superscriber</p>
+            <SuperscriberLogo
+              className="hero-brand-shell"
+              showDescriptor
+              size="lg"
+              tone="inverse"
+            />
             <h1 className="headline">One governed workspace for sensitive recordings.</h1>
             <p className="lede" style={{ color: "rgba(238, 246, 242, 0.8)" }}>
-              Record or upload, transcribe with diarization, review in the browser,
-              and approve server-side. The demo uses role cookies, local JSON
-              persistence, and mock transcription adapters, but the workflow boundary
-              is the same one the approved plan calls for.
+              Local accounts now gate the workspace. The media pipeline is still
+              moving off the prototype stack, but the trust boundary has shifted to
+              real sign-in, explicit session expiry, and server-side role access.
             </p>
             <div className="button-row">
+              <span className="pill" data-tone={anyUsers ? "ok" : "warn"}>
+                {anyUsers ? "Local login active" : "First-run setup required"}
+              </span>
               <span className="pill" data-tone="info">
                 Browser-bound review
               </span>
               <span className="pill" data-tone="ok">
                 Raw media stays server-side
-              </span>
-              <span className="pill" data-tone="warn">
-                Demo auth only
               </span>
             </div>
           </div>
@@ -70,23 +89,19 @@ export default async function LandingPage() {
 
         <section className="panel panel-strong">
           <div className="panel-inner stack">
-            <p className="eyebrow">Enter Demo Workspace</p>
-            <h2 className="section-title">Choose the role you want to simulate.</h2>
-            <div className="role-grid">
-              {USER_ROLES.map((entry) => (
-                <form key={entry} action={enterWorkspaceAction} className="role-card">
-                  <span className="badge">{ROLE_COPY[entry].badge}</span>
-                  <div className="stack-tight">
-                    <h3 className="card-title">{ROLE_COPY[entry].title}</h3>
-                    <p className="body-copy">{ROLE_COPY[entry].description}</p>
-                  </div>
-                  <input type="hidden" name="role" value={entry} />
-                  <button className="button button-primary" type="submit">
-                    Continue as {entry}
-                  </button>
-                </form>
-              ))}
-            </div>
+            <p className="eyebrow">{anyUsers ? "Local sign-in" : "First-run setup"}</p>
+            <h2 className="section-title">
+              {anyUsers
+                ? "Sign in to continue inside the governed workspace."
+                : "Create the first administrator before normal login opens."}
+            </h2>
+            <p className="body-copy">
+              {anyUsers
+                ? "Use the local account assigned by your institution. Wrong-password and session-expiry states stay explicit."
+                : "This appliance is not ready for daily use until the first admin exists. Setup only has to happen once."}
+            </p>
+            {renderAuthNotice(reason, notice)}
+            {anyUsers ? <LoginForm /> : <BootstrapSetupForm />}
           </div>
         </section>
       </div>

@@ -1,5 +1,6 @@
-import { mkdirSync, readFileSync, writeFileSync, existsSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { mkdirSync } from "node:fs";
+import { join } from "node:path";
+import { asc, desc, eq } from "drizzle-orm";
 import {
   AppState,
   AuditEvent,
@@ -10,12 +11,31 @@ import {
   TranscriptRevision,
   Workspace,
 } from "@/domain/models";
-import { normalizeState, synchronizeOrchestration } from "@/server/orchestration/service";
+import { getAppDb, type AppDatabase } from "@/server/db/client";
+import {
+  appStateMeta,
+  approvals,
+  auditEvents,
+  ingestionSessions,
+  policyProfiles,
+  recordings,
+  revisions,
+  transcriptJobs,
+  workspaces,
+} from "@/server/db/schema";
+import { getOrchestrationConfig } from "@/server/orchestration/config";
+import { synchronizeOrchestration } from "@/server/orchestration/service";
 
 const ROOT = process.cwd();
 const DATA_DIR = join(ROOT, "data");
 export const MEDIA_DIR = join(DATA_DIR, "media");
-const STATE_FILE = join(DATA_DIR, "state.json");
+const STATE_VERSION = Symbol("app-state-version");
+const MAX_WRITE_RETRIES = 3;
+const STATE_CONFLICT_ERROR = "State changed concurrently. Retry the operation.";
+
+type VersionedAppState = AppState & {
+  [STATE_VERSION]?: number;
+};
 
 function nowIso() {
   return new Date().toISOString();
@@ -23,6 +43,35 @@ function nowIso() {
 
 function createId(prefix: string) {
   return `${prefix}-${crypto.randomUUID()}`;
+}
+
+function attachStateVersion(state: AppState, version: number) {
+  Object.defineProperty(state, STATE_VERSION, {
+    value: version,
+    writable: true,
+    enumerable: false,
+    configurable: true,
+  });
+
+  return state as VersionedAppState;
+}
+
+function snapshotVersion(state: AppState) {
+  return (state as VersionedAppState)[STATE_VERSION] ?? null;
+}
+
+function currentStateVersion(db: AppDatabase = getAppDb()) {
+  return (
+    db
+      .select({ stateVersion: appStateMeta.stateVersion })
+      .from(appStateMeta)
+      .where(eq(appStateMeta.id, 1))
+      .get()?.stateVersion ?? 0
+  );
+}
+
+function isStateConflictError(error: unknown) {
+  return error instanceof Error && error.message === STATE_CONFLICT_ERROR;
 }
 
 function seedState(): AppState {
@@ -110,7 +159,7 @@ function seedState(): AppState {
     ],
   };
 
-  const recordings: Recording[] = [
+  const recordingsState: Recording[] = [
     {
       id: "rec-seed-review",
       workspaceId: workspace.id,
@@ -182,7 +231,7 @@ function seedState(): AppState {
     },
   ];
 
-  const ingestionSessions: IngestionSession[] = [
+  const ingestionSessionsState: IngestionSession[] = [
     {
       id: "ingest-seed-review",
       recordingId: "rec-seed-review",
@@ -233,12 +282,14 @@ function seedState(): AppState {
     },
   ];
 
-  const transcriptJobs: TranscriptJob[] = [
+  const transcriptJobsState: TranscriptJob[] = [
     {
       id: "job-seed-review",
       recordingId: "rec-seed-review",
       state: "completed",
       adapter: "mock-governed-engine",
+      claimedByWorkerId: null,
+      attemptCount: 1,
       createdAt: nowIso(),
       updatedAt: nowIso(),
       startedAt: nowIso(),
@@ -255,6 +306,8 @@ function seedState(): AppState {
       recordingId: "rec-seed-approval",
       state: "completed",
       adapter: "mock-governed-engine",
+      claimedByWorkerId: null,
+      attemptCount: 1,
       createdAt: nowIso(),
       updatedAt: nowIso(),
       startedAt: nowIso(),
@@ -271,6 +324,8 @@ function seedState(): AppState {
       recordingId: "rec-seed-running",
       state: "running",
       adapter: "mock-governed-engine",
+      claimedByWorkerId: "seed-worker",
+      attemptCount: 1,
       createdAt: new Date(Date.now() - 5_000).toISOString(),
       updatedAt: new Date(Date.now() - 3_000).toISOString(),
       startedAt: new Date(Date.now() - 5_000).toISOString(),
@@ -284,7 +339,7 @@ function seedState(): AppState {
     },
   ];
 
-  const auditEvents: AuditEvent[] = [
+  const auditEventsState: AuditEvent[] = [
     {
       id: createId("audit"),
       workspaceId: workspace.id,
@@ -308,9 +363,9 @@ function seedState(): AppState {
   return {
     workspaces: [workspace],
     policyProfiles: policies,
-    recordings,
-    ingestionSessions,
-    transcriptJobs,
+    recordings: recordingsState,
+    ingestionSessions: ingestionSessionsState,
+    transcriptJobs: transcriptJobsState,
     revisions: [draftRevision, pendingRevision],
     approvals: [
       {
@@ -323,37 +378,350 @@ function seedState(): AppState {
         note: "Awaiting approver review.",
       },
     ],
-    auditEvents,
+    auditEvents: auditEventsState,
   };
 }
 
-function ensureFile() {
-  mkdirSync(dirname(STATE_FILE), { recursive: true });
+function serializeSegments(segments: TranscriptRevision["segments"]) {
+  return JSON.stringify(segments);
+}
+
+function deserializeSegments(raw: string) {
+  return JSON.parse(raw) as TranscriptRevision["segments"];
+}
+
+function ensureSeededState(db: AppDatabase = getAppDb()) {
+  mkdirSync(DATA_DIR, { recursive: true });
   mkdirSync(MEDIA_DIR, { recursive: true });
 
-  if (!existsSync(STATE_FILE)) {
-    writeFileSync(STATE_FILE, JSON.stringify(seedState(), null, 2));
+  const existing = db.select({ id: workspaces.id }).from(workspaces).limit(1).get();
+  if (existing) {
+    return;
   }
+
+  writeState(attachStateVersion(seedState(), currentStateVersion(db)), db);
 }
 
-export function readState(): AppState {
-  ensureFile();
-  const parsed = normalizeState(
-    JSON.parse(readFileSync(STATE_FILE, "utf8")) as AppState,
-  );
-  synchronizeOrchestration(parsed);
-  writeFileSync(STATE_FILE, JSON.stringify(parsed, null, 2));
-  return parsed;
+function loadState(db: AppDatabase = getAppDb()): AppState {
+  let attempts = 0;
+
+  while (attempts < MAX_WRITE_RETRIES) {
+    const beforeVersion = currentStateVersion(db);
+    const policyRows = db.select().from(policyProfiles).orderBy(policyProfiles.id).all();
+    const workspaceRows = db.select().from(workspaces).orderBy(workspaces.id).all();
+    const recordingRows = db.select().from(recordings).orderBy(desc(recordings.updatedAt)).all();
+    const ingestionRows = db
+      .select()
+      .from(ingestionSessions)
+      .orderBy(desc(ingestionSessions.updatedAt))
+      .all();
+    const jobRows = db.select().from(transcriptJobs).orderBy(desc(transcriptJobs.updatedAt)).all();
+    const revisionRows = db
+      .select()
+      .from(revisions)
+      .orderBy(revisions.recordingId, desc(revisions.version))
+      .all();
+    const approvalRows = db.select().from(approvals).orderBy(desc(approvals.createdAt)).all();
+    const auditRows = db.select().from(auditEvents).orderBy(desc(auditEvents.createdAt)).all();
+    const afterVersion = currentStateVersion(db);
+
+    if (beforeVersion !== afterVersion) {
+      attempts += 1;
+      continue;
+    }
+
+    return attachStateVersion(
+      {
+        workspaces: workspaceRows.map((row) => ({
+          id: row.id,
+          name: row.name,
+          slug: row.slug,
+          policyProfileId: row.policyProfileId,
+        })),
+        policyProfiles: policyRows.map((row) => ({
+          id: row.id,
+          label: row.label,
+          description: row.description,
+        })),
+        recordings: recordingRows.map((row) => ({
+          id: row.id,
+          workspaceId: row.workspaceId,
+          title: row.title,
+          source: row.source,
+          mediaKind: row.mediaKind,
+          mimeType: row.mimeType,
+          mediaPath: row.mediaPath,
+          originalFileName: row.originalFileName,
+          languageHint: row.languageHint,
+          uploadedByRole: row.uploadedByRole,
+          ingestionSessionId: row.ingestionSessionId,
+          transcriptJobId: row.transcriptJobId,
+          integrityState: row.integrityState,
+          transcriptJobState: row.transcriptJobState,
+          currentRevisionId: row.currentRevisionId,
+          approvedRevisionId: row.approvedRevisionId,
+          pendingRevisionId: row.pendingRevisionId,
+          verificationSummary: row.verificationSummary,
+          createdAt: row.createdAt,
+          updatedAt: row.updatedAt,
+          automationCursor: row.automationCursor,
+        })),
+        ingestionSessions: ingestionRows.map((row) => ({
+          id: row.id,
+          recordingId: row.recordingId,
+          source: row.source,
+          state: row.state,
+          adapter: row.adapter,
+          createdAt: row.createdAt,
+          updatedAt: row.updatedAt,
+          startedAt: row.startedAt,
+          verifiedAt: row.verifiedAt,
+          lastError: row.lastError,
+          verificationSummary: row.verificationSummary,
+          resumeToken: row.resumeToken,
+          bytesReceived: row.bytesReceived,
+          bytesExpected: row.bytesExpected,
+        })),
+        transcriptJobs: jobRows.map((row) => ({
+          id: row.id,
+          recordingId: row.recordingId,
+          state: row.state,
+          adapter: row.adapter,
+          claimedByWorkerId: row.claimedByWorkerId,
+          attemptCount: row.attemptCount,
+          createdAt: row.createdAt,
+          updatedAt: row.updatedAt,
+          startedAt: row.startedAt,
+          completedAt: row.completedAt,
+          lastHeartbeatAt: row.lastHeartbeatAt,
+          etaSeconds: row.etaSeconds,
+          progressPercent: row.progressPercent,
+          outputRevisionId: row.outputRevisionId,
+          lastError: row.lastError,
+          diarizationStatus: row.diarizationStatus,
+        })),
+        revisions: revisionRows.map((row) => ({
+          id: row.id,
+          recordingId: row.recordingId,
+          version: row.version,
+          state: row.state,
+          basedOnRevisionId: row.basedOnRevisionId,
+          createdByRole: row.createdByRole,
+          createdAt: row.createdAt,
+          submittedAt: row.submittedAt,
+          approvedAt: row.approvedAt,
+          summary: row.summary,
+          segments: deserializeSegments(row.segmentsJson),
+        })),
+        approvals: approvalRows.map((row) => ({
+          id: row.id,
+          recordingId: row.recordingId,
+          revisionId: row.revisionId,
+          state: row.state,
+          actorRole: row.actorRole,
+          createdAt: row.createdAt,
+          note: row.note,
+        })),
+        auditEvents: auditRows.map((row) => ({
+          id: row.id,
+          workspaceId: row.workspaceId,
+          recordingId: row.recordingId,
+          actorRole: row.actorRole,
+          type: row.type,
+          detail: row.detail,
+          createdAt: row.createdAt,
+        })),
+      },
+      afterVersion,
+    );
+  }
+
+  throw new Error(STATE_CONFLICT_ERROR);
 }
 
-export function writeState(state: AppState) {
-  ensureFile();
-  writeFileSync(STATE_FILE, JSON.stringify(state, null, 2));
+export function readState(db: AppDatabase = getAppDb()): AppState {
+  ensureSeededState(db);
+  return loadState(db);
 }
 
-export function withState<T>(mutate: (state: AppState) => T): T {
-  const state = readState();
-  const result = mutate(state);
-  writeState(state);
-  return result;
+export function writeState(state: AppState, db: AppDatabase = getAppDb()) {
+  mkdirSync(DATA_DIR, { recursive: true });
+  mkdirSync(MEDIA_DIR, { recursive: true });
+
+  const expectedVersion = snapshotVersion(state);
+  let nextVersion = 0;
+
+  db.transaction((tx) => {
+    const currentVersion =
+      tx
+        .select({ stateVersion: appStateMeta.stateVersion })
+        .from(appStateMeta)
+        .where(eq(appStateMeta.id, 1))
+        .get()?.stateVersion ?? 0;
+
+    if (expectedVersion !== null && currentVersion !== expectedVersion) {
+      throw new Error(STATE_CONFLICT_ERROR);
+    }
+
+    tx.delete(auditEvents).run();
+    tx.delete(approvals).run();
+    tx.delete(revisions).run();
+    tx.delete(transcriptJobs).run();
+    tx.delete(ingestionSessions).run();
+    tx.delete(recordings).run();
+    tx.delete(workspaces).run();
+    tx.delete(policyProfiles).run();
+
+    if (state.policyProfiles.length > 0) {
+      tx.insert(policyProfiles)
+        .values(
+          state.policyProfiles.map((profile) => ({
+            id: profile.id,
+            label: profile.label,
+            description: profile.description,
+          })),
+        )
+        .run();
+    }
+
+    if (state.workspaces.length > 0) {
+      tx.insert(workspaces)
+        .values(
+          state.workspaces.map((workspace) => ({
+            id: workspace.id,
+            name: workspace.name,
+            slug: workspace.slug,
+            policyProfileId: workspace.policyProfileId,
+          })),
+        )
+        .run();
+    }
+
+    if (state.recordings.length > 0) {
+      tx.insert(recordings)
+        .values(
+          state.recordings.map((recording) => ({
+            ...recording,
+          })),
+        )
+        .run();
+    }
+
+    if (state.ingestionSessions.length > 0) {
+      tx.insert(ingestionSessions)
+        .values(
+          state.ingestionSessions.map((session) => ({
+            ...session,
+          })),
+        )
+        .run();
+    }
+
+    if (state.transcriptJobs.length > 0) {
+      tx.insert(transcriptJobs)
+        .values(
+          state.transcriptJobs.map((job) => ({
+            ...job,
+          })),
+        )
+        .run();
+    }
+
+    if (state.revisions.length > 0) {
+      tx.insert(revisions)
+        .values(
+          state.revisions.map((revision) => ({
+            id: revision.id,
+            recordingId: revision.recordingId,
+            version: revision.version,
+            state: revision.state,
+            basedOnRevisionId: revision.basedOnRevisionId,
+            createdByRole: revision.createdByRole,
+            createdAt: revision.createdAt,
+            submittedAt: revision.submittedAt,
+            approvedAt: revision.approvedAt,
+            summary: revision.summary,
+            segmentsJson: serializeSegments(revision.segments),
+          })),
+        )
+        .run();
+    }
+
+    if (state.approvals.length > 0) {
+      tx.insert(approvals)
+        .values(
+          state.approvals.map((approval) => ({
+            ...approval,
+          })),
+        )
+        .run();
+    }
+
+    if (state.auditEvents.length > 0) {
+      tx.insert(auditEvents)
+        .values(
+          state.auditEvents.map((event) => ({
+            ...event,
+          })),
+        )
+        .run();
+    }
+    nextVersion = currentVersion + 1;
+    tx.update(appStateMeta)
+      .set({
+        stateVersion: nextVersion,
+      })
+      .where(eq(appStateMeta.id, 1))
+      .run();
+  });
+
+  attachStateVersion(state, nextVersion);
+}
+
+export function readSynchronizedState(db: AppDatabase = getAppDb()) {
+  if (getOrchestrationConfig().mode !== "mock") {
+    return readState(db);
+  }
+
+  let attempts = 0;
+  while (attempts < MAX_WRITE_RETRIES) {
+    const state = readState(db);
+    const before = JSON.stringify(state);
+    synchronizeOrchestration(state);
+    if (JSON.stringify(state) === before) {
+      return state;
+    }
+
+    try {
+      writeState(state, db);
+      return state;
+    } catch (error) {
+      if (!isStateConflictError(error)) {
+        throw error;
+      }
+      attempts += 1;
+    }
+  }
+
+  throw new Error(STATE_CONFLICT_ERROR);
+}
+
+export function withState<T>(mutate: (state: AppState) => T, db: AppDatabase = getAppDb()): T {
+  let attempts = 0;
+  while (attempts < MAX_WRITE_RETRIES) {
+    const state = readState(db);
+
+    try {
+      const result = mutate(state);
+      writeState(state, db);
+      return result;
+    } catch (error) {
+      if (!isStateConflictError(error)) {
+        throw error;
+      }
+      attempts += 1;
+    }
+  }
+
+  throw new Error(STATE_CONFLICT_ERROR);
 }
