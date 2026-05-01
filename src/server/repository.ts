@@ -13,6 +13,7 @@ import {
 } from "@/domain/models";
 import { bucketRecording, saveDraftRevision, submitRevision, approveRevision, reopenApprovedRevision } from "@/domain/workflow";
 import { describePolicyProfile, evaluatePolicy } from "@/domain/policy";
+import type { ApprovedTranscriptExportFormat } from "@/lib/approved-transcript-export";
 import {
   assignmentMapByRecordingId,
   canAccessRecording,
@@ -20,6 +21,7 @@ import {
   type AssignmentSummary,
 } from "@/server/access/service";
 import { noteOrchestrationDispatchFailure } from "@/server/orchestration/service";
+import { buildApprovedTranscriptExport } from "@/server/transcript-export";
 import { readSynchronizedState, withState } from "@/server/store";
 
 function fileSafeName(name: string) {
@@ -28,24 +30,6 @@ function fileSafeName(name: string) {
 
 function summarizeAudit(events: AuditEvent[], recordingId: string | null) {
   return events.filter((event) => event.recordingId === recordingId).slice(0, 20);
-}
-
-function formatTranscriptExport(recording: Recording, revision: TranscriptRevision) {
-  const header = [
-    `Title: ${recording.title}`,
-    `Revision: ${revision.version}`,
-    `Language: ${recording.languageHint}`,
-    `Source: ${recording.source}`,
-    "",
-  ];
-
-  const body = revision.segments.map((segment) => {
-    const start = Math.floor(segment.startMs / 1000);
-    const end = Math.floor(segment.endMs / 1000);
-    return `[${start}s-${end}s] ${segment.speakerLabel}: ${segment.text}`;
-  });
-
-  return [...header, ...body].join("\n");
 }
 
 export type RecordingDetail = {
@@ -115,6 +99,17 @@ function preferredBucketForRole(role: UserRole) {
   }
 
   return null;
+}
+
+function resolveApprovedRevision(
+  recording: Recording,
+  revisions: TranscriptRevision[],
+) {
+  return revisions.find((entry) => entry.id === recording.approvedRevisionId) ?? null;
+}
+
+function approvedTranscriptExportBaseName(title: string) {
+  return fileSafeName(title || "transcript").replace(/\.[^.]+$/, "") || "transcript";
 }
 
 export function listWorkspaceOverview(principal: Principal): WorkspaceOverview {
@@ -327,9 +322,10 @@ export function resolveMediaForPrincipal(recordingId: string, principal: Princip
   return resolveMedia(recordingId, principal.role);
 }
 
-export function resolveApprovedTranscriptExport(
+export async function resolveApprovedTranscriptExport(
   recordingId: string,
   role: UserRole,
+  format: ApprovedTranscriptExportFormat = "txt",
 ) {
   const detail = getRecordingDetail(recordingId, role);
   if (!detail) {
@@ -343,9 +339,7 @@ export function resolveApprovedTranscriptExport(
     };
   }
 
-  const approvedRevision = detail.revisions.find(
-    (entry) => entry.id === detail.recording.approvedRevisionId,
-  );
+  const approvedRevision = resolveApprovedRevision(detail.recording, detail.revisions);
   if (!approvedRevision) {
     return {
       denied: false as const,
@@ -353,22 +347,26 @@ export function resolveApprovedTranscriptExport(
     };
   }
 
-  const safeBase = fileSafeName(detail.recording.title || "transcript").replace(
-    /\.[^.]+$/,
-    "",
-  );
+  const payload = await buildApprovedTranscriptExport({
+    format,
+    recording: detail.recording,
+    revision: approvedRevision,
+  });
+  const safeBase = approvedTranscriptExportBaseName(detail.recording.title);
 
   return {
     denied: false as const,
     missing: false as const,
-    fileName: `${safeBase || "transcript"}-approved-v${approvedRevision.version}.txt`,
-    content: formatTranscriptExport(detail.recording, approvedRevision),
+    fileName: `${safeBase}-approved-v${approvedRevision.version}.${format}`,
+    contentType: payload.contentType,
+    body: payload.body,
   };
 }
 
 export function resolveApprovedTranscriptExportForPrincipal(
   recordingId: string,
   principal: Principal,
+  format?: ApprovedTranscriptExportFormat,
 ) {
   const access = canAccessRecording(principal, recordingId);
   if (!access.allowed) {
@@ -378,5 +376,5 @@ export function resolveApprovedTranscriptExportForPrincipal(
     };
   }
 
-  return resolveApprovedTranscriptExport(recordingId, principal.role);
+  return resolveApprovedTranscriptExport(recordingId, principal.role, format);
 }
