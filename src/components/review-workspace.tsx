@@ -295,8 +295,8 @@ export function ReviewWorkspace({
           <p className="eyebrow">Transcript draft</p>
           <h2 className="section-title">Document-style correction workspace.</h2>
           <p className="body-copy">
-            Move through speaker turns, correct text in place, and keep the full
-            review session inside the browser.
+            Review each segment in one aligned surface, correct text in place, and
+            keep the full review session inside the browser.
           </p>
         </div>
         <div className="kicker-row review-chip-row">
@@ -350,7 +350,7 @@ export function ReviewWorkspace({
             </button>
             <button
               className="rail-button"
-              onClick={() => scrollToSection("review-turns")}
+              onClick={() => scrollToSection("review-segments")}
               type="button"
             >
               Need review
@@ -443,128 +443,97 @@ export function ReviewWorkspace({
               )}
             </section>
 
-            <div className="annotation-body">
-              <section className="annotation-column annotation-timeline-column" id="review-turns">
-                <div className="annotation-panel annotation-panel-muted stack">
-                  <div className="status-row">
-                    <div className="stack-tight">
-                      <h3 className="annotation-title">Speaker turns</h3>
-                      <p className="field-note">
-                        Compact and scannable, built for quick jumps.
-                      </p>
-                    </div>
-                    <span className="badge">
-                      {hasSegments ? `${segments.length} segments` : "Waiting"}
-                    </span>
-                  </div>
+            <section
+              className="annotation-panel stack annotation-review-panel"
+              id="review-segments"
+            >
+              <div className="status-row">
+                <div className="stack-tight">
+                  <h3 className="annotation-title">Transcript draft</h3>
+                  <p className="field-note">
+                    Each segment keeps time, speaker, and transcript aligned in one
+                    review row.
+                  </p>
+                </div>
+                <span className="badge">
+                  {hasSegments ? `${segments.length} segments` : "No draft yet"}
+                </span>
+              </div>
 
-                  <div className="timeline-list timeline-list-annotation">
-                    {hasSegments ? (
-                      segments.map((segment) => (
-                        <button
-                          key={segment.id}
-                          className="timeline-button timeline-button-annotation"
-                          data-active={segment.id === activeSegmentId}
-                          onClick={() => seekTo(segment.startMs)}
-                          type="button"
-                        >
-                          <div className="status-row">
-                            <strong>
-                              {formatSegmentWindow(segment.startMs, segment.endMs)} ·{" "}
+              {isCompactViewport ? (
+                <div className="review-compact-note">
+                  Phone-sized review stays read-only. Use a wider screen to edit,
+                  submit, or approve this transcript.
+                </div>
+              ) : null}
+
+              <div className="field annotation-summary-field">
+                <label className="field-label" htmlFor="revision-summary">
+                  Revision summary
+                </label>
+                {isCompactViewport ? (
+                  <div className="field-readonly">{summary}</div>
+                ) : (
+                  <input
+                    id="revision-summary"
+                    name="summary"
+                    onChange={(event) => setSummary(event.currentTarget.value)}
+                    type="text"
+                    value={summary}
+                  />
+                )}
+              </div>
+
+              <div className="review-segment-list">
+                {hasSegments ? (
+                  segments.map((segment) => {
+                    const windowLabel = formatSegmentWindow(segment.startMs, segment.endMs);
+                    const jumpLabel = `Jump to ${windowLabel} for ${segment.speakerLabel}`;
+                    const confidenceLabel = `Confidence ${(segment.confidence * 100).toFixed(0)}%`;
+
+                    return (
+                      <article
+                        key={segment.id}
+                        className="review-segment-row"
+                        data-active={segment.id === activeSegmentId}
+                        data-review-segment-id={segment.id}
+                      >
+                        <div className="review-segment-rail">
+                          <button
+                            aria-label={jumpLabel}
+                            className="review-segment-jump"
+                            onClick={() => seekTo(segment.startMs)}
+                            type="button"
+                          >
+                            {windowLabel}
+                          </button>
+
+                          {isCompactViewport ? (
+                            <strong className="review-segment-speaker">
                               {segment.speakerLabel}
                             </strong>
-                            <span className="field-note">
-                              {segment.id === activeSegmentId ? "In view" : "Jump point"}
-                            </span>
-                          </div>
-                          <span className="body-copy">
-                            {segment.text.slice(0, 132) || "No transcript text yet."}
+                          ) : (
+                            <input
+                              aria-label={`Speaker label for ${segment.id}`}
+                              onChange={(event) =>
+                                updateSegment(
+                                  segment.id,
+                                  "speakerLabel",
+                                  event.currentTarget.value,
+                                )
+                              }
+                              type="text"
+                              value={segment.speakerLabel}
+                            />
+                          )}
+
+                          <span className="field-note">
+                            {segment.id === activeSegmentId ? "Active now" : "Jump to audio"}
                           </span>
-                        </button>
-                      ))
-                    ) : (
-                      <div className="timeline-empty">
-                        <p className="body-copy">
-                          Segments will appear here after verification and transcription
-                          complete.
-                        </p>
-                      </div>
-                    )}
-                  </div>
-                </div>
-              </section>
+                          <span className="field-note">{confidenceLabel}</span>
+                        </div>
 
-              <section className="annotation-column annotation-editor-column" id="review-draft">
-                <div className="annotation-panel stack">
-                  <div className="status-row">
-                    <div className="stack-tight">
-                      <h3 className="annotation-title">Transcript draft</h3>
-                      <p className="field-note">
-                        A document-like surface for careful reading and correction.
-                      </p>
-                    </div>
-                    <span className="badge">
-                      {hasSegments ? "Ready to save" : "No draft yet"}
-                    </span>
-                  </div>
-
-                  {isCompactViewport ? (
-                    <div className="review-compact-note">
-                      Phone-sized review stays read-only. Use a wider screen to edit,
-                      submit, or approve this transcript.
-                    </div>
-                  ) : null}
-
-                  <div className="field annotation-summary-field">
-                    <label className="field-label" htmlFor="revision-summary">
-                      Revision summary
-                    </label>
-                    {isCompactViewport ? (
-                      <div className="field-readonly">{summary}</div>
-                    ) : (
-                      <input
-                        id="revision-summary"
-                        name="summary"
-                        onChange={(event) => setSummary(event.currentTarget.value)}
-                        type="text"
-                        value={summary}
-                      />
-                    )}
-                  </div>
-
-                  <div className="segment-list segment-list-annotation">
-                    {hasSegments ? (
-                      segments.map((segment) => (
-                        <article
-                          key={segment.id}
-                          className="segment segment-annotation"
-                          data-active={segment.id === activeSegmentId}
-                        >
-                          <div className="segment-header">
-                            {isCompactViewport ? (
-                              <strong>{segment.speakerLabel}</strong>
-                            ) : (
-                              <input
-                                aria-label={`Speaker label for ${segment.id}`}
-                                onChange={(event) =>
-                                  updateSegment(
-                                    segment.id,
-                                    "speakerLabel",
-                                    event.currentTarget.value,
-                                  )
-                                }
-                                type="text"
-                                value={segment.speakerLabel}
-                              />
-                            )}
-                            <button
-                              className="segment-jump-button"
-                              onClick={() => seekTo(segment.startMs)}
-                              type="button"
-                            >
-                              {formatSegmentWindow(segment.startMs, segment.endMs)}
-                            </button>
-                          </div>
+                        <div className="review-segment-editor">
                           <div className="segment-copy-shell">
                             {isCompactViewport ? (
                               <p className="segment-readonly-copy">{segment.text}</p>
@@ -578,55 +547,46 @@ export function ReviewWorkspace({
                               />
                             )}
                           </div>
-                          <span className="field-note">
-                            Confidence {(segment.confidence * 100).toFixed(0)}%
+                          <span className="field-note review-segment-footer">
+                            Playback and correction stay in the same review row.
                           </span>
-                        </article>
-                      ))
-                    ) : (
-                      <div className="segment segment-empty-state">
-                        <p className="body-copy">
-                          This recording is still moving through verification or
-                          transcription.
-                        </p>
-                      </div>
-                    )}
+                        </div>
+                      </article>
+                    );
+                  })
+                ) : (
+                  <div className="segment segment-empty-state">
+                    <p className="body-copy">
+                      This recording is still moving through verification or transcription.
+                    </p>
                   </div>
+                )}
+              </div>
 
-                  {isCompactViewport ? (
-                    <div className="review-compact-note review-compact-note-muted">
-                      Editing and approval actions are hidden on phone-sized screens
-                      to keep the review flow constrained.
-                    </div>
-                  ) : (
-                    <div
-                      className="review-actions review-actions-annotation"
-                      id="review-approval"
+              {!isCompactViewport ? (
+                <div className="review-actions review-actions-annotation" id="review-approval">
+                  {policyDecision.canEditDraft ? (
+                    <FormButton className="button button-secondary" formAction={saveAction}>
+                      Save draft
+                    </FormButton>
+                  ) : null}
+                  {policyDecision.canSubmitForApproval ? (
+                    <FormButton
+                      className="button button-primary"
+                      disabled={!hasSegments}
+                      formAction={submitAction}
                     >
-                      {policyDecision.canEditDraft ? (
-                        <FormButton className="button button-secondary" formAction={saveAction}>
-                          Save draft
-                        </FormButton>
-                      ) : null}
-                      {policyDecision.canSubmitForApproval ? (
-                        <FormButton
-                          className="button button-primary"
-                          disabled={!hasSegments}
-                          formAction={submitAction}
-                        >
-                          Submit revision
-                        </FormButton>
-                      ) : null}
-                    </div>
-                  )}
+                      Submit revision
+                    </FormButton>
+                  ) : null}
                 </div>
-              </section>
-            </div>
+              ) : null}
+            </section>
 
             <div className="annotation-assist-note">
-              <strong>Prototype behavior:</strong> click any speaker turn to focus the
-              matching transcript card. Playback, correction, and approval stay in the
-              same browser review job.
+              <strong>Prototype behavior:</strong> review each aligned segment row,
+              jump from the time window, and keep playback, correction, and approval
+              in the same browser review job.
             </div>
 
             {!isCompactViewport && policyDecision.canApprove && recording.pendingRevisionId ? (
