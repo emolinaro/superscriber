@@ -1,10 +1,11 @@
 ## GBrain Configuration (configured by /setup-gbrain)
 - Engine: pglite
 - Config file: ~/.gbrain/config.json (mode 0600)
-- Setup date: 2026-04-29
-- MCP registered: no
+- Setup date: 2026-05-01
+- MCP registered: yes (Codex user config)
 - Memory sync: full
 - Current repo policy: read-write
+- Autopilot: unloaded locally after setup because `com.gbrain.autopilot` held the PGLite lock during import/smoke verification
 
 ## Deploy Configuration (configured by /setup-deploy)
 - Platform: github-actions
