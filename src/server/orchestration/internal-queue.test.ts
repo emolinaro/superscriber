@@ -172,6 +172,55 @@ describe("internal transcript queue", () => {
     }
   });
 
+  it("claims jobs inside an immediate sqlite transaction", () => {
+    const bundle = openAppDatabase(":memory:");
+
+    try {
+      const state = createBaseState();
+      queueVerifiedRecording(state, "Immediate claim recording");
+      writeState(state, bundle.db);
+
+      const sqlite = bundle.sqlite as typeof bundle.sqlite & {
+        transaction: typeof bundle.sqlite.transaction;
+      };
+      const originalTransaction = sqlite.transaction.bind(sqlite);
+      let usedImmediate = false;
+
+      sqlite.transaction = ((fn: Parameters<typeof originalTransaction>[0]) => {
+        const transaction = originalTransaction(fn);
+        const wrapped = ((...args: Parameters<typeof transaction>) =>
+          transaction(...args)) as typeof transaction;
+
+        Object.defineProperties(wrapped, {
+          immediate: {
+            value: ((...args: Parameters<typeof transaction.immediate>) => {
+              usedImmediate = true;
+              return transaction.immediate(...args);
+            }) as typeof transaction.immediate,
+          },
+          deferred: {
+            value: transaction.deferred.bind(transaction),
+          },
+          exclusive: {
+            value: transaction.exclusive.bind(transaction),
+          },
+        });
+
+        return wrapped;
+      }) as typeof sqlite.transaction;
+
+      const claim = claimAvailableTranscriptJob({
+        workerId: "worker-immediate",
+        bundle,
+      });
+
+      expect(claim).not.toBeNull();
+      expect(usedImmediate).toBe(true);
+    } finally {
+      bundle.sqlite.close();
+    }
+  });
+
   it("requeues retryable failures until the max attempt threshold is reached", () => {
     const bundle = openAppDatabase(":memory:");
 

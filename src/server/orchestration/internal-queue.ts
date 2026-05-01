@@ -164,7 +164,7 @@ export function claimAvailableTranscriptJob(params: {
   ).toISOString();
   const claimedAt = nowIso();
 
-  const claimRow = bundle.sqlite.transaction(() => {
+  const claimTransaction = bundle.sqlite.transaction(() => {
     const candidate = bundle.sqlite
       .prepare(
         `
@@ -205,7 +205,7 @@ export function claimAvailableTranscriptJob(params: {
       return null;
     }
 
-    bundle.sqlite
+    const claimResult = bundle.sqlite
       .prepare(
         `
           UPDATE transcript_jobs
@@ -224,13 +224,25 @@ export function claimAvailableTranscriptJob(params: {
             END,
             last_error = NULL
           WHERE id = @jobId
+            AND (
+              state = 'queued'
+              OR (
+                state IN ('running', 'partial_result')
+                AND (last_heartbeat_at IS NULL OR last_heartbeat_at < @staleCutoff)
+              )
+            )
         `,
       )
       .run({
         workerId: params.workerId,
         claimedAt,
         jobId: candidate.jobId,
+        staleCutoff,
       });
+
+    if (claimResult.changes !== 1) {
+      return null;
+    }
 
     bundle.sqlite
       .prepare(
@@ -291,7 +303,8 @@ export function claimAvailableTranscriptJob(params: {
       .run();
 
     return candidate;
-  })();
+  });
+  const claimRow = claimTransaction.immediate();
 
   if (!claimRow) {
     return null;
