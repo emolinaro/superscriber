@@ -49,6 +49,14 @@ export function escapeDelimitedField(value: string) {
   return `"${escaped}"`;
 }
 
+function sanitizeSpreadsheetCell(value: string) {
+  if (/^\s*[=+\-@]/.test(value)) {
+    return `'${value}`;
+  }
+
+  return value;
+}
+
 function createTextExport(
   recording: ApprovedTranscriptExportRecording,
   revision: ApprovedTranscriptExportRevision,
@@ -116,10 +124,10 @@ function createDelimitedExport(
   const rows = revision.segments.map((segment) =>
     [
       escapeDelimitedField(segment.id),
-      escapeDelimitedField(segment.speakerLabel),
+      escapeDelimitedField(sanitizeSpreadsheetCell(segment.speakerLabel)),
       segment.startMs.toString(),
       segment.endMs.toString(),
-      escapeDelimitedField(segment.text),
+      escapeDelimitedField(sanitizeSpreadsheetCell(segment.text)),
       segment.confidence.toString(),
     ].join(delimiter),
   );

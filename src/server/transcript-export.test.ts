@@ -148,6 +148,55 @@ describe("approved transcript export formatter", () => {
     });
   });
 
+  it("neutralizes spreadsheet formula-like CSV and TSV cells", async () => {
+    const dangerousRevision: ApprovedTranscriptExportRevision = {
+      ...revision,
+      segments: [
+        {
+          id: "seg-dangerous",
+          speakerLabel: "=cmd|' /C calc'!A0",
+          startMs: 0,
+          endMs: 1000,
+          text: "  +SUM(1,2)",
+          confidence: 0.5,
+        },
+        {
+          id: "seg-dangerous-2",
+          speakerLabel: "@malicious",
+          startMs: 1000,
+          endMs: 2000,
+          text: "\t-HYPERLINK(\"https://example.com\")",
+          confidence: 0.4,
+        },
+      ],
+    };
+
+    const csv = await buildApprovedTranscriptExport({
+      format: "csv",
+      recording,
+      revision: dangerousRevision,
+    });
+    const tsv = await buildApprovedTranscriptExport({
+      format: "tsv",
+      recording,
+      revision: dangerousRevision,
+    });
+
+    expect(decodeBody(csv.body)).toContain(
+      `"seg-dangerous","'=cmd|' /C calc'!A0",0,1000,"'  +SUM(1,2)",0.5`,
+    );
+    expect(decodeBody(csv.body)).toContain(
+      `"seg-dangerous-2","'@malicious",1000,2000,"'\t-HYPERLINK(""https://example.com"")",0.4`,
+    );
+
+    expect(decodeBody(tsv.body)).toContain(
+      `"seg-dangerous"\t"'=cmd|' /C calc'!A0"\t0\t1000\t"'  +SUM(1,2)"\t0.5`,
+    );
+    expect(decodeBody(tsv.body)).toContain(
+      `"seg-dangerous-2"\t"'@malicious"\t1000\t2000\t"'\t-HYPERLINK(""https://example.com"")"\t0.4`,
+    );
+  });
+
   it("builds a DOCX payload with ordered transcript content, speakers, and timestamps", async () => {
     const docx = await buildApprovedTranscriptExport({
       format: "docx",
