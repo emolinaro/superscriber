@@ -162,7 +162,8 @@ test.describe.serial("mobile review fallback", () => {
     );
     await expect(firstSegmentRow).toBeVisible();
     await expect(firstSegmentRow.getByText(/Confidence \d+%/)).toBeVisible();
-    await expect(firstSegmentRow).toContainText("Fallback transcript generated");
+    await expect(firstSegmentRow.locator(".segment-readonly-copy")).toBeVisible();
+    await expect(firstSegmentRow.getByLabel("Speaker label for seg-1")).toHaveCount(0);
 
     await mobileContext.close();
   });

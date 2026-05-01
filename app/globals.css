@@ -1338,6 +1338,15 @@ button {
   background: transparent;
 }
 
+.review-segment-row textarea,
+.review-segment-row input {
+  font-size: 0.97rem;
+}
+
+.review-segment-row textarea {
+  min-height: 112px;
+}
+
 .review-segment-editor {
   display: grid;
   gap: 10px;
