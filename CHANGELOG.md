@@ -18,3 +18,4 @@ All notable changes to this project will be documented in this file.
 ### Fixed
 - Prevented phone-sized review screens from exposing live editing or approval controls.
 - Corrected the logo orientation and tightened the workspace and review action hierarchy discovered during design review.
+- Prevented stale SQLite state snapshots from overwriting newer reviewer or worker updates during governed transcript operations.

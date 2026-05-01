@@ -18,6 +18,11 @@ import {
   type UserRole,
 } from "@/domain/models";
 
+export const appStateMeta = sqliteTable("app_state_meta", {
+  id: integer("id").primaryKey(),
+  stateVersion: integer("state_version").notNull(),
+});
+
 export const policyProfiles = sqliteTable("policy_profiles", {
   id: text("id", { enum: POLICY_PROFILES }).$type<PolicyProfileId>().primaryKey(),
   label: text("label").notNull(),
@@ -251,6 +256,7 @@ export const recordingAssignments = sqliteTable(
 );
 
 export type UserRow = typeof users.$inferSelect;
+export type AppStateMetaRow = typeof appStateMeta.$inferSelect;
 export type RecordingAssignmentRow = typeof recordingAssignments.$inferSelect;
 export type PolicyProfileRow = typeof policyProfiles.$inferSelect;
 export type WorkspaceRow = typeof workspaces.$inferSelect;

@@ -42,6 +42,13 @@ function ensureColumn(
 
 function ensureSchema(sqlite: Database.Database) {
   sqlite.exec(`
+    CREATE TABLE IF NOT EXISTS app_state_meta (
+      id INTEGER PRIMARY KEY NOT NULL,
+      state_version INTEGER NOT NULL
+    );
+
+    INSERT OR IGNORE INTO app_state_meta (id, state_version) VALUES (1, 0);
+
     CREATE TABLE IF NOT EXISTS policy_profiles (
       id TEXT PRIMARY KEY NOT NULL,
       label TEXT NOT NULL,

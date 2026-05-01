@@ -280,6 +280,16 @@ export function claimAvailableTranscriptJob(params: {
         claimedAt,
       });
 
+    bundle.sqlite
+      .prepare(
+        `
+          UPDATE app_state_meta
+          SET state_version = state_version + 1
+          WHERE id = 1
+        `,
+      )
+      .run();
+
     return candidate;
   })();
 
