@@ -1,40 +1,22 @@
+import JSZip from "jszip";
 import { describe, expect, it } from "vitest";
-import type { Recording, TranscriptRevision } from "@/domain/models";
-import { buildApprovedTranscriptExport } from "@/server/transcript-export";
+import {
+  buildApprovedTranscriptExport,
+  type ApprovedTranscriptExportRecording,
+  type ApprovedTranscriptExportRevision,
+} from "@/server/transcript-export";
 
-const recording: Recording = {
+const recording: ApprovedTranscriptExportRecording = {
   id: "rec-1",
-  workspaceId: "workspace-1",
   title: "Quarterly Review / Demo",
   source: "upload",
-  mediaKind: "audio",
-  mimeType: "audio/mpeg",
-  mediaPath: null,
-  originalFileName: "quarterly-review.mp3",
   languageHint: "en",
-  uploadedByRole: "reviewer",
-  ingestionSessionId: null,
-  transcriptJobId: null,
-  integrityState: "verified",
-  transcriptJobState: "completed",
-  currentRevisionId: "rev-1",
-  approvedRevisionId: "rev-1",
-  pendingRevisionId: null,
-  verificationSummary: "Verified.",
-  createdAt: "2026-05-01T09:00:00.000Z",
-  updatedAt: "2026-05-01T09:30:00.000Z",
-  automationCursor: null,
 };
 
-const revision: TranscriptRevision = {
+const revision: ApprovedTranscriptExportRevision = {
   id: "rev-1",
-  recordingId: "rec-1",
   version: 3,
   state: "approved",
-  basedOnRevisionId: "rev-0",
-  createdByRole: "reviewer",
-  createdAt: "2026-05-01T09:10:00.000Z",
-  submittedAt: "2026-05-01T09:20:00.000Z",
   approvedAt: "2026-05-01T09:25:00.000Z",
   summary: "Approved export fixture.",
   segments: [
@@ -59,6 +41,17 @@ const revision: TranscriptRevision = {
 
 function decodeBody(body: Uint8Array) {
   return new TextDecoder().decode(body);
+}
+
+async function readDocxDocumentXml(body: Uint8Array) {
+  const archive = await JSZip.loadAsync(body);
+  const documentXml = archive.file("word/document.xml");
+
+  if (!documentXml) {
+    throw new Error("Missing DOCX document.xml payload.");
+  }
+
+  return documentXml.async("string");
 }
 
 describe("approved transcript export formatter", () => {
@@ -152,7 +145,7 @@ describe("approved transcript export formatter", () => {
     });
   });
 
-  it("builds a DOCX payload as binary bytes with the DOCX content type", async () => {
+  it("builds a DOCX payload with ordered transcript content, speakers, and timestamps", async () => {
     const docx = await buildApprovedTranscriptExport({
       format: "docx",
       recording,
@@ -165,5 +158,19 @@ describe("approved transcript export formatter", () => {
     expect(docx.body).toBeInstanceOf(Uint8Array);
     expect(docx.body.byteLength).toBeGreaterThan(0);
     expect(Buffer.from(docx.body).subarray(0, 2).toString("utf8")).toBe("PK");
+
+    const documentXml = await readDocxDocumentXml(docx.body);
+    expect(documentXml).toContain("Quarterly Review / Demo");
+    expect(documentXml).toContain("Revision 3");
+    expect(documentXml).toContain("Speaker 1 ");
+    expect(documentXml).toContain("00:00:01.234 - 00:00:05.678 Hello, &quot;team&quot;");
+    expect(documentXml).toContain("Speaker\t2 ");
+    expect(documentXml).toContain("00:01:02.000 - 01:01:01.000 Line one");
+    expect(documentXml).toContain("Line two");
+
+    const speakerOneIndex = documentXml.indexOf("Speaker 1 ");
+    const speakerTwoIndex = documentXml.indexOf("Speaker\t2 ");
+    expect(speakerOneIndex).toBeGreaterThan(-1);
+    expect(speakerTwoIndex).toBeGreaterThan(speakerOneIndex);
   });
 });

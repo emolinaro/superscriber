@@ -2,12 +2,22 @@ import { Document, Packer, Paragraph, TextRun } from "docx";
 import type { Recording, TranscriptRevision } from "@/domain/models";
 import type { ApprovedTranscriptExportFormat } from "@/lib/approved-transcript-export";
 
-type ExportRecording = Pick<
+function assertServerOnly() {
+  if (typeof globalThis.window !== "undefined") {
+    throw new Error(
+      "src/server/transcript-export.ts can only be imported from the server runtime.",
+    );
+  }
+}
+
+assertServerOnly();
+
+export type ApprovedTranscriptExportRecording = Pick<
   Recording,
   "id" | "title" | "languageHint" | "source"
 >;
 
-type ExportRevision = Pick<
+export type ApprovedTranscriptExportRevision = Pick<
   TranscriptRevision,
   "id" | "version" | "state" | "summary" | "approvedAt" | "segments"
 >;
@@ -41,23 +51,16 @@ export function formatCaptionTimestamp(
     + padTimestampPart(remainderMilliseconds, 3);
 }
 
-export function escapeDelimitedField(value: string, delimiter: "," | "\t") {
+export function escapeDelimitedField(value: string) {
   const escaped = value.replaceAll('"', '""');
-
-  if (
-    escaped.includes(delimiter) ||
-    escaped.includes('"') ||
-    escaped.includes("\n") ||
-    escaped.includes("\r") ||
-    escaped.includes("\t")
-  ) {
-    return `"${escaped}"`;
-  }
 
   return `"${escaped}"`;
 }
 
-function createTextExport(recording: ExportRecording, revision: ExportRevision) {
+function createTextExport(
+  recording: ApprovedTranscriptExportRecording,
+  revision: ApprovedTranscriptExportRevision,
+) {
   const lines = [
     `Title: ${recording.title}`,
     `Revision: ${revision.version}`,
@@ -78,7 +81,7 @@ function createTextExport(recording: ExportRecording, revision: ExportRevision) 
 }
 
 function createCaptionExport(
-  revision: ExportRevision,
+  revision: ApprovedTranscriptExportRevision,
   format: Extract<ApprovedTranscriptExportFormat, "srt" | "vtt">,
 ) {
   const blocks = revision.segments.map((segment, index) => {
@@ -105,7 +108,7 @@ function createCaptionExport(
 }
 
 function createDelimitedExport(
-  revision: ExportRevision,
+  revision: ApprovedTranscriptExportRevision,
   delimiter: "," | "\t",
   contentType: string,
 ) {
@@ -116,15 +119,15 @@ function createDelimitedExport(
     "endMs",
     "text",
     "confidence",
-  ].map((field) => escapeDelimitedField(field, delimiter));
+  ].map((field) => escapeDelimitedField(field));
 
   const rows = revision.segments.map((segment) =>
     [
-      escapeDelimitedField(segment.id, delimiter),
-      escapeDelimitedField(segment.speakerLabel, delimiter),
+      escapeDelimitedField(segment.id),
+      escapeDelimitedField(segment.speakerLabel),
       segment.startMs.toString(),
       segment.endMs.toString(),
-      escapeDelimitedField(segment.text, delimiter),
+      escapeDelimitedField(segment.text),
       segment.confidence.toString(),
     ].join(delimiter),
   );
@@ -135,7 +138,10 @@ function createDelimitedExport(
   } satisfies TranscriptExportPayload;
 }
 
-function createJsonExport(recording: ExportRecording, revision: ExportRevision) {
+function createJsonExport(
+  recording: ApprovedTranscriptExportRecording,
+  revision: ApprovedTranscriptExportRevision,
+) {
   return {
     contentType: "application/json; charset=utf-8",
     body: new TextEncoder().encode(
@@ -158,8 +164,8 @@ function createJsonExport(recording: ExportRecording, revision: ExportRevision) 
 }
 
 async function createDocxExport(
-  recording: ExportRecording,
-  revision: ExportRevision,
+  recording: ApprovedTranscriptExportRecording,
+  revision: ApprovedTranscriptExportRevision,
 ) {
   const document = new Document({
     sections: [
@@ -200,8 +206,8 @@ async function createDocxExport(
 
 export async function buildApprovedTranscriptExport(params: {
   format: ApprovedTranscriptExportFormat;
-  recording: ExportRecording;
-  revision: ExportRevision;
+  recording: ApprovedTranscriptExportRecording;
+  revision: ApprovedTranscriptExportRevision;
 }): Promise<TranscriptExportPayload> {
   switch (params.format) {
     case "txt":
