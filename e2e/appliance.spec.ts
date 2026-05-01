@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { expect, test, type Locator, type Page } from "@playwright/test";
@@ -315,6 +315,31 @@ test.describe.serial("single-image appliance", () => {
     await page.keyboard.press("Escape");
     await expect(exportDialog).toBeHidden();
     await expect(exportApprovedButton).toBeFocused();
+
+    await exportApprovedButton.click();
+    await expect(exportDialog).toBeVisible();
+
+    const txtDownloadLink = exportDialog.getByRole("link", { name: "TXT" });
+    const download = await Promise.all([
+      page.waitForEvent("download"),
+      txtDownloadLink.click(),
+    ]).then(([downloadEvent]) => downloadEvent);
+
+    expect(download.suggestedFilename()).toMatch(/\.txt$/);
+
+    const downloadDirectory = mkdtempSync(join(tmpdir(), "superscriber-export-"));
+    const downloadPath = join(downloadDirectory, download.suggestedFilename());
+
+    try {
+      await download.saveAs(downloadPath);
+      expect(readFileSync(downloadPath, "utf8")).toContain(
+        "Reviewer adjusted the fallback transcript inside the governed workspace.",
+      );
+    } finally {
+      rmSync(downloadDirectory, { recursive: true, force: true });
+    }
+
+    await expect(exportDialog).toBeHidden();
   });
 
   test("resumes an interrupted upload from the last committed chunk", async ({ page }) => {
