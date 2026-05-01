@@ -6,8 +6,6 @@ import {
 } from "@/server/repository";
 import { withState } from "@/server/store";
 
-vi.mock("server-only", () => ({}));
-
 describe("repository approved transcript export resolution", () => {
   beforeEach(() => {
     process.env.SUPERSCRIBER_DB_PATH = ":memory:";
