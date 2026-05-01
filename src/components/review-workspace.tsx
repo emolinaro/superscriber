@@ -23,6 +23,7 @@ const IDLE_WAVE_BARS = Array.from({ length: WAVE_BAR_COUNT }, (_, index) => {
   return pattern[index % pattern.length] ?? 48;
 });
 const COMPACT_REVIEW_BREAKPOINT_PX = 760;
+const APPROVED_EXPORT_SHEET_GAP_PX = 12;
 const APPROVED_EXPORT_FORMAT_DESCRIPTIONS: Record<
   ApprovedTranscriptExportFormat,
   string
@@ -92,11 +93,15 @@ export function ReviewWorkspace({
   approveAction,
   reopenAction,
 }: ReviewWorkspaceProps) {
+  const reviewShellRef = useRef<HTMLDivElement | null>(null);
   const mediaRef = useRef<HTMLAudioElement | HTMLVideoElement | null>(null);
   const animationFrameRef = useRef<number | null>(null);
   const audioContextRef = useRef<AudioContext | null>(null);
   const analyserRef = useRef<AnalyserNode | null>(null);
   const sourceNodeRef = useRef<MediaElementAudioSourceNode | null>(null);
+  const approvedExportTriggerRef = useRef<HTMLButtonElement | null>(null);
+  const approvedExportDialogRef = useRef<HTMLDivElement | null>(null);
+  const approvedExportCloseButtonRef = useRef<HTMLButtonElement | null>(null);
   const [segments, setSegments] = useState(currentRevision?.segments ?? []);
   const [summary, setSummary] = useState(
     currentRevision?.summary ?? "Transcript draft is not ready yet.",
@@ -105,10 +110,15 @@ export function ReviewWorkspace({
   const [durationMs, setDurationMs] = useState(0);
   const [isCompactViewport, setIsCompactViewport] = useState(false);
   const [isApprovedExportSheetOpen, setIsApprovedExportSheetOpen] = useState(false);
+  const [approvedExportSheetPosition, setApprovedExportSheetPosition] = useState({
+    top: 0,
+    right: 0,
+  });
   const [mediaElement, setMediaElement] = useState<HTMLAudioElement | HTMLVideoElement | null>(
     null,
   );
   const [waveBars, setWaveBars] = useState(IDLE_WAVE_BARS);
+  const previousApprovedExportFocusRef = useRef<HTMLElement | null>(null);
   const hasSegments = segments.length > 0;
 
   useEffect(() => {
@@ -255,9 +265,55 @@ export function ReviewWorkspace({
       return;
     }
 
+    function getFocusableApprovedExportElements() {
+      const dialog = approvedExportDialogRef.current;
+      if (!dialog) {
+        return [];
+      }
+
+      return Array.from(
+        dialog.querySelectorAll<HTMLElement>(
+          'a[href], button:not([disabled]), [tabindex]:not([tabindex="-1"])',
+        ),
+      );
+    }
+
     function handleKeyDown(event: KeyboardEvent) {
       if (event.key === "Escape") {
-        setIsApprovedExportSheetOpen(false);
+        closeApprovedExportSheet();
+        return;
+      }
+
+      if (event.key !== "Tab") {
+        return;
+      }
+
+      const focusableElements = getFocusableApprovedExportElements();
+      if (focusableElements.length === 0) {
+        event.preventDefault();
+        approvedExportDialogRef.current?.focus();
+        return;
+      }
+
+      const firstElement = focusableElements[0];
+      const lastElement = focusableElements[focusableElements.length - 1];
+      const activeElement =
+        document.activeElement instanceof HTMLElement ? document.activeElement : null;
+      const dialogContainsActiveElement =
+        activeElement !== null &&
+        approvedExportDialogRef.current?.contains(activeElement) === true;
+
+      if (event.shiftKey) {
+        if (!dialogContainsActiveElement || activeElement === firstElement) {
+          event.preventDefault();
+          lastElement?.focus();
+        }
+        return;
+      }
+
+      if (!dialogContainsActiveElement || activeElement === lastElement) {
+        event.preventDefault();
+        firstElement?.focus();
       }
     }
 
@@ -265,6 +321,42 @@ export function ReviewWorkspace({
 
     return () => {
       window.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [isApprovedExportSheetOpen]);
+
+  useEffect(() => {
+    if (!isApprovedExportSheetOpen) {
+      return;
+    }
+
+    function syncApprovedExportSheetPosition() {
+      const shell = reviewShellRef.current;
+      const trigger = approvedExportTriggerRef.current;
+      if (!shell || !trigger) {
+        return;
+      }
+
+      const shellRect = shell.getBoundingClientRect();
+      const triggerRect = trigger.getBoundingClientRect();
+      setApprovedExportSheetPosition({
+        top: triggerRect.bottom - shellRect.top + APPROVED_EXPORT_SHEET_GAP_PX,
+        right: Math.max(0, shellRect.right - triggerRect.right),
+      });
+    }
+
+    syncApprovedExportSheetPosition();
+    const animationFrame = requestAnimationFrame(() => {
+      syncApprovedExportSheetPosition();
+      approvedExportCloseButtonRef.current?.focus();
+    });
+
+    window.addEventListener("resize", syncApprovedExportSheetPosition);
+    window.addEventListener("scroll", syncApprovedExportSheetPosition, true);
+
+    return () => {
+      cancelAnimationFrame(animationFrame);
+      window.removeEventListener("resize", syncApprovedExportSheetPosition);
+      window.removeEventListener("scroll", syncApprovedExportSheetPosition, true);
     };
   }, [isApprovedExportSheetOpen]);
 
@@ -330,16 +422,35 @@ export function ReviewWorkspace({
     });
   }
 
+  function openApprovedExportSheet() {
+    previousApprovedExportFocusRef.current =
+      document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    setIsApprovedExportSheetOpen(true);
+  }
+
   function closeApprovedExportSheet() {
     setIsApprovedExportSheetOpen(false);
+    requestAnimationFrame(() => {
+      if (approvedExportTriggerRef.current) {
+        approvedExportTriggerRef.current.focus();
+        return;
+      }
+
+      previousApprovedExportFocusRef.current?.focus();
+    });
   }
 
   function formatApprovedExportGroupLabel(groupId: string, groupLabel: string) {
     return groupId === "structured" ? `${groupLabel} data` : groupLabel;
   }
 
+  const approvedExportSheetStyle = {
+    "--review-export-sheet-top": `${approvedExportSheetPosition.top}px`,
+    "--review-export-sheet-right": `${approvedExportSheetPosition.right}px`,
+  } as CSSProperties;
+
   return (
-    <div className="review-shell review-shell-annotation">
+    <div className="review-shell review-shell-annotation" ref={reviewShellRef}>
       <div className="review-topbar review-topbar-annotation">
         <div className="stack-tight">
           <p className="eyebrow">Transcript draft</p>
@@ -364,7 +475,8 @@ export function ReviewWorkspace({
               aria-expanded={isApprovedExportSheetOpen}
               aria-haspopup="dialog"
               className="button button-quiet"
-              onClick={() => setIsApprovedExportSheetOpen(true)}
+              onClick={openApprovedExportSheet}
+              ref={approvedExportTriggerRef}
               type="button"
             >
               Export approved
@@ -378,13 +490,16 @@ export function ReviewWorkspace({
           className="review-export-sheet-backdrop"
           onClick={closeApprovedExportSheet}
           role="presentation"
+          style={approvedExportSheetStyle}
         >
           <div
             aria-labelledby="approved-export-sheet-title"
             aria-modal="true"
             className="review-export-sheet"
             onClick={(event) => event.stopPropagation()}
+            ref={approvedExportDialogRef}
             role="dialog"
+            tabIndex={-1}
           >
             <div className="review-export-sheet-header">
               <div className="stack-tight">
@@ -400,6 +515,7 @@ export function ReviewWorkspace({
                 aria-label="Close approved export formats"
                 className="button button-secondary review-export-sheet-close"
                 onClick={closeApprovedExportSheet}
+                ref={approvedExportCloseButtonRef}
                 type="button"
               >
                 Close
@@ -407,36 +523,41 @@ export function ReviewWorkspace({
             </div>
 
             <div className="review-export-group-list">
-              {APPROVED_TRANSCRIPT_EXPORT_FORMAT_GROUPS.map((group) => (
-                <section className="review-export-group" key={group.id}>
-                  <div className="stack-tight">
-                    <p className="eyebrow review-export-group-eyebrow">
+              {APPROVED_TRANSCRIPT_EXPORT_FORMAT_GROUPS.map((group) => {
+                const groupHeadingId = `approved-export-group-${group.id}`;
+                return (
+                  <section
+                    aria-labelledby={groupHeadingId}
+                    className="review-export-group"
+                    key={group.id}
+                  >
+                    <h4 className="review-export-group-title" id={groupHeadingId}>
                       {formatApprovedExportGroupLabel(group.id, group.label)}
-                    </p>
-                  </div>
-                  <div className="review-export-option-list">
-                    {group.formats.map((format) => (
-                      <a
-                        aria-label={format.toUpperCase()}
-                        className="review-export-option"
-                        href={buildApprovedTranscriptExportUrl(
-                          approvedTranscriptExportBaseUrl,
-                          format,
-                        )}
-                        key={format}
-                        onClick={closeApprovedExportSheet}
-                      >
-                        <strong className="review-export-option-label">
-                          {format.toUpperCase()}
-                        </strong>
-                        <span className="review-export-option-description">
-                          {APPROVED_EXPORT_FORMAT_DESCRIPTIONS[format]}
-                        </span>
-                      </a>
-                    ))}
-                  </div>
-                </section>
-              ))}
+                    </h4>
+                    <div className="review-export-option-list">
+                      {group.formats.map((format) => (
+                        <a
+                          aria-label={format.toUpperCase()}
+                          className="review-export-option"
+                          href={buildApprovedTranscriptExportUrl(
+                            approvedTranscriptExportBaseUrl,
+                            format,
+                          )}
+                          key={format}
+                          onClick={closeApprovedExportSheet}
+                        >
+                          <strong className="review-export-option-label">
+                            {format.toUpperCase()}
+                          </strong>
+                          <span className="review-export-option-description">
+                            {APPROVED_EXPORT_FORMAT_DESCRIPTIONS[format]}
+                          </span>
+                        </a>
+                      ))}
+                    </div>
+                  </section>
+                );
+              })}
             </div>
           </div>
         </div>

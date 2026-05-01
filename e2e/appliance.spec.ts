@@ -289,7 +289,16 @@ test.describe.serial("single-image appliance", () => {
     await exportApprovedButton.click();
 
     const exportDialog = page.getByRole("dialog", { name: "Approved export formats" });
+    const closeExportDialogButton = page.getByRole("button", {
+      name: "Close approved export formats",
+    });
     await expect(exportDialog).toBeVisible();
+    await expect(closeExportDialogButton).toBeFocused();
+    await expect(exportDialog.getByRole("heading", { name: "Document" })).toBeVisible();
+    await expect(exportDialog.getByRole("heading", { name: "Captions" })).toBeVisible();
+    await expect(
+      exportDialog.getByRole("heading", { name: "Structured data" }),
+    ).toBeVisible();
     await expect(exportDialog.getByRole("link", { name: "DOCX" })).toHaveAttribute(
       "href",
       new RegExp(`/api/recordings/${createdRecordingId}/transcript\\?format=docx$`),
@@ -299,8 +308,13 @@ test.describe.serial("single-image appliance", () => {
       new RegExp(`/api/recordings/${createdRecordingId}/transcript\\?format=json$`),
     );
 
+    await page.keyboard.press("Shift+Tab");
+    await expect(exportDialog.getByRole("link", { name: "JSON" })).toBeFocused();
+    await page.keyboard.press("Tab");
+    await expect(closeExportDialogButton).toBeFocused();
     await page.keyboard.press("Escape");
     await expect(exportDialog).toBeHidden();
+    await expect(exportApprovedButton).toBeFocused();
   });
 
   test("resumes an interrupted upload from the last committed chunk", async ({ page }) => {
