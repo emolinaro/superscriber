@@ -246,6 +246,18 @@ test.describe.serial("single-image appliance", () => {
     await expect(
       firstSegmentRow.getByRole("button", { name: /Jump to .* for / }),
     ).toBeVisible();
+    const jumpButtonBox = await firstSegmentRow
+      .getByRole("button", { name: /Jump to .* for / })
+      .boundingBox();
+    const transcriptBox = await firstSegmentRow
+      .getByLabel("Transcript text for seg-1")
+      .boundingBox();
+
+    expect(jumpButtonBox).not.toBeNull();
+    expect(transcriptBox).not.toBeNull();
+    expect((jumpButtonBox?.x ?? 0) + (jumpButtonBox?.width ?? 0)).toBeLessThan(
+      transcriptBox?.x ?? 0,
+    );
 
     const firstTranscriptField = page.getByLabel("Transcript text for seg-1");
     await expect(firstTranscriptField).toBeVisible({ timeout: 90_000 });
