@@ -59,7 +59,7 @@ describe("GET /api/recordings/[recordingId]/transcript", () => {
   });
 
   it("uses repository-provided headers and body for successful exports", async () => {
-    const body = new Uint8Array([1, 2, 3, 4]);
+    const body = new Uint8Array([0, 1, 2, 3, 4, 5]).subarray(1, 5);
 
     vi.mocked(resolveApprovedTranscriptExportForPrincipal).mockResolvedValue({
       denied: false,

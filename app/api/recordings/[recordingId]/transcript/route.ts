@@ -8,6 +8,12 @@ export const dynamic = "force-dynamic";
 
 type Params = Promise<{ recordingId: string }>;
 
+function toResponseBody(bytes: Uint8Array) {
+  return new Blob([new Uint8Array(bytes)], {
+    type: "application/octet-stream",
+  });
+}
+
 export async function GET(
   request: Request,
   context: { params: Params },
@@ -47,7 +53,7 @@ export async function GET(
     });
   }
 
-  return new NextResponse(exportResult.body, {
+  return new NextResponse(toResponseBody(exportResult.body), {
     status: 200,
     headers: {
       "cache-control": "no-store",
