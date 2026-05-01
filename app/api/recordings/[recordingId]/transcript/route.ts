@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { parseApprovedTranscriptExportFormat } from "@/lib/approved-transcript-export";
 import { resolveApprovedTranscriptExportForPrincipal } from "@/server/repository";
 import { getActivePrincipal } from "@/server/session";
 
@@ -8,7 +9,7 @@ export const dynamic = "force-dynamic";
 type Params = Promise<{ recordingId: string }>;
 
 export async function GET(
-  _request: Request,
+  request: Request,
   context: { params: Params },
 ) {
   const principal = await getActivePrincipal();
@@ -16,10 +17,23 @@ export async function GET(
     return new NextResponse("Unauthorized", { status: 401 });
   }
 
+  const { searchParams } = new URL(request.url);
+  const requestedFormat = searchParams.get("format");
+  const format =
+    requestedFormat === null
+      ? "txt"
+      : parseApprovedTranscriptExportFormat(requestedFormat);
+  if (format === null) {
+    return new NextResponse("Unsupported transcript export format.", {
+      status: 400,
+    });
+  }
+
   const { recordingId } = await context.params;
   const exportResult = await resolveApprovedTranscriptExportForPrincipal(
     recordingId,
     principal,
+    format,
   );
   if (!exportResult) {
     return new NextResponse("Not found", { status: 404 });
@@ -33,9 +47,7 @@ export async function GET(
     });
   }
 
-  const responseBody = new Uint8Array(exportResult.body).buffer;
-
-  return new NextResponse(responseBody, {
+  return new NextResponse(exportResult.body, {
     status: 200,
     headers: {
       "cache-control": "no-store",
