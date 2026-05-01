@@ -150,16 +150,19 @@ test.describe.serial("mobile review fallback", () => {
         "Phone-sized review stays read-only. Use a wider screen to edit, submit, or approve this transcript.",
       ),
     ).toBeVisible();
-    await expect(
-      mobilePage.getByText(
-        "Editing and approval actions are hidden on phone-sized screens to keep the review flow constrained.",
-      ),
-    ).toBeVisible();
     await expect(mobilePage.getByLabel("Transcript text for seg-1")).toHaveCount(0);
     await expect(mobilePage.getByRole("button", { name: "Save draft" })).toHaveCount(0);
     await expect(mobilePage.getByRole("button", { name: "Submit revision" })).toHaveCount(
       0,
     );
+    await expect(mobilePage.locator("#review-turns")).toHaveCount(0);
+
+    const firstSegmentRow = mobilePage.locator(
+      '#review-segments [data-review-segment-id="seg-1"]',
+    );
+    await expect(firstSegmentRow).toBeVisible();
+    await expect(firstSegmentRow.getByText(/Confidence \d+%/)).toBeVisible();
+    await expect(firstSegmentRow).toContainText("Fallback transcript generated");
 
     await mobileContext.close();
   });

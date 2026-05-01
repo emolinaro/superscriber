@@ -1052,22 +1052,8 @@ button {
   display: block;
 }
 
-.annotation-body {
-  display: grid;
-  grid-template-columns: minmax(240px, 0.54fr) minmax(0, 1.46fr);
-  gap: 18px;
-}
-
-.annotation-column {
-  min-width: 0;
-}
-
 .annotation-panel {
   padding: 18px;
-}
-
-.annotation-panel-muted {
-  background: rgba(223, 243, 244, 0.48);
 }
 
 .annotation-title {
@@ -1094,47 +1080,6 @@ button {
   color: rgba(235, 245, 247, 0.86);
 }
 
-.timeline-list-annotation {
-  gap: 12px;
-}
-
-.timeline-empty {
-  padding: 14px;
-  border-radius: 18px;
-  background: rgba(255, 255, 255, 0.76);
-  border: 1px solid rgba(15, 43, 53, 0.08);
-}
-
-.timeline-button-annotation {
-  gap: 10px;
-  padding: 14px;
-  border-radius: 18px;
-  border: 1px solid rgba(15, 43, 53, 0.08);
-  background: rgba(255, 255, 255, 0.88);
-}
-
-.timeline-button-annotation[data-active="true"] {
-  border-color: rgba(48, 125, 120, 0.34);
-  background: rgba(181, 231, 223, 0.56);
-}
-
-.segment-list-annotation {
-  gap: 12px;
-}
-
-.segment-annotation,
-.segment-empty-state {
-  padding: 16px;
-  border-radius: 18px;
-  border: 1px solid rgba(15, 43, 53, 0.08);
-  background: rgba(255, 255, 255, 0.92);
-}
-
-.segment-annotation[data-active="true"] {
-  border-color: rgba(48, 125, 120, 0.34);
-  background: rgba(217, 243, 240, 0.68);
-}
-
 .annotation-summary-field input {
   font-weight: 600;
 }
@@ -1147,22 +1092,6 @@ button {
   background: rgba(252, 255, 255, 0.98);
   font-weight: 600;
   line-height: 1.55;
-}
-
-.segment-annotation textarea,
-.segment-annotation input {
-  font-size: 0.97rem;
-}
-
-.segment-annotation input {
-  border: 0;
-  padding: 0;
-  background: transparent;
-  font-weight: 700;
-}
-
-.segment-annotation textarea {
-  min-height: 112px;
 }
 
 .segment-copy-shell {
@@ -1346,6 +1275,79 @@ button {
   background: rgba(211, 107, 62, 0.12);
 }
 
+.annotation-review-panel {
+  gap: 18px;
+}
+
+.review-segment-list {
+  display: grid;
+  gap: 12px;
+}
+
+.review-segment-row,
+.segment-empty-state {
+  padding: 16px;
+  border-radius: 18px;
+  border: 1px solid rgba(15, 43, 53, 0.08);
+  background: rgba(255, 255, 255, 0.92);
+}
+
+.review-segment-row {
+  display: grid;
+  grid-template-columns: minmax(140px, 156px) minmax(0, 1fr);
+  gap: 14px;
+  align-items: start;
+}
+
+.review-segment-row[data-active="true"] {
+  border-color: rgba(48, 125, 120, 0.34);
+  background: rgba(217, 243, 240, 0.68);
+}
+
+.review-segment-rail {
+  display: grid;
+  gap: 10px;
+  align-content: start;
+}
+
+.review-segment-jump {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: fit-content;
+  min-height: 36px;
+  padding: 0 12px;
+  border-radius: 999px;
+  border: 1px solid rgba(15, 43, 53, 0.08);
+  background: rgba(15, 43, 53, 0.06);
+  color: var(--ink);
+  font-family: var(--font-mono);
+  font-size: 0.84rem;
+  font-weight: 700;
+}
+
+.review-segment-speaker,
+.review-segment-rail input {
+  font-size: 0.97rem;
+  font-weight: 700;
+}
+
+.review-segment-rail input {
+  border: 0;
+  padding: 0;
+  background: transparent;
+}
+
+.review-segment-editor {
+  display: grid;
+  gap: 10px;
+}
+
+.review-segment-footer {
+  display: inline-flex;
+  align-items: center;
+}
+
 .review-actions {
   display: flex;
   flex-wrap: wrap;
@@ -1390,11 +1392,14 @@ button {
   .review-summary-grid,
   .queue-board,
   .annotation-workspace-shell,
-  .annotation-body,
   .metric-grid,
   .dashboard-grid,
   .recording-grid,
   .role-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .review-segment-row {
     grid-template-columns: 1fr;
   }
 
@@ -1470,6 +1475,19 @@ button {
 
   .annotation-canvas {
     order: 1;
+  }
+
+  .review-segment-row {
+    padding: 14px;
+    gap: 12px;
+  }
+
+  .review-segment-rail {
+    gap: 8px;
+  }
+
+  .review-segment-jump {
+    min-height: 34px;
   }
 
   .rail-button {
