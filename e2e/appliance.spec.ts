@@ -232,6 +232,21 @@ test.describe.serial("single-image appliance", () => {
     await page.getByRole("link", { name: "Open next assigned item" }).click();
     await expect(page).toHaveURL(new RegExp(`/recordings/${createdRecordingId}$`));
 
+    await expect(page.locator("#review-segments")).toBeVisible({ timeout: 90_000 });
+    await expect(page.locator("#review-turns")).toHaveCount(0);
+
+    const firstSegmentRow = page.locator(
+      '#review-segments [data-review-segment-id="seg-1"]',
+    );
+    await expect(firstSegmentRow).toBeVisible();
+    await expect(firstSegmentRow.getByLabel("Speaker label for seg-1")).toBeVisible();
+    await expect(firstSegmentRow.getByLabel("Transcript text for seg-1")).toContainText(
+      "Fallback transcript generated",
+    );
+    await expect(
+      firstSegmentRow.getByRole("button", { name: /Jump to .* for / }),
+    ).toBeVisible();
+
     const firstTranscriptField = page.getByLabel("Transcript text for seg-1");
     await expect(firstTranscriptField).toBeVisible({ timeout: 90_000 });
     await expect(firstTranscriptField).toContainText("Fallback transcript generated");
