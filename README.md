@@ -16,7 +16,8 @@ It now runs as a single-institution deployment with local accounts, SQLite persi
 
 - Bootstrap admin setup plus local accounts for `uploader`, `reviewer`, `approver`, and `admin`
 - Unified resumable ingest flow for upload and recording
-- Assignment-aware worklists and governed review/approval surfaces
+- Assignment-aware worklists and governed review/approval surfaces, with reviewer and approver desks unlocked only by explicit admin assignment
+- Policy-gated approved transcript export in `DOCX`, `TXT`, `SRT`, `VTT`, `CSV`, `TSV`, and `JSON`
 - SQLite-backed workflow persistence with mounted media storage
 - Internal Python worker with GPU-preferred transcription when compatible hardware is available
 - Alternate orchestration modes for `mock` and `webhook`
@@ -162,6 +163,13 @@ The default build prefetches the configured model into the image. Runtime downlo
 - [`worker/`](./worker/) — internal Python transcription worker
 - [`scripts/`](./scripts/) — container/runtime helpers
 
+## Project Docs
+
+- [`CHANGELOG.md`](./CHANGELOG.md) — release history and shipped behavior notes
+- [`DESIGN.md`](./DESIGN.md) — visual and interaction source of truth for the governed workspace
+- [`TODOS.md`](./TODOS.md) — deferred follow-on work after the current appliance release
+- [`AGENTS.md`](./AGENTS.md) — local automation metadata for deploy and workspace tooling
+
 ## Orchestration Modes
 
 By default, the app runs in internal orchestration mode.
@@ -201,6 +209,7 @@ npm test
 ```
 
 Current tests cover workflow rules, auth/access services, resumable ingest, the internal queue lifecycle, and orchestration behavior.
+They also cover reviewer assignment gating plus approved transcript export formatting, routing, and browser download behavior.
 
 For the browser path against the real single-image appliance:
 

@@ -72,6 +72,12 @@ This file is the visual and interaction source of truth for implementation on `s
   - secondary zone: collapsible drawer/tab set for policy, audit, integrity, assignment, and approval context
 - Approval happens inside the same review workspace as a mode/panel, not on a separate destination
 
+### Approved Export
+
+- Approved transcript export stays anchored to the review workspace header, not a separate reporting screen
+- Export appears only when the current revision is approved and the active policy profile allows download
+- The chooser opens as an in-place sheet grouped into document, captions, and structured data formats
+
 ## Interaction And Copy Rules
 
 - Prefer procedural language: "Session expired. Sign in again to continue."
