@@ -283,7 +283,24 @@ test.describe.serial("single-image appliance", () => {
     await expect(
       page.getByText("Transcript approved and locked under policy."),
     ).toBeVisible();
-    await expect(page.getByRole("link", { name: "Export approved text" })).toBeVisible();
+    const exportApprovedButton = page.getByRole("button", { name: "Export approved" });
+    await expect(exportApprovedButton).toBeVisible();
+
+    await exportApprovedButton.click();
+
+    const exportDialog = page.getByRole("dialog", { name: "Approved export formats" });
+    await expect(exportDialog).toBeVisible();
+    await expect(exportDialog.getByRole("link", { name: "DOCX" })).toHaveAttribute(
+      "href",
+      new RegExp(`/api/recordings/${createdRecordingId}/transcript\\?format=docx$`),
+    );
+    await expect(exportDialog.getByRole("link", { name: "JSON" })).toHaveAttribute(
+      "href",
+      new RegExp(`/api/recordings/${createdRecordingId}/transcript\\?format=json$`),
+    );
+
+    await page.keyboard.press("Escape");
+    await expect(exportDialog).toBeHidden();
   });
 
   test("resumes an interrupted upload from the last committed chunk", async ({ page }) => {

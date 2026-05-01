@@ -8,6 +8,11 @@ import {
   Recording,
   TranscriptRevision,
 } from "@/domain/models";
+import {
+  APPROVED_TRANSCRIPT_EXPORT_FORMAT_GROUPS,
+  type ApprovedTranscriptExportFormat,
+  buildApprovedTranscriptExportUrl,
+} from "@/lib/approved-transcript-export";
 import { formatSegmentWindow } from "@/lib/format";
 
 type Action = (formData: FormData) => void | Promise<void>;
@@ -18,6 +23,18 @@ const IDLE_WAVE_BARS = Array.from({ length: WAVE_BAR_COUNT }, (_, index) => {
   return pattern[index % pattern.length] ?? 48;
 });
 const COMPACT_REVIEW_BREAKPOINT_PX = 760;
+const APPROVED_EXPORT_FORMAT_DESCRIPTIONS: Record<
+  ApprovedTranscriptExportFormat,
+  string
+> = {
+  docx: "Formatted handoff for policy-approved document editing.",
+  txt: "Plain text export for simple archival or handoff.",
+  srt: "Subtitle cues with numbered timestamps for timed playback.",
+  vtt: "Web caption cues for browser and streaming workflows.",
+  csv: "Spreadsheet-ready rows for segment-by-segment analysis.",
+  tsv: "Tab-separated rows for safer spreadsheet ingestion.",
+  json: "Structured transcript data for system-to-system exchange.",
+};
 
 function FormButton({
   children,
@@ -57,7 +74,7 @@ type ReviewWorkspaceProps = {
   currentRevision: TranscriptRevision | null;
   policyDecision: PolicyDecision;
   mediaUrl: string | null;
-  exportUrl: string | null;
+  approvedTranscriptExportBaseUrl: string | null;
   saveAction: Action;
   submitAction: Action;
   approveAction: Action;
@@ -69,7 +86,7 @@ export function ReviewWorkspace({
   currentRevision,
   policyDecision,
   mediaUrl,
-  exportUrl,
+  approvedTranscriptExportBaseUrl,
   saveAction,
   submitAction,
   approveAction,
@@ -87,6 +104,7 @@ export function ReviewWorkspace({
   const [currentMs, setCurrentMs] = useState(0);
   const [durationMs, setDurationMs] = useState(0);
   const [isCompactViewport, setIsCompactViewport] = useState(false);
+  const [isApprovedExportSheetOpen, setIsApprovedExportSheetOpen] = useState(false);
   const [mediaElement, setMediaElement] = useState<HTMLAudioElement | HTMLVideoElement | null>(
     null,
   );
@@ -101,6 +119,12 @@ export function ReviewWorkspace({
   useEffect(() => {
     setWaveBars(IDLE_WAVE_BARS);
   }, [currentRevision?.id, mediaUrl]);
+
+  useEffect(() => {
+    if (!approvedTranscriptExportBaseUrl) {
+      setIsApprovedExportSheetOpen(false);
+    }
+  }, [approvedTranscriptExportBaseUrl]);
 
   const activeSegmentIndex = segments.findIndex(
     (segment) => currentMs >= segment.startMs && currentMs <= segment.endMs,
@@ -226,6 +250,24 @@ export function ReviewWorkspace({
     };
   }, [mediaElement, mediaUrl]);
 
+  useEffect(() => {
+    if (!isApprovedExportSheetOpen) {
+      return;
+    }
+
+    function handleKeyDown(event: KeyboardEvent) {
+      if (event.key === "Escape") {
+        setIsApprovedExportSheetOpen(false);
+      }
+    }
+
+    window.addEventListener("keydown", handleKeyDown);
+
+    return () => {
+      window.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [isApprovedExportSheetOpen]);
+
   function updateSegment(
     segmentId: string,
     key: "speakerLabel" | "text",
@@ -288,6 +330,14 @@ export function ReviewWorkspace({
     });
   }
 
+  function closeApprovedExportSheet() {
+    setIsApprovedExportSheetOpen(false);
+  }
+
+  function formatApprovedExportGroupLabel(groupId: string, groupLabel: string) {
+    return groupId === "structured" ? `${groupLabel} data` : groupLabel;
+  }
+
   return (
     <div className="review-shell review-shell-annotation">
       <div className="review-topbar review-topbar-annotation">
@@ -309,13 +359,88 @@ export function ReviewWorkspace({
               Draft editing enabled
             </span>
           ) : null}
-          {exportUrl ? (
-            <a className="button button-quiet" href={exportUrl}>
-              Export approved text
-            </a>
+          {approvedTranscriptExportBaseUrl ? (
+            <button
+              aria-expanded={isApprovedExportSheetOpen}
+              aria-haspopup="dialog"
+              className="button button-quiet"
+              onClick={() => setIsApprovedExportSheetOpen(true)}
+              type="button"
+            >
+              Export approved
+            </button>
           ) : null}
         </div>
       </div>
+
+      {isApprovedExportSheetOpen && approvedTranscriptExportBaseUrl ? (
+        <div
+          className="review-export-sheet-backdrop"
+          onClick={closeApprovedExportSheet}
+          role="presentation"
+        >
+          <div
+            aria-labelledby="approved-export-sheet-title"
+            aria-modal="true"
+            className="review-export-sheet"
+            onClick={(event) => event.stopPropagation()}
+            role="dialog"
+          >
+            <div className="review-export-sheet-header">
+              <div className="stack-tight">
+                <p className="eyebrow">Approved transcript</p>
+                <h3 className="section-title" id="approved-export-sheet-title">
+                  Approved export formats
+                </h3>
+                <p className="body-copy">
+                  Choose a policy-approved format for the locked transcript.
+                </p>
+              </div>
+              <button
+                aria-label="Close approved export formats"
+                className="button button-secondary review-export-sheet-close"
+                onClick={closeApprovedExportSheet}
+                type="button"
+              >
+                Close
+              </button>
+            </div>
+
+            <div className="review-export-group-list">
+              {APPROVED_TRANSCRIPT_EXPORT_FORMAT_GROUPS.map((group) => (
+                <section className="review-export-group" key={group.id}>
+                  <div className="stack-tight">
+                    <p className="eyebrow review-export-group-eyebrow">
+                      {formatApprovedExportGroupLabel(group.id, group.label)}
+                    </p>
+                  </div>
+                  <div className="review-export-option-list">
+                    {group.formats.map((format) => (
+                      <a
+                        aria-label={format.toUpperCase()}
+                        className="review-export-option"
+                        href={buildApprovedTranscriptExportUrl(
+                          approvedTranscriptExportBaseUrl,
+                          format,
+                        )}
+                        key={format}
+                        onClick={closeApprovedExportSheet}
+                      >
+                        <strong className="review-export-option-label">
+                          {format.toUpperCase()}
+                        </strong>
+                        <span className="review-export-option-description">
+                          {APPROVED_EXPORT_FORMAT_DESCRIPTIONS[format]}
+                        </span>
+                      </a>
+                    ))}
+                  </div>
+                </section>
+              ))}
+            </div>
+          </div>
+        </div>
+      ) : null}
 
       <form className="annotation-form">
         <input name="recordingId" type="hidden" value={recording.id} />

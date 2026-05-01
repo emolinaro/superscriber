@@ -61,7 +61,7 @@ export default async function RecordingPage({
     detail.policyDecision.canViewMedia && detail.recording.mediaPath
       ? `/api/media/${detail.recording.id}`
       : null;
-  const exportUrl =
+  const approvedTranscriptExportBaseUrl =
     detail.policyDecision.canDownloadApprovedTranscript &&
     detail.recording.approvedRevisionId
       ? `/api/recordings/${detail.recording.id}/transcript`
@@ -166,7 +166,7 @@ export default async function RecordingPage({
                 currentRevision={detail.currentRevision}
                 policyDecision={detail.policyDecision}
                 mediaUrl={mediaUrl}
-                exportUrl={exportUrl}
+                approvedTranscriptExportBaseUrl={approvedTranscriptExportBaseUrl}
                 saveAction={saveDraftAction}
                 submitAction={submitRevisionAction}
                 approveAction={approveRevisionAction}
