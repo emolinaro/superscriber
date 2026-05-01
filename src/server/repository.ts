@@ -363,7 +363,7 @@ export async function resolveApprovedTranscriptExport(
   };
 }
 
-export function resolveApprovedTranscriptExportForPrincipal(
+export async function resolveApprovedTranscriptExportForPrincipal(
   recordingId: string,
   principal: Principal,
   format?: ApprovedTranscriptExportFormat,

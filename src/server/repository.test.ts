@@ -1,6 +1,9 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { resetAppDatabaseForTests } from "@/server/db/client";
-import { resolveApprovedTranscriptExport } from "@/server/repository";
+import {
+  resolveApprovedTranscriptExport,
+  resolveApprovedTranscriptExportForPrincipal,
+} from "@/server/repository";
 import { withState } from "@/server/store";
 
 vi.mock("server-only", () => ({}));
@@ -73,5 +76,51 @@ describe("repository approved transcript export resolution", () => {
       denied: false,
       missing: true,
     });
+  });
+
+  it("keeps the principal-facing wrapper async for denied and approved branches", async () => {
+    const denied = await resolveApprovedTranscriptExportForPrincipal("rec-seed-review", {
+      userId: "user-reviewer",
+      email: "reviewer@example.com",
+      displayName: "Reviewer",
+      role: "reviewer",
+    });
+    expect(denied).toEqual({
+      denied: true,
+      reason: "This recording is not assigned to your account.",
+    });
+
+    withState((state) => {
+      const recording = state.recordings.find((entry) => entry.id === "rec-seed-approval");
+      const revision = state.revisions.find((entry) => entry.id === "rev-seed-pending");
+      if (!recording || !revision) {
+        throw new Error("Expected seeded approval recording and revision.");
+      }
+
+      recording.approvedRevisionId = revision.id;
+      recording.pendingRevisionId = null;
+      revision.state = "approved";
+      revision.approvedAt = "2026-05-01T00:00:00.000Z";
+    });
+
+    const approved = await resolveApprovedTranscriptExportForPrincipal(
+      "rec-seed-approval",
+      {
+        userId: "user-admin",
+        email: "admin@example.com",
+        displayName: "Admin",
+        role: "admin",
+      },
+      "txt",
+    );
+
+    expect(approved).toEqual(
+      expect.objectContaining({
+        denied: false,
+        missing: false,
+        fileName: "Seeded-pending-approval-item-approved-v2.txt",
+        contentType: "text/plain; charset=utf-8",
+      }),
+    );
   });
 });

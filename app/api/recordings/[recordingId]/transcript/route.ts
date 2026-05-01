@@ -17,7 +17,10 @@ export async function GET(
   }
 
   const { recordingId } = await context.params;
-  const exportResult = resolveApprovedTranscriptExportForPrincipal(recordingId, principal);
+  const exportResult = await resolveApprovedTranscriptExportForPrincipal(
+    recordingId,
+    principal,
+  );
   if (!exportResult) {
     return new NextResponse("Not found", { status: 404 });
   }
@@ -30,11 +33,13 @@ export async function GET(
     });
   }
 
-  return new NextResponse(exportResult.content, {
+  const responseBody = new Uint8Array(exportResult.body).buffer;
+
+  return new NextResponse(responseBody, {
     status: 200,
     headers: {
       "cache-control": "no-store",
-      "content-type": "text/plain; charset=utf-8",
+      "content-type": exportResult.contentType,
       "content-disposition": `attachment; filename="${exportResult.fileName}"`,
     },
   });
