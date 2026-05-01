@@ -484,7 +484,7 @@ export function ReviewWorkspace({
                 )}
               </div>
 
-              <div className="review-segment-list">
+              <div className="segment-list segment-list-annotation review-segment-list">
                 {hasSegments ? (
                   segments.map((segment) => {
                     const windowLabel = formatSegmentWindow(segment.startMs, segment.endMs);
@@ -494,14 +494,14 @@ export function ReviewWorkspace({
                     return (
                       <article
                         key={segment.id}
-                        className="review-segment-row"
+                        className="review-segment-row segment-annotation"
                         data-active={segment.id === activeSegmentId}
                         data-review-segment-id={segment.id}
                       >
-                        <div className="review-segment-rail">
+                        <div className="review-segment-rail segment-header">
                           <button
                             aria-label={jumpLabel}
-                            className="review-segment-jump"
+                            className="review-segment-jump segment-jump-button"
                             onClick={() => seekTo(segment.startMs)}
                             type="button"
                           >
