@@ -494,7 +494,7 @@ export function ReviewWorkspace({
                     return (
                       <article
                         key={segment.id}
-                        className="review-segment-row segment-annotation"
+                        className="review-segment-row segment segment-annotation"
                         data-active={segment.id === activeSegmentId}
                         data-review-segment-id={segment.id}
                       >
