@@ -244,7 +244,7 @@ export async function assignRecordingAction(formData: FormData) {
     assignRecordingToUser({
       recordingId,
       userId,
-      assignedByUserId: principal.userId,
+      assignedBy: principal,
     });
 
     revalidatePath("/workspace");
@@ -272,7 +272,10 @@ export async function unassignRecordingAction(formData: FormData) {
       throw new Error("Choose an assignment to remove.");
     }
 
-    removeRecordingAssignment(assignmentId);
+    removeRecordingAssignment({
+      assignmentId,
+      removedBy: principal,
+    });
 
     revalidatePath("/workspace");
     redirectWithMessage("/workspace", {

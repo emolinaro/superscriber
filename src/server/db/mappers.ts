@@ -222,7 +222,10 @@ export function toRecordingAssignment(row: RecordingAssignmentRow): RecordingAss
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,
     endedAt: row.endedAt,
-    endReason: row.endReason === "legacy_approved_backfill" ? row.endReason : null,
+    endReason:
+      row.endReason === "legacy_approved_backfill" || row.endReason === "removed_by_admin"
+        ? row.endReason
+        : null,
     completedRevisionId: row.completedRevisionId,
     removedByUserId: row.removedByUserId,
   };

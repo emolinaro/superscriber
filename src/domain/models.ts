@@ -55,7 +55,7 @@ export type MediaKind = "audio" | "video";
 export type RecordingSource = "upload" | "record";
 export type DiarizationStatus = "pending" | "available" | "degraded" | "failed";
 export type AssignmentRole = Extract<UserRole, "reviewer" | "approver">;
-export type AssignmentEndReason = "legacy_approved_backfill";
+export type AssignmentEndReason = "removed_by_admin" | "legacy_approved_backfill";
 
 export type AuditMetadata = {
   version: number;
@@ -215,6 +215,9 @@ export type AuditEvent = {
     | "revision.submitted"
     | "approval.approved"
     | "approval.reopened"
+    | "assignment.created"
+    | "assignment.completed"
+    | "assignment.removed"
     | "policy.denied";
   detail: string;
   metadata: AuditMetadata;

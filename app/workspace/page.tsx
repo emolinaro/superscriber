@@ -8,7 +8,7 @@ import {
   formatRoleLabel,
   toneForBucket,
 } from "@/lib/format";
-import { listAssignableUsers, listLocalUsers, listAssignments } from "@/server/access/service";
+import { listAssignableUsers, listLocalUsers } from "@/server/access/service";
 import { listWorkspaceOverview } from "@/server/repository";
 import { requireActivePrincipal } from "@/server/session";
 
@@ -80,13 +80,11 @@ export default async function WorkspacePage({
   const assignableUsers = role === "admin" ? listAssignableUsers() : [];
   const assignmentRows =
     role === "admin"
-      ? listAssignments({ recordingIds: overview.visibleRecordings.map((recording) => recording.id) }).map(
-          (assignment) => ({
+      ? overview.visibleRecordings.flatMap((recording) =>
+          (overview.assignmentsByRecordingId.get(recording.id) ?? []).map((assignment) => ({
             ...assignment,
-            recordingTitle:
-              overview.visibleRecordings.find((recording) => recording.id === assignment.recordingId)
-                ?.title ?? assignment.recordingId,
-          }),
+            recordingTitle: recording.title,
+          })),
         )
       : [];
 
