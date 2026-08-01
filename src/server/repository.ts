@@ -11,7 +11,7 @@ import {
   Workspace,
   WorkspaceBucket,
 } from "@/domain/models";
-import { bucketRecording, saveDraftRevision, submitRevision, approveRevision, reopenApprovedRevision } from "@/domain/workflow";
+import { bucketRecording, approveRevision, reopenApprovedRevision } from "@/domain/workflow";
 import { describePolicyProfile, evaluatePolicy } from "@/domain/policy";
 import type { ApprovedTranscriptExportFormat } from "@/lib/approved-transcript-export";
 import {
@@ -215,40 +215,6 @@ export function noteRecordingDispatchFailure(params: {
   });
 }
 
-export function saveRecordingDraft(params: {
-  recordingId: string;
-  role: UserRole;
-  expectedCurrentRevisionId: string;
-  segments: TranscriptRevision["segments"];
-  summary: string;
-}) {
-  return withState((state) =>
-    saveDraftRevision({
-      state,
-      recordingId: params.recordingId,
-      role: params.role,
-      expectedCurrentRevisionId: params.expectedCurrentRevisionId,
-      segments: params.segments,
-      summary: params.summary,
-    }),
-  );
-}
-
-export function submitRecording(params: {
-  recordingId: string;
-  role: UserRole;
-  expectedCurrentRevisionId: string;
-}) {
-  return withState((state) =>
-    submitRevision({
-      state,
-      recordingId: params.recordingId,
-      role: params.role,
-      expectedCurrentRevisionId: params.expectedCurrentRevisionId,
-    }),
-  );
-}
-
 export function approveRecordingRevision(params: {
   recordingId: string;
   role: UserRole;
@@ -376,5 +342,9 @@ export async function resolveApprovedTranscriptExportForPrincipal(
     };
   }
 
-  return resolveApprovedTranscriptExport(recordingId, principal.role, format);
+  return resolveApprovedTranscriptExport(
+    recordingId,
+    principal.role === "admin" ? "approver" : principal.role,
+    format,
+  );
 }

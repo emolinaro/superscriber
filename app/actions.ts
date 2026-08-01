@@ -8,9 +8,11 @@ import { type BootstrapFormState } from "@/lib/auth-forms";
 import {
   approveRecordingRevision,
   reopenRecordingRevision,
-  saveRecordingDraft,
-  submitRecording,
 } from "@/server/repository";
+import {
+  saveDraftCommand,
+  submitRevisionCommand,
+} from "@/server/casefile/commands";
 import {
   assignRecordingToUser,
   canAccessRecording,
@@ -294,7 +296,6 @@ export async function unassignRecordingAction(formData: FormData) {
 
 export async function saveDraftAction(formData: FormData) {
   const principal = await requireActivePrincipal();
-  const role = principal.role;
   const recordingId = asString(formData, "recordingId");
 
   try {
@@ -304,9 +305,8 @@ export async function saveDraftAction(formData: FormData) {
       "No draft revision is loaded. Reload this recording and try again.",
     );
     assertAssignedRecordingAccess(principal, recordingId);
-    saveRecordingDraft({
+    saveDraftCommand(principal, {
       recordingId,
-      role,
       expectedCurrentRevisionId: currentRevisionId,
       segments: parseSegmentsJson(formData),
       summary: asString(formData, "summary", "Updated transcript draft."),
@@ -328,7 +328,6 @@ export async function saveDraftAction(formData: FormData) {
 
 export async function submitRevisionAction(formData: FormData) {
   const principal = await requireActivePrincipal();
-  const role = principal.role;
   const recordingId = asString(formData, "recordingId");
 
   try {
@@ -339,22 +338,13 @@ export async function submitRevisionAction(formData: FormData) {
     );
     assertAssignedRecordingAccess(principal, recordingId);
     const segments = parseSegmentsJson(formData);
-    let revisionIdToSubmit = loadedRevisionId;
-    if (segments.length > 0) {
-      const savedRevision = saveRecordingDraft({
-        recordingId,
-        role,
-        expectedCurrentRevisionId: loadedRevisionId,
-        segments,
-        summary: asString(formData, "summary", "Updated transcript draft."),
-      });
-      revisionIdToSubmit = savedRevision.id;
-    }
 
-    submitRecording({
+    submitRevisionCommand(principal, {
       recordingId,
-      role,
-      expectedCurrentRevisionId: revisionIdToSubmit,
+      expectedCurrentRevisionId: loadedRevisionId,
+      segments,
+      summary: asString(formData, "summary", "Updated transcript draft."),
+      hasUnsavedChanges: segments.length > 0,
     });
     revalidatePath("/workspace");
     revalidatePath(`/recordings/${recordingId}`);

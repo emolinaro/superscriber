@@ -1,18 +1,26 @@
+import type { CasefileWorkflowStage } from "@/domain/casefile";
+
 export const CASEFILE_COMMAND_ERROR_CODES = [
   "VALIDATION_ERROR",
   "ACTION_MODE_REQUIRED",
   "ACTION_MODE_EXPIRED",
   "ACTION_MODE_FORBIDDEN",
   "ACTION_MODE_ENDED",
+  "NOT_FOUND",
+  "ACCESS_DENIED",
+  "STALE_REVISION",
 ] as const;
 
 export type ErrorCode = (typeof CASEFILE_COMMAND_ERROR_CODES)[number];
 
 export type CasefileConflictSnapshot = {
   recordingId: string;
+  loadedRevisionId?: string | null;
   currentRevisionId: string | null;
   pendingRevisionId: string | null;
   approvedRevisionId: string | null;
+  updatedAt?: string;
+  winningStage?: CasefileWorkflowStage;
 };
 
 export class CasefileCommandError extends Error {

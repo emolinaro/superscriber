@@ -1,11 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { AppState, PolicyProfile, Recording, TranscriptRevision, Workspace } from "@/domain/models";
-import {
-  approveRevision,
-  reopenApprovedRevision,
-  saveDraftRevision,
-  submitRevision,
-} from "@/domain/workflow";
+import { approveRevision, reopenApprovedRevision } from "@/domain/workflow";
 
 function nowIso() {
   return new Date().toISOString();
@@ -27,19 +22,19 @@ function createState(): AppState {
     },
   ];
 
-  const draftRevision: TranscriptRevision = {
+  const pendingRevision: TranscriptRevision = {
     id: "rev-1",
     recordingId: "rec-1",
     version: 1,
-    state: "draft",
+    state: "pending_approval",
     basedOnRevisionId: null,
-    createdByRole: "system",
+    createdByRole: "reviewer",
     createdByUserId: null,
     createdAt: nowIso(),
     submittedByUserId: null,
-    submittedAt: null,
+    submittedAt: nowIso(),
     approvedAt: null,
-    summary: "Initial draft",
+    summary: "Pending draft",
     segments: [
       {
         id: "seg-1",
@@ -68,9 +63,9 @@ function createState(): AppState {
     transcriptJobId: "job-1",
     integrityState: "verified",
     transcriptJobState: "completed",
-    currentRevisionId: draftRevision.id,
+    currentRevisionId: pendingRevision.id,
     approvedRevisionId: null,
-    pendingRevisionId: null,
+    pendingRevisionId: pendingRevision.id,
     verificationSummary: "Verified.",
     createdAt: nowIso(),
     updatedAt: nowIso(),
@@ -83,64 +78,40 @@ function createState(): AppState {
     recordings: [recording],
     ingestionSessions: [],
     transcriptJobs: [],
-    revisions: [draftRevision],
+    revisions: [pendingRevision],
     approvals: [],
     auditEvents: [],
   };
 }
 
 describe("workflow", () => {
-  it("requires an explicit reopen permission before editing an approved transcript", () => {
+  it("approves the current pending revision and updates the recording pointers", () => {
     const state = createState();
 
-    submitRevision({
-      state,
-      recordingId: "rec-1",
-      role: "reviewer",
-      expectedCurrentRevisionId: "rev-1",
-    });
     approveRevision({
       state,
       recordingId: "rec-1",
       role: "approver",
-      expectedPendingRevisionId: state.recordings[0]?.pendingRevisionId ?? "",
+      expectedPendingRevisionId: "rev-1",
     });
 
-    expect(() =>
-      saveDraftRevision({
-        state,
-        recordingId: "rec-1",
-        role: "reviewer",
-        expectedCurrentRevisionId: state.recordings[0]?.currentRevisionId ?? "",
-        summary: "Attempted edit",
-        segments: [
-          {
-            id: "seg-1",
-            speakerLabel: "Speaker A",
-            startMs: 0,
-            endMs: 5_000,
-            text: "Changed text.",
-            confidence: 0.92,
-          },
-        ],
-      }),
-    ).toThrow(/reopened/i);
+    const recording = state.recordings[0];
+    const approvedRevision = state.revisions.find((revision) => revision.id === "rev-1");
+
+    expect(approvedRevision?.state).toBe("approved");
+    expect(recording?.approvedRevisionId).toBe("rev-1");
+    expect(recording?.pendingRevisionId).toBeNull();
+    expect(recording?.currentRevisionId).toBe("rev-1");
   });
 
   it("reopens an approved revision as a new draft cycle", () => {
     const state = createState();
 
-    submitRevision({
-      state,
-      recordingId: "rec-1",
-      role: "reviewer",
-      expectedCurrentRevisionId: "rev-1",
-    });
     approveRevision({
       state,
       recordingId: "rec-1",
       role: "approver",
-      expectedPendingRevisionId: state.recordings[0]?.pendingRevisionId ?? "",
+      expectedPendingRevisionId: "rev-1",
     });
     reopenApprovedRevision({
       state,
@@ -156,136 +127,32 @@ describe("workflow", () => {
 
     expect(currentRevision?.state).toBe("draft");
     expect(currentRevision?.version).toBe(2);
-    expect(recording.pendingRevisionId).toBeNull();
-  });
-
-  it("rejects saving from a stale loaded revision", () => {
-    const state = createState();
-
-    saveDraftRevision({
-      state,
-      recordingId: "rec-1",
-      role: "reviewer",
-      expectedCurrentRevisionId: "rev-1",
-      summary: "Fresh draft",
-      segments: [
-        {
-          id: "seg-1",
-          speakerLabel: "Speaker A",
-          startMs: 0,
-          endMs: 5_000,
-          text: "Fresh draft text.",
-          confidence: 0.92,
-        },
-      ],
-    });
-
-    expect(() =>
-      saveDraftRevision({
-        state,
-        recordingId: "rec-1",
-        role: "reviewer",
-        expectedCurrentRevisionId: "rev-1",
-        summary: "Stale draft",
-        segments: [
-          {
-            id: "seg-1",
-            speakerLabel: "Speaker A",
-            startMs: 0,
-            endMs: 5_000,
-            text: "Stale text.",
-            confidence: 0.92,
-          },
-        ],
-      }),
-    ).toThrow(/newer draft revision/i);
-  });
-
-  it("rejects saving an empty draft over an existing transcript", () => {
-    const state = createState();
-
-    expect(() =>
-      saveDraftRevision({
-        state,
-        recordingId: "rec-1",
-        role: "reviewer",
-        expectedCurrentRevisionId: "rev-1",
-        summary: "Transcript draft is not ready yet.",
-        segments: [],
-      }),
-    ).toThrow(/missing transcript segments/i);
-  });
-
-  it("allocates the next draft version from revision history, not the current pointer", () => {
-    const state = createState();
-
-    state.revisions.push({
-      id: "rev-2-orphan",
-      recordingId: "rec-1",
-      version: 2,
-      state: "draft",
-      basedOnRevisionId: "rev-1",
-      createdByRole: "admin",
-      createdByUserId: null,
-      createdAt: nowIso(),
-      submittedByUserId: null,
-      submittedAt: null,
-      approvedAt: null,
-      summary: "Orphaned draft",
-      segments: [],
-    });
-
-    const saved = saveDraftRevision({
-      state,
-      recordingId: "rec-1",
-      role: "reviewer",
-      expectedCurrentRevisionId: "rev-1",
-      summary: "Fresh draft after orphan",
-      segments: [
-        {
-          id: "seg-1",
-          speakerLabel: "Speaker A",
-          startMs: 0,
-          endMs: 5_000,
-          text: "Fresh draft text.",
-          confidence: 0.92,
-        },
-      ],
-    });
-
-    expect(saved.version).toBe(3);
+    expect(recording?.pendingRevisionId).toBeNull();
   });
 
   it("rejects approving a stale pending revision id", () => {
     const state = createState();
 
-    submitRevision({
-      state,
-      recordingId: "rec-1",
-      role: "reviewer",
-      expectedCurrentRevisionId: "rev-1",
-    });
-    const firstPendingRevisionId = state.recordings[0]?.pendingRevisionId ?? "";
-
     approveRevision({
       state,
       recordingId: "rec-1",
       role: "approver",
-      expectedPendingRevisionId: firstPendingRevisionId,
+      expectedPendingRevisionId: "rev-1",
     });
-    reopenApprovedRevision({
-      state,
+
+    state.revisions.push({
+      id: "rev-2",
       recordingId: "rec-1",
-      role: "approver",
-      expectedApprovedRevisionId: state.recordings[0]?.approvedRevisionId ?? "",
-    });
-    const reopenedRevisionId = state.recordings[0]?.currentRevisionId ?? "";
-    saveDraftRevision({
-      state,
-      recordingId: "rec-1",
-      role: "reviewer",
-      expectedCurrentRevisionId: reopenedRevisionId,
-      summary: "Another revision",
+      version: 2,
+      state: "pending_approval",
+      basedOnRevisionId: "rev-1",
+      createdByRole: "reviewer",
+      createdByUserId: null,
+      createdAt: nowIso(),
+      submittedByUserId: null,
+      submittedAt: nowIso(),
+      approvedAt: null,
+      summary: "A newer pending revision",
       segments: [
         {
           id: "seg-1",
@@ -297,19 +164,15 @@ describe("workflow", () => {
         },
       ],
     });
-    submitRevision({
-      state,
-      recordingId: "rec-1",
-      role: "reviewer",
-      expectedCurrentRevisionId: state.recordings[0]?.currentRevisionId ?? "",
-    });
+    state.recordings[0]!.currentRevisionId = "rev-2";
+    state.recordings[0]!.pendingRevisionId = "rev-2";
 
     expect(() =>
       approveRevision({
         state,
         recordingId: "rec-1",
         role: "approver",
-        expectedPendingRevisionId: firstPendingRevisionId,
+        expectedPendingRevisionId: "rev-1",
       }),
     ).toThrow(/different revision is now pending approval/i);
   });
