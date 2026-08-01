@@ -69,28 +69,67 @@ function hasUploaderStatusOnly(input: DeriveCasefileCapabilitiesInput) {
   return input.grant.kind === "uploader_status";
 }
 
-function isAdminOversight(input: DeriveCasefileCapabilitiesInput) {
-  return input.grant.kind === "admin_oversight" && !input.actionMode;
+function hasMatchingOversightGrant(input: DeriveCasefileCapabilitiesInput) {
+  return input.grant.kind === "admin_oversight" && input.grant.recordingId === input.recording.id;
 }
 
-function hasReviewerAuthority(input: DeriveCasefileCapabilitiesInput, actorRole: Principal["role"]) {
-  if (input.actionMode) {
+function hasExpiredAdminActionMode(input: DeriveCasefileCapabilitiesInput) {
+  return Boolean(
+    input.actionModeExpired &&
+      input.principal.role === "admin" &&
+      hasMatchingOversightGrant(input),
+  );
+}
+
+function getValidatedActionMode(input: DeriveCasefileCapabilitiesInput) {
+  if (
+    !input.actionMode ||
+    hasExpiredAdminActionMode(input) ||
+    input.principal.role !== "admin" ||
+    !hasMatchingOversightGrant(input)
+  ) {
+    return null;
+  }
+
+  return input.actionMode;
+}
+
+function isAdminOversight(
+  input: DeriveCasefileCapabilitiesInput,
+  actionMode: Pick<AdminActionSession, "id" | "effectiveRole"> | null,
+) {
+  return input.principal.role === "admin" && hasMatchingOversightGrant(input) && !actionMode;
+}
+
+function hasReviewerAuthority(
+  input: DeriveCasefileCapabilitiesInput,
+  actorRole: Principal["role"],
+  actionMode: Pick<AdminActionSession, "id" | "effectiveRole"> | null,
+) {
+  if (actionMode) {
     return actorRole === "reviewer";
   }
 
   return input.grant.kind === "active_reviewer";
 }
 
-function hasApproverAuthority(input: DeriveCasefileCapabilitiesInput, actorRole: Principal["role"]) {
-  if (input.actionMode) {
+function hasApproverAuthority(
+  input: DeriveCasefileCapabilitiesInput,
+  actorRole: Principal["role"],
+  actionMode: Pick<AdminActionSession, "id" | "effectiveRole"> | null,
+) {
+  if (actionMode) {
     return actorRole === "approver";
   }
 
   return input.grant.kind === "active_approver";
 }
 
-function hasExportAuthority(input: DeriveCasefileCapabilitiesInput) {
-  if (input.actionMode) {
+function hasExportAuthority(
+  input: DeriveCasefileCapabilitiesInput,
+  actionMode: Pick<AdminActionSession, "id" | "effectiveRole"> | null,
+) {
+  if (actionMode) {
     return true;
   }
 
@@ -113,15 +152,16 @@ function deriveCapabilityDenials(
   input: DeriveCasefileCapabilitiesInput,
   flags: CapabilityFlags,
 ): CapabilityDenials {
-  const actorRole = input.actionMode?.effectiveRole ?? input.principal.role;
+  const actionMode = getValidatedActionMode(input);
+  const actorRole = actionMode?.effectiveRole ?? input.principal.role;
   const policy = evaluatePolicy(input.policyProfileId, actorRole);
   const historical = isHistoricalSnapshot(input);
   const current = isCurrentSnapshot(input);
   const uploaderOnly = hasUploaderStatusOnly(input);
-  const adminOversight = isAdminOversight(input);
-  const reviewerAuthority = hasReviewerAuthority(input, actorRole);
-  const approverAuthority = hasApproverAuthority(input, actorRole);
-  const exportAuthority = hasExportAuthority(input);
+  const adminOversight = isAdminOversight(input, actionMode);
+  const reviewerAuthority = hasReviewerAuthority(input, actorRole, actionMode);
+  const approverAuthority = hasApproverAuthority(input, actorRole, actionMode);
+  const exportAuthority = hasExportAuthority(input, actionMode);
   const pending = isPending(input);
   const approved = isApproved(input);
   const submitterId = currentSubmitterId(input);
@@ -136,7 +176,7 @@ function deriveCapabilityDenials(
       return null;
     }
 
-    if (input.actionModeExpired) {
+    if (hasExpiredAdminActionMode(input)) {
       return "admin_action_mode_expired" satisfies CapabilityDenial;
     }
 
@@ -287,15 +327,16 @@ function deriveCapabilityDenials(
 export function deriveCasefileCapabilities(
   input: DeriveCasefileCapabilitiesInput,
 ): CasefileCapabilities {
-  const actorRole = input.actionMode?.effectiveRole ?? input.principal.role;
+  const actionMode = getValidatedActionMode(input);
+  const actorRole = actionMode?.effectiveRole ?? input.principal.role;
   const policy = evaluatePolicy(input.policyProfileId, actorRole);
   const current = isCurrentSnapshot(input);
-  const reviewerAuthority = hasReviewerAuthority(input, actorRole);
-  const approverAuthority = hasApproverAuthority(input, actorRole);
-  const exportAuthority = hasExportAuthority(input);
+  const reviewerAuthority = hasReviewerAuthority(input, actorRole, actionMode);
+  const approverAuthority = hasApproverAuthority(input, actorRole, actionMode);
+  const exportAuthority = hasExportAuthority(input, actionMode);
   const submitterId = currentSubmitterId(input);
   const isSubmitter = submitterId === input.principal.userId;
-  const adminOversight = isAdminOversight(input);
+  const adminOversight = isAdminOversight(input, actionMode);
   const pending = isPending(input);
   const approved = isApproved(input);
 

@@ -10,6 +10,7 @@ import { CasefileCommandError } from "@/server/casefile/errors";
 import {
   getAppDb,
   getAppDbBundle,
+  lookupAppDbBundle,
   type AppDatabase,
   type AppDatabaseBundle,
 } from "@/server/db/client";
@@ -222,6 +223,45 @@ function isExpired(session: Pick<AdminActionSession, "expiresAt">, now: string) 
   return Date.parse(now) >= Date.parse(session.expiresAt);
 }
 
+function requireDbBundle(db: AppDatabase) {
+  const bundle = lookupAppDbBundle(db);
+  if (!bundle) {
+    throw new Error("No database bundle is registered for governed action-mode resolution.");
+  }
+
+  return bundle;
+}
+
+function expireActionModeLazily(
+  db: AppDatabase,
+  principal: Principal,
+  input: ResolveActorContextInput,
+  now: string,
+) {
+  return runGovernedTransaction((tx) => {
+    const session = loadValidatedAdminActionMode(tx, principal, input);
+
+    if (session.endedAt) {
+      return {
+        status: "ended" as const,
+        session: toAdminActionSession(session),
+      };
+    }
+
+    if (!isExpired(session, now)) {
+      return {
+        status: "active" as const,
+        session: toAdminActionSession(session),
+      };
+    }
+
+    return {
+      status: "expired" as const,
+      session: endActionModeSession(tx, session, "expired", now, principal),
+    };
+  }, requireDbBundle(db));
+}
+
 export function enterActionMode(
   input: EnterActionModeInput,
   bundle: AppDatabaseBundle = getAppDbBundle(),
@@ -325,8 +365,17 @@ export function resolveActorContext(
   }
 
   if (isExpired(session, now)) {
-    endActionModeSession(db, session, "expired", now, principal);
-    throw actionModeExpiredError();
+    const expired = expireActionModeLazily(db, principal, input, now);
+
+    if (expired.status === "ended") {
+      throw actionModeEndedError();
+    }
+
+    if (expired.status === "expired") {
+      throw actionModeExpiredError();
+    }
+
+    return actionModeActor(principal, expired.session);
   }
 
   return actionModeActor(principal, session);
@@ -348,8 +397,21 @@ export function resolveActionMode(
   }
 
   if (isExpired(session, now)) {
-    endActionModeSession(db, session, "expired", now, principal);
-    throw actionModeExpiredError();
+    const expired = expireActionModeLazily(db, principal, input, now);
+
+    if (expired.status === "ended") {
+      throw actionModeEndedError();
+    }
+
+    if (expired.status === "expired") {
+      throw actionModeExpiredError();
+    }
+
+    return {
+      id: expired.session.id,
+      effectiveRole: expired.session.effectiveRole,
+      expiresAt: expired.session.expiresAt,
+    };
   }
 
   return {

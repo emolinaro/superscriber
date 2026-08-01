@@ -50,3 +50,44 @@
 
 ## Concerns
 - None.
+
+## Fix Round 1
+- RED command: `npm test -- src/server/casefile/action-mode.test.ts src/server/casefile/capabilities.test.ts src/domain/policy.test.ts`
+- RED output:
+  ```text
+  FAIL  src/server/casefile/action-mode.test.ts > casefile action mode > rolls back lazy expiry when the matching audit insert fails
+  AssertionError: expected '2026-08-01T12:31:00.000Z' to be null
+
+  FAIL  src/server/casefile/action-mode.test.ts > casefile action mode > expires action mode through resolveActionMode exactly once
+  AssertionError: expected 1 to be 2 // Object.is equality
+
+  FAIL  src/server/casefile/capabilities.test.ts > deriveCasefileCapabilities > 'ignores forged approver mode for a re…'
+  FAIL  src/server/casefile/capabilities.test.ts > deriveCasefileCapabilities > 'ignores forged approver mode for a re…'
+  FAIL  src/server/casefile/capabilities.test.ts > deriveCasefileCapabilities > 'ignores forged approver mode for an a…'
+  FAIL  src/server/casefile/capabilities.test.ts > deriveCasefileCapabilities > 'ignores forged reviewer mode when the…'
+  AssertionError: expected { canViewStatus: true, …(11) } to deeply equal ObjectContaining{…}
+
+   Test Files  2 failed | 1 passed (3)
+        Tests  6 failed | 35 passed (41)
+  ```
+- Why expected: the new regression tests exposed that lazy expiry updated sessions outside `runGovernedTransaction`, so rollback and state-version guarantees failed, and that `deriveCasefileCapabilities` still trusted forged action-mode input.
+- GREEN command: `npm test -- src/server/casefile/action-mode.test.ts src/server/casefile/capabilities.test.ts src/domain/policy.test.ts && npm run typecheck`
+- GREEN output:
+  ```text
+   Test Files  3 passed (3)
+        Tests  41 passed (41)
+
+  > superscriber@0.2.0 typecheck
+  > tsc --noEmit
+  ```
+- Files changed:
+  - `src/server/casefile/action-mode.test.ts`
+  - `src/server/casefile/action-mode.ts`
+  - `src/server/casefile/capabilities.test.ts`
+  - `src/server/casefile/capabilities.ts`
+- Fix commit:
+  - `fix(governance): enforce action session boundaries`
+- Self-review:
+  - Added rollback and exactly-once lazy-expiry regressions for both actor-context and action-mode resolution paths.
+  - Moved lazy expiry into a governed transaction wrapper that revalidates the session, preserves atomic rollback on audit failure, and bumps state version exactly once on success.
+  - Hardened capability derivation so action mode only affects authority for active, unexpired admin-oversight inputs on the matching recording, while forged non-admin or mismatched inputs are ignored.

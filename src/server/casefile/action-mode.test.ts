@@ -9,10 +9,18 @@ import {
 } from "@/domain/casefile";
 import { createLocalUser, toPrincipal } from "@/server/auth/service";
 import { openAppDatabase, type AppDatabase } from "@/server/db/client";
-import { adminActionSessions, auditEvents, recordings, revisions, workspaces } from "@/server/db/schema";
+import {
+  adminActionSessions,
+  appStateMeta,
+  auditEvents,
+  recordings,
+  revisions,
+  workspaces,
+} from "@/server/db/schema";
 import {
   enterActionMode,
   exitActionMode,
+  resolveActionMode,
   resolveActorContext,
 } from "@/server/casefile/action-mode";
 
@@ -141,6 +149,10 @@ function listActionModeAuditRows(bundle: TestBundle) {
     .from(auditEvents)
     .where(eq(auditEvents.recordingId, "rec-1"))
     .all();
+}
+
+function getStateVersion(bundle: TestBundle) {
+  return bundle.db.select().from(appStateMeta).get()?.stateVersion ?? null;
 }
 
 describe("casefile action mode", () => {
@@ -419,6 +431,137 @@ describe("casefile action mode", () => {
         .get();
       expect(row?.endReason).toBe("expired");
       expect(row?.endedAt).toBe("2026-08-01T12:31:00.000Z");
+
+      const exitedAudits = listActionModeAuditRows(bundle).filter(
+        (entry) => entry.type === "admin.action_mode.exited",
+      );
+      expect(exitedAudits).toHaveLength(1);
+      expect(JSON.parse(exitedAudits[0]!.metadata)).toEqual({
+        version: 1,
+        data: {
+          actionModeId: session.id,
+          effectiveRole: "approver",
+          endReason: "expired",
+        },
+      });
+    } finally {
+      bundle.sqlite.close();
+    }
+  });
+
+  it("rolls back lazy expiry when the matching audit insert fails", async () => {
+    const bundle = openAppDatabase(":memory:");
+
+    try {
+      createRecordingFixture(bundle);
+      const admin = await createPrincipal(bundle.db, {
+        displayName: "Admin",
+        email: "admin@example.com",
+        role: "admin",
+      });
+
+      const session = enterActionMode(
+        {
+          principal: admin,
+          recordingId: "rec-1",
+          effectiveRole: "approver",
+          purpose: "Approve a governed transcript without bypassing policy.",
+        },
+        bundle,
+      );
+
+      bundle.sqlite.exec(`
+        CREATE TRIGGER fail_action_mode_exit_audit
+        BEFORE INSERT ON audit_events
+        WHEN NEW.type = 'admin.action_mode.exited'
+        BEGIN
+          SELECT RAISE(ABORT, 'forced audit failure');
+        END;
+      `);
+
+      const stateVersionBeforeExpiry = getStateVersion(bundle);
+
+      expect(() =>
+        resolveActorContext(
+          admin,
+          {
+            recordingId: "rec-1",
+            requiredEffectiveRole: "approver",
+            actionModeId: session.id,
+          },
+          bundle.db,
+          "2026-08-01T12:31:00.000Z",
+        ),
+      ).toThrowError(/forced audit failure/);
+
+      const row = bundle.db
+        .select()
+        .from(adminActionSessions)
+        .where(eq(adminActionSessions.id, session.id))
+        .get();
+      expect(row?.endedAt).toBeNull();
+      expect(row?.endReason).toBeNull();
+      expect(getStateVersion(bundle)).toBe(stateVersionBeforeExpiry);
+      expect(
+        listActionModeAuditRows(bundle).filter(
+          (entry) => entry.type === "admin.action_mode.exited",
+        ),
+      ).toHaveLength(0);
+    } finally {
+      bundle.sqlite.close();
+    }
+  });
+
+  it("expires action mode through resolveActionMode exactly once", async () => {
+    const bundle = openAppDatabase(":memory:");
+
+    try {
+      createRecordingFixture(bundle);
+      const admin = await createPrincipal(bundle.db, {
+        displayName: "Admin",
+        email: "admin@example.com",
+        role: "admin",
+      });
+
+      const session = enterActionMode(
+        {
+          principal: admin,
+          recordingId: "rec-1",
+          effectiveRole: "approver",
+          purpose: "Approve a governed transcript without bypassing policy.",
+        },
+        bundle,
+      );
+
+      const stateVersionBeforeExpiry = getStateVersion(bundle);
+
+      expect(() =>
+        resolveActionMode(
+          admin,
+          {
+            recordingId: "rec-1",
+            requiredEffectiveRole: "approver",
+            actionModeId: session.id,
+          },
+          bundle.db,
+          "2026-08-01T12:31:00.000Z",
+        ),
+      ).toThrowError(expect.objectContaining({ code: "ACTION_MODE_EXPIRED" }));
+      expect(getStateVersion(bundle)).toBe((stateVersionBeforeExpiry ?? 0) + 1);
+
+      expect(() =>
+        resolveActionMode(
+          admin,
+          {
+            recordingId: "rec-1",
+            requiredEffectiveRole: "approver",
+            actionModeId: session.id,
+          },
+          bundle.db,
+          "2026-08-01T12:31:00.000Z",
+        ),
+      ).toThrowError(expect.objectContaining({ code: "ACTION_MODE_ENDED" }));
+      expect(getStateVersion(bundle)).toBe((stateVersionBeforeExpiry ?? 0) + 1);
 
       const exitedAudits = listActionModeAuditRows(bundle).filter(
         (entry) => entry.type === "admin.action_mode.exited",

@@ -743,8 +743,141 @@ const capabilityCases = [
     },
 ] satisfies CapabilityCase[];
 
+type ForgedActionModeCase = {
+  name: string;
+  input: CapabilityCase["input"];
+  expectedFlags: Pick<
+    CasefileCapabilities,
+    | "canEdit"
+    | "canSave"
+    | "canSubmit"
+    | "canApprove"
+    | "canRequestChanges"
+    | "canExport"
+  >;
+  expectedDenials: Partial<CapabilityDenials>;
+};
+
+const forgedActionModeCases = [
+  {
+    name: "ignores forged approver mode for a reviewer principal in admin oversight",
+    input: {
+      principal: principals.reviewer,
+      grant: { kind: "admin_oversight", recordingId: "rec-1" },
+      policyProfileId: "strict",
+      recording: buildRecording({ currentRevisionId: "rev-pending", pendingRevisionId: "rev-pending" }),
+      revision: buildRevision({
+        id: "rev-pending",
+        state: "pending_approval",
+        submittedByUserId: principals.uploader.userId,
+        submittedAt: "2026-08-01T12:05:00.000Z",
+      }),
+      actionMode: buildActionMode({ effectiveRole: "approver" }),
+    },
+    expectedFlags: {
+      canEdit: false,
+      canSave: false,
+      canSubmit: false,
+      canApprove: false,
+      canRequestChanges: false,
+      canExport: false,
+    },
+    expectedDenials: {
+      canApprove: "policy",
+      canRequestChanges: "policy",
+    },
+  },
+  {
+    name: "ignores forged approver mode for a reviewer assignment",
+    input: {
+      principal: principals.reviewer,
+      grant: { kind: "active_reviewer", recordingId: "rec-1", assignmentId: "assignment-1" },
+      policyProfileId: "strict",
+      recording: buildRecording({ currentRevisionId: "rev-pending", pendingRevisionId: "rev-pending" }),
+      revision: buildRevision({
+        id: "rev-pending",
+        state: "pending_approval",
+        submittedByUserId: principals.uploader.userId,
+        submittedAt: "2026-08-01T12:05:00.000Z",
+      }),
+      actionMode: buildActionMode({ effectiveRole: "approver" }),
+    },
+    expectedFlags: {
+      canEdit: false,
+      canSave: false,
+      canSubmit: false,
+      canApprove: false,
+      canRequestChanges: false,
+      canExport: false,
+    },
+    expectedDenials: {
+      canApprove: "policy",
+      canRequestChanges: "policy",
+    },
+  },
+  {
+    name: "ignores forged approver mode for an admin without oversight grant",
+    input: {
+      principal: principals.admin,
+      grant: { kind: "active_reviewer", recordingId: "rec-1", assignmentId: "assignment-1" },
+      policyProfileId: "strict",
+      recording: buildRecording({ currentRevisionId: "rev-pending", pendingRevisionId: "rev-pending" }),
+      revision: buildRevision({
+        id: "rev-pending",
+        state: "pending_approval",
+        submittedByUserId: principals.uploader.userId,
+        submittedAt: "2026-08-01T12:05:00.000Z",
+      }),
+      actionMode: buildActionMode({ effectiveRole: "approver" }),
+    },
+    expectedFlags: {
+      canEdit: false,
+      canSave: false,
+      canSubmit: false,
+      canApprove: false,
+      canRequestChanges: false,
+      canExport: false,
+    },
+    expectedDenials: {
+      canApprove: "policy",
+      canRequestChanges: "policy",
+    },
+  },
+  {
+    name: "ignores forged reviewer mode when the oversight grant points at another recording",
+    input: {
+      principal: principals.admin,
+      grant: { kind: "admin_oversight", recordingId: "rec-other" },
+      policyProfileId: "strict",
+      recording: buildRecording({ currentRevisionId: "rev-draft" }),
+      revision: buildRevision({ id: "rev-draft", state: "draft" }),
+      actionMode: buildActionMode({ effectiveRole: "reviewer" }),
+    },
+    expectedFlags: {
+      canEdit: false,
+      canSave: false,
+      canSubmit: false,
+      canApprove: false,
+      canRequestChanges: false,
+      canExport: false,
+    },
+    expectedDenials: {
+      canEdit: "policy",
+      canSave: "policy",
+      canSubmit: "policy",
+    },
+  },
+] satisfies ForgedActionModeCase[];
+
 describe("deriveCasefileCapabilities", () => {
   it.each(capabilityCases)("$name", ({ input, expected }) => {
     expect(deriveCasefileCapabilities(input)).toEqual(expected);
+  });
+
+  it.each(forgedActionModeCases)("$name", ({ input, expectedFlags, expectedDenials }) => {
+    const actual = deriveCasefileCapabilities(input);
+
+    expect(actual).toEqual(expect.objectContaining(expectedFlags));
+    expect(actual.denials).toEqual(expect.objectContaining(expectedDenials));
   });
 });
