@@ -18,11 +18,25 @@ export function formatRoleLabel(role: UserRole | "system") {
   return role.charAt(0).toUpperCase() + role.slice(1);
 }
 
-export function formatDateTime(value: string) {
+export function formatDateTimeUtc(value: string) {
   return new Intl.DateTimeFormat("en-GB", {
-    dateStyle: "medium",
-    timeStyle: "short",
-  }).format(new Date(value));
+    day: "2-digit",
+    month: "short",
+    year: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+    timeZone: "UTC",
+    timeZoneName: "short",
+  }).format(new Date(value)).replace(", UTC", " UTC");
+}
+
+export function formatDateTimeIso(value: string) {
+  return new Date(value).toISOString();
+}
+
+export function formatDateTime(value: string) {
+  return formatDateTimeUtc(value);
 }
 
 export function formatSegmentWindow(startMs: number, endMs: number) {

@@ -1,6 +1,9 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { resetAppDatabaseForTests } from "@/server/db/client";
 import {
+  getCasefile,
+  listAdministration,
+  listWorkInbox,
   resolveApprovedTranscriptExport,
   resolveApprovedTranscriptExportForPrincipal,
 } from "@/server/repository";
@@ -74,6 +77,12 @@ describe("repository approved transcript export resolution", () => {
       denied: false,
       missing: true,
     });
+  });
+
+  it("re-exports the principal-aware read services", () => {
+    expect(typeof getCasefile).toBe("function");
+    expect(typeof listWorkInbox).toBe("function");
+    expect(typeof listAdministration).toBe("function");
   });
 
   it("keeps the principal-facing wrapper async for denied and approved branches", async () => {

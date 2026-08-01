@@ -1,3 +1,7 @@
+export { listAdministration } from "@/server/administration/service";
+export { getCasefile } from "@/server/casefile/read-model";
+export { listWorkInbox } from "@/server/work-inbox/service";
+
 import { basename } from "node:path";
 import { statSync, existsSync } from "node:fs";
 import {
