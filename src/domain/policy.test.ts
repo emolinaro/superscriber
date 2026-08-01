@@ -25,9 +25,20 @@ describe("evaluatePolicy", () => {
     ).toBe(true);
   });
 
-  it("keeps approval authority with approver and admin roles", () => {
+  it("keeps approval authority with approver and action-mode roles only", () => {
     expect(evaluatePolicy("strict", "reviewer").canApprove).toBe(false);
     expect(evaluatePolicy("strict", "approver").canApprove).toBe(true);
-    expect(evaluatePolicy("strict", "admin").canApprove).toBe(true);
+    expect(evaluatePolicy("strict", "admin").canApprove).toBe(false);
+  });
+
+  it("keeps admin base policy in read-only oversight mode", () => {
+    const decision = evaluatePolicy("strict", "admin");
+
+    expect(decision.canViewMedia).toBe(true);
+    expect(decision.canEditDraft).toBe(false);
+    expect(decision.canSubmitForApproval).toBe(false);
+    expect(decision.canApprove).toBe(false);
+    expect(decision.canDownloadApprovedTranscript).toBe(false);
+    expect(decision.canReopenApprovedTranscript).toBe(false);
   });
 });

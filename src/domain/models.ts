@@ -218,6 +218,8 @@ export type AuditEvent = {
     | "assignment.created"
     | "assignment.completed"
     | "assignment.removed"
+    | "admin.action_mode.entered"
+    | "admin.action_mode.exited"
     | "policy.denied";
   detail: string;
   metadata: AuditMetadata;
