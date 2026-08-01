@@ -1,20 +1,31 @@
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import type { Principal, TranscriptRevision } from "@/domain/models";
 import { createLocalUser, toPrincipal } from "@/server/auth/service";
 import { assignRecordingToUser } from "@/server/access/service";
 import { enterActionMode } from "@/server/casefile/action-mode";
-import { saveDraftCommand, submitRevisionCommand } from "@/server/casefile/commands";
+import {
+  approveRevisionCommand,
+  requestChangesCommand,
+  reopenRevisionCommand,
+  saveDraftCommand,
+  submitRevisionCommand,
+  withdrawRevisionCommand,
+} from "@/server/casefile/commands";
 import { openAppDatabase } from "@/server/db/client";
 import { toRevision } from "@/server/db/mappers";
 import {
   adminActionSessions,
   approvals,
+  appStateMeta,
   auditEvents,
+  recordingAssignments,
   recordings,
   revisions,
   workspaces,
-  appStateMeta,
 } from "@/server/db/schema";
 
 const FIXED_NOW = "2026-08-01T12:00:00.000Z";
@@ -125,6 +136,11 @@ async function setupDraftFixture() {
     email: "reviewer@example.com",
     role: "reviewer",
   });
+  const approver = await createPrincipal(bundle, {
+    displayName: "Approver",
+    email: "approver@example.com",
+    role: "approver",
+  });
   const admin = await createPrincipal(bundle, {
     displayName: "Admin",
     email: "admin@example.com",
@@ -150,7 +166,61 @@ async function setupDraftFixture() {
     })),
   };
 
-  return { bundle, reviewer, admin, draftInput };
+  return { bundle, reviewer, approver, admin, draftInput };
+}
+
+async function setupPendingFixture(options?: {
+  submitter?: "reviewer" | "admin";
+  legacySubmitterIdentity?: boolean;
+}) {
+  const { bundle, reviewer, approver, admin, draftInput } = await setupDraftFixture();
+
+  assignRecordingToUser(
+    {
+      recordingId: "rec-1",
+      userId: approver.userId,
+      assignedBy: admin,
+    },
+    bundle,
+  );
+
+  const submitter = options?.submitter === "admin" ? admin : reviewer;
+  const submitActionModeId =
+    options?.submitter === "admin"
+      ? enterActionMode({
+          principal: admin,
+          recordingId: "rec-1",
+          effectiveRole: "reviewer",
+          purpose: "Review this transcript before submitting it.",
+        }, bundle).id
+      : null;
+
+  const pending = submitRevisionCommand(
+    submitter,
+    {
+      ...draftInput,
+      hasUnsavedChanges: true,
+      actionModeId: submitActionModeId,
+    },
+    bundle,
+  );
+
+  if (options?.legacySubmitterIdentity) {
+    bundle.db.update(revisions)
+      .set({ submittedByUserId: null })
+      .where(eq(revisions.id, pending.id))
+      .run();
+  }
+
+  return {
+    bundle,
+    reviewer,
+    approver,
+    admin,
+    submitter,
+    pending,
+    submitActionModeId,
+  };
 }
 
 function readRecording(bundle: TestBundle) {
@@ -187,8 +257,77 @@ function listRevisionAuditRows(bundle: TestBundle) {
   return listAuditRows(bundle).filter((row) => row.type.startsWith("revision."));
 }
 
+function listAssignmentRows(bundle: TestBundle) {
+  return bundle.db
+    .select()
+    .from(recordingAssignments)
+    .where(eq(recordingAssignments.recordingId, "rec-1"))
+    .all();
+}
+
 function getStateVersion(bundle: TestBundle) {
   return bundle.db.select().from(appStateMeta).where(eq(appStateMeta.id, 1)).get()?.stateVersion;
+}
+
+function makeReason(length: number) {
+  return "r".repeat(length);
+}
+
+async function createSharedPendingFixture() {
+  const tempRoot = mkdtempSync(join(tmpdir(), "superscriber-commands-"));
+  const databasePath = join(tempRoot, "state.db");
+  const first = openAppDatabase(databasePath);
+  const second = openAppDatabase(databasePath);
+
+  insertDraftFixture(first);
+  const reviewer = await createPrincipal(first, {
+    displayName: "Reviewer",
+    email: "reviewer@example.com",
+    role: "reviewer",
+  });
+  const approver = await createPrincipal(first, {
+    displayName: "Approver",
+    email: "approver@example.com",
+    role: "approver",
+  });
+  const admin = await createPrincipal(first, {
+    displayName: "Admin",
+    email: "admin@example.com",
+    role: "admin",
+  });
+
+  assignRecordingToUser({
+    recordingId: "rec-1",
+    userId: reviewer.userId,
+    assignedBy: admin,
+  }, first);
+  assignRecordingToUser({
+    recordingId: "rec-1",
+    userId: approver.userId,
+    assignedBy: admin,
+  }, first);
+
+  const pending = submitRevisionCommand(reviewer, {
+    recordingId: "rec-1",
+    expectedCurrentRevisionId: "rev-1",
+    summary: "Updated transcript draft.",
+    segments: cloneSegments(baseSegments),
+    hasUnsavedChanges: true,
+  }, first);
+
+  return {
+    tempRoot,
+    first,
+    second,
+    reviewer,
+    approver,
+    pendingId: pending.id,
+    cleanup() {
+      first.sqlite.close();
+      second.sqlite.close();
+      rmSync(tempRoot, { recursive: true, force: true });
+    },
+  };
 }
 
 describe("casefile draft commands", () => {
@@ -257,6 +396,467 @@ describe("casefile draft commands", () => {
       expect(getStateVersion(bundle)).toBe((beforeVersion ?? 0) + 1);
     } finally {
       bundle.sqlite.close();
+    }
+  });
+
+  it("lets only the submitting user withdraw before a decision", async () => {
+    const { bundle, submitter, pending } = await setupPendingFixture();
+
+    try {
+      const draft = withdrawRevisionCommand(submitter, {
+        recordingId: "rec-1",
+        expectedPendingRevisionId: pending.id,
+        reason: "I found a material transcript omission.",
+      }, bundle);
+
+      expect(readRevision(bundle, pending.id)?.state).toBe("withdrawn");
+      expect(draft.basedOnRevisionId).toBe(pending.id);
+      expect(readRecording(bundle)).toEqual(
+        expect.objectContaining({
+          currentRevisionId: draft.id,
+          pendingRevisionId: null,
+        }),
+      );
+      expect(listAssignmentRows(bundle)).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ status: "active", assignmentRole: "reviewer" }),
+          expect.objectContaining({ status: "active", assignmentRole: "approver" }),
+        ]),
+      );
+      expect(listApprovalRows(bundle).map((row) => row.state)).toEqual(["pending", "withdrawn"]);
+      expect(listAuditRows(bundle).map((row) => row.type)).toContain("revision.withdrawn");
+    } finally {
+      bundle.sqlite.close();
+    }
+  });
+
+  it.each(["approve", "requestChanges"] as const)("prevents the submitting user from %s", async (action) => {
+    const { bundle, admin, pending } = await setupPendingFixture({ submitter: "admin" });
+
+    try {
+      const approverActionModeId = enterActionMode({
+        principal: admin,
+        recordingId: "rec-1",
+        effectiveRole: "approver",
+        purpose: "Record the governed approval decision for this transcript.",
+      }, bundle).id;
+
+      const runDecision = () =>
+        action === "approve"
+          ? approveRevisionCommand(admin, {
+              recordingId: "rec-1",
+              expectedPendingRevisionId: pending.id,
+              note: "Looks good.",
+              actionModeId: approverActionModeId,
+            }, bundle)
+          : requestChangesCommand(admin, {
+              recordingId: "rec-1",
+              expectedPendingRevisionId: pending.id,
+              reason: "Please correct the transcript summary before approval.",
+              actionModeId: approverActionModeId,
+            }, bundle);
+
+      expect(runDecision).toThrowError(
+        expect.objectContaining({ code: "SELF_APPROVAL_FORBIDDEN" }),
+      );
+    } finally {
+      bundle.sqlite.close();
+    }
+  });
+
+  it("denies withdrawal when the pending revision has no known submitter identity", async () => {
+    const { bundle, reviewer, pending } = await setupPendingFixture({ legacySubmitterIdentity: true });
+
+    try {
+      expect(() =>
+        withdrawRevisionCommand(reviewer, {
+          recordingId: "rec-1",
+          expectedPendingRevisionId: pending.id,
+          reason: "I need to replace this legacy submission safely.",
+        }, bundle),
+      ).toThrowError(expect.objectContaining({ code: "ACCESS_DENIED" }));
+    } finally {
+      bundle.sqlite.close();
+    }
+  });
+
+  it("accepts trimmed withdrawal reasons at the 10 and 500 character bounds", async () => {
+    const first = await setupPendingFixture();
+    const second = await setupPendingFixture();
+
+    try {
+      const minDraft = withdrawRevisionCommand(first.submitter, {
+        recordingId: "rec-1",
+        expectedPendingRevisionId: first.pending.id,
+        reason: `  ${makeReason(10)}  `,
+      }, first.bundle);
+      const maxDraft = withdrawRevisionCommand(second.submitter, {
+        recordingId: "rec-1",
+        expectedPendingRevisionId: second.pending.id,
+        reason: ` ${makeReason(500)} `,
+      }, second.bundle);
+
+      const minReason = listApprovalRows(first.bundle).find((row) => row.state === "withdrawn")?.note;
+      const maxReason = listApprovalRows(second.bundle).find((row) => row.state === "withdrawn")?.note;
+
+      expect(minDraft.state).toBe("draft");
+      expect(maxDraft.state).toBe("draft");
+      expect(minReason).toHaveLength(10);
+      expect(maxReason).toHaveLength(500);
+    } finally {
+      first.bundle.sqlite.close();
+      second.bundle.sqlite.close();
+    }
+  });
+
+  it("rejects request changes reasons outside the 10 to 500 character bounds", async () => {
+    const short = await setupPendingFixture();
+    const long = await setupPendingFixture();
+
+    try {
+      expect(() =>
+        requestChangesCommand(short.approver, {
+          recordingId: "rec-1",
+          expectedPendingRevisionId: short.pending.id,
+          reason: makeReason(9),
+        }, short.bundle),
+      ).toThrowError(expect.objectContaining({ code: "VALIDATION_ERROR" }));
+
+      expect(() =>
+        requestChangesCommand(long.approver, {
+          recordingId: "rec-1",
+          expectedPendingRevisionId: long.pending.id,
+          reason: makeReason(501),
+        }, long.bundle),
+      ).toThrowError(expect.objectContaining({ code: "VALIDATION_ERROR" }));
+    } finally {
+      short.bundle.sqlite.close();
+      long.bundle.sqlite.close();
+    }
+  });
+
+  it("clones a complete draft when changes are requested and preserves assignments", async () => {
+    const { bundle, approver, pending } = await setupPendingFixture();
+
+    try {
+      const draft = requestChangesCommand(approver, {
+        recordingId: "rec-1",
+        expectedPendingRevisionId: pending.id,
+        reason: "Please correct the segment wording before this can be approved.",
+      }, bundle);
+
+      expect(readRevision(bundle, pending.id)?.state).toBe("changes_requested");
+      expect(draft.basedOnRevisionId).toBe(pending.id);
+      expect(draft.summary).toBe(pending.summary);
+      expect(draft.segments).toEqual(pending.segments);
+      expect(readRecording(bundle)).toEqual(
+        expect.objectContaining({
+          currentRevisionId: draft.id,
+          pendingRevisionId: null,
+          approvedRevisionId: null,
+        }),
+      );
+      expect(listAssignmentRows(bundle)).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ status: "active", assignmentRole: "reviewer" }),
+          expect.objectContaining({ status: "active", assignmentRole: "approver" }),
+        ]),
+      );
+      expect(listApprovalRows(bundle).map((row) => row.state)).toEqual([
+        "pending",
+        "changes_requested",
+      ]);
+      expect(listAuditRows(bundle).map((row) => row.type)).toContain("approval.changes_requested");
+    } finally {
+      bundle.sqlite.close();
+    }
+  });
+
+  it("allows authorized approvers to decide legacy pending revisions with no submitter identity", async () => {
+    const { bundle, approver, pending } = await setupPendingFixture({ legacySubmitterIdentity: true });
+
+    try {
+      const approved = approveRevisionCommand(approver, {
+        recordingId: "rec-1",
+        expectedPendingRevisionId: pending.id,
+        note: "",
+      }, bundle);
+
+      expect(approved.revision.state).toBe("approved");
+      expect(readRecording(bundle)?.approvedRevisionId).toBe(pending.id);
+    } finally {
+      bundle.sqlite.close();
+    }
+  });
+
+  it("accepts approval notes up to 500 characters and rejects longer notes", async () => {
+    const valid = await setupPendingFixture();
+    const invalid = await setupPendingFixture();
+
+    try {
+      const approved = approveRevisionCommand(valid.approver, {
+        recordingId: "rec-1",
+        expectedPendingRevisionId: valid.pending.id,
+        note: ` ${makeReason(500)} `,
+      }, valid.bundle);
+
+      const approvedRow = listApprovalRows(valid.bundle).find((row) => row.state === "approved");
+      expect(approved.revision.state).toBe("approved");
+      expect(approvedRow?.note).toHaveLength(500);
+
+      expect(() =>
+        approveRevisionCommand(invalid.approver, {
+          recordingId: "rec-1",
+          expectedPendingRevisionId: invalid.pending.id,
+          note: makeReason(501),
+        }, invalid.bundle),
+      ).toThrowError(expect.objectContaining({ code: "VALIDATION_ERROR" }));
+    } finally {
+      valid.bundle.sqlite.close();
+      invalid.bundle.sqlite.close();
+    }
+  });
+
+  it("approves a pending revision, updates pointers, and completes all active assignments atomically", async () => {
+    const { bundle, approver, pending } = await setupPendingFixture();
+
+    try {
+      const beforeVersion = getStateVersion(bundle);
+      const approved = approveRevisionCommand(approver, {
+        recordingId: "rec-1",
+        expectedPendingRevisionId: pending.id,
+        note: "Approved with governed lifecycle semantics.",
+      }, bundle);
+
+      expect(approved.revision.id).toBe(pending.id);
+      expect(approved.revision.state).toBe("approved");
+      expect(readRecording(bundle)).toEqual(
+        expect.objectContaining({
+          currentRevisionId: pending.id,
+          pendingRevisionId: null,
+          approvedRevisionId: pending.id,
+        }),
+      );
+      expect(approved.completedAssignments).toHaveLength(2);
+      expect(approved.completedAssignments).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ assignmentRole: "reviewer", completedRevisionId: pending.id }),
+          expect.objectContaining({ assignmentRole: "approver", completedRevisionId: pending.id }),
+        ]),
+      );
+      expect(listAssignmentRows(bundle)).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ status: "completed", completedRevisionId: pending.id }),
+          expect.objectContaining({ status: "completed", completedRevisionId: pending.id }),
+        ]),
+      );
+      expect(listApprovalRows(bundle).map((row) => row.state)).toEqual(["pending", "approved"]);
+      expect(listAuditRows(bundle).map((row) => row.type)).toEqual(
+        expect.arrayContaining(["approval.approved", "assignment.completed", "assignment.completed"]),
+      );
+      expect(getStateVersion(bundle)).toBe((beforeVersion ?? 0) + 1);
+    } finally {
+      bundle.sqlite.close();
+    }
+  });
+
+  it("attributes admin approver action mode decisions on both decision and audit rows", async () => {
+    const { bundle, admin, pending } = await setupPendingFixture();
+
+    try {
+      const actionModeId = enterActionMode({
+        principal: admin,
+        recordingId: "rec-1",
+        effectiveRole: "approver",
+        purpose: "Approve this transcript under admin oversight.",
+      }, bundle).id;
+
+      approveRevisionCommand(admin, {
+        recordingId: "rec-1",
+        expectedPendingRevisionId: pending.id,
+        note: "Approved after admin oversight.",
+        actionModeId,
+      }, bundle);
+
+      expect(listApprovalRows(bundle).find((row) => row.state === "approved")).toEqual(
+        expect.objectContaining({
+          actorRole: "admin",
+          actorUserId: admin.userId,
+          effectiveRole: "approver",
+          adminActionSessionId: actionModeId,
+        }),
+      );
+      expect(listAuditRows(bundle).find((row) => row.type === "approval.approved")).toEqual(
+        expect.objectContaining({
+          actorRole: "admin",
+          actorUserId: admin.userId,
+          effectiveRole: "approver",
+          adminActionSessionId: actionModeId,
+        }),
+      );
+    } finally {
+      bundle.sqlite.close();
+    }
+  });
+
+  it("reopens an approved revision by clearing the approved pointer and never reactivating assignments", async () => {
+    const { bundle, approver, pending } = await setupPendingFixture();
+
+    try {
+      const approved = approveRevisionCommand(approver, {
+        recordingId: "rec-1",
+        expectedPendingRevisionId: pending.id,
+        note: "Approved before reopen.",
+      }, bundle);
+
+      const draft = reopenRevisionCommand(approver, {
+        recordingId: "rec-1",
+        expectedApprovedRevisionId: approved.revision.id,
+        reason: "New evidence requires a fresh governed draft cycle.",
+      }, bundle);
+
+      expect(readRevision(bundle, approved.revision.id)?.state).toBe("approved");
+      expect(draft.basedOnRevisionId).toBe(approved.revision.id);
+      expect(readRecording(bundle)).toEqual(
+        expect.objectContaining({
+          currentRevisionId: draft.id,
+          pendingRevisionId: null,
+          approvedRevisionId: null,
+        }),
+      );
+      expect(
+        bundle.db.select().from(recordingAssignments).where(
+          and(
+            eq(recordingAssignments.recordingId, "rec-1"),
+            eq(recordingAssignments.status, "active"),
+          ),
+        ).all(),
+      ).toHaveLength(0);
+      expect(listAssignmentRows(bundle)).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ status: "completed", completedRevisionId: approved.revision.id }),
+          expect.objectContaining({ status: "completed", completedRevisionId: approved.revision.id }),
+        ]),
+      );
+      expect(listApprovalRows(bundle).map((row) => row.state)).toEqual([
+        "pending",
+        "approved",
+        "reopened",
+      ]);
+      expect(listAuditRows(bundle).map((row) => row.type)).toContain("approval.reopened");
+    } finally {
+      bundle.sqlite.close();
+    }
+  });
+
+  it("rejects reopen reasons outside the 10 to 500 character bounds", async () => {
+    const short = await setupPendingFixture();
+    const long = await setupPendingFixture();
+
+    try {
+      const shortApproved = approveRevisionCommand(short.approver, {
+        recordingId: "rec-1",
+        expectedPendingRevisionId: short.pending.id,
+        note: "Approved before testing reopen bounds.",
+      }, short.bundle);
+      const longApproved = approveRevisionCommand(long.approver, {
+        recordingId: "rec-1",
+        expectedPendingRevisionId: long.pending.id,
+        note: "Approved before testing reopen bounds.",
+      }, long.bundle);
+
+      expect(() =>
+        reopenRevisionCommand(short.approver, {
+          recordingId: "rec-1",
+          expectedApprovedRevisionId: shortApproved.revision.id,
+          reason: makeReason(9),
+        }, short.bundle),
+      ).toThrowError(expect.objectContaining({ code: "VALIDATION_ERROR" }));
+
+      expect(() =>
+        reopenRevisionCommand(long.approver, {
+          recordingId: "rec-1",
+          expectedApprovedRevisionId: longApproved.revision.id,
+          reason: makeReason(501),
+        }, long.bundle),
+      ).toThrowError(expect.objectContaining({ code: "VALIDATION_ERROR" }));
+    } finally {
+      short.bundle.sqlite.close();
+      long.bundle.sqlite.close();
+    }
+  });
+
+  it("returns STATE_CHANGED when approval wins a two-connection decision race", async () => {
+    const fixture = await createSharedPendingFixture();
+
+    try {
+      approveRevisionCommand(fixture.approver, {
+        recordingId: "rec-1",
+        expectedPendingRevisionId: fixture.pendingId,
+        note: "",
+      }, fixture.first);
+
+      expect(() =>
+        withdrawRevisionCommand(fixture.reviewer, {
+          recordingId: "rec-1",
+          expectedPendingRevisionId: fixture.pendingId,
+          reason: "I need to correct newly discovered context.",
+        }, fixture.second),
+      ).toThrowError(
+        expect.objectContaining({
+          code: "STATE_CHANGED",
+          latest: expect.objectContaining({
+            currentRevisionId: fixture.pendingId,
+            approvedRevisionId: fixture.pendingId,
+            pendingRevisionId: null,
+            winningStage: "approved",
+          }),
+        }),
+      );
+
+      expect(listApprovalRows(fixture.first).map((row) => row.state)).toEqual(["pending", "approved"]);
+      expect(listAuditRows(fixture.first).filter((row) => row.type === "approval.approved")).toHaveLength(1);
+      expect(listAuditRows(fixture.first).filter((row) => row.type === "revision.withdrawn")).toHaveLength(0);
+    } finally {
+      fixture.cleanup();
+    }
+  });
+
+  it("returns STATE_CHANGED when request changes wins the opposite two-connection decision race", async () => {
+    const fixture = await createSharedPendingFixture();
+
+    try {
+      requestChangesCommand(fixture.approver, {
+        recordingId: "rec-1",
+        expectedPendingRevisionId: fixture.pendingId,
+        reason: "Please add the omitted context before approval.",
+      }, fixture.first);
+
+      expect(() =>
+        approveRevisionCommand(fixture.approver, {
+          recordingId: "rec-1",
+          expectedPendingRevisionId: fixture.pendingId,
+          note: "",
+        }, fixture.second),
+      ).toThrowError(
+        expect.objectContaining({
+          code: "STATE_CHANGED",
+          latest: expect.objectContaining({
+            pendingRevisionId: null,
+            approvedRevisionId: null,
+            winningStage: "changes_requested",
+          }),
+        }),
+      );
+
+      expect(listApprovalRows(fixture.first).map((row) => row.state)).toEqual([
+        "pending",
+        "changes_requested",
+      ]);
+      expect(listAuditRows(fixture.first).filter((row) => row.type === "approval.changes_requested")).toHaveLength(1);
+      expect(listAuditRows(fixture.first).filter((row) => row.type === "approval.approved")).toHaveLength(0);
+    } finally {
+      fixture.cleanup();
     }
   });
 

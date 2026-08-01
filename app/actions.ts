@@ -6,10 +6,8 @@ import { isRedirectError } from "next/dist/client/components/redirect-error";
 import { TranscriptSegment, USER_ROLES, UserRole } from "@/domain/models";
 import { type BootstrapFormState } from "@/lib/auth-forms";
 import {
-  approveRecordingRevision,
-  reopenRecordingRevision,
-} from "@/server/repository";
-import {
+  approveRevisionCommand,
+  reopenRevisionCommand,
   saveDraftCommand,
   submitRevisionCommand,
 } from "@/server/casefile/commands";
@@ -364,7 +362,6 @@ export async function submitRevisionAction(formData: FormData) {
 
 export async function approveRevisionAction(formData: FormData) {
   const principal = await requireActivePrincipal();
-  const role = principal.role;
   const recordingId = asString(formData, "recordingId");
 
   try {
@@ -374,10 +371,11 @@ export async function approveRevisionAction(formData: FormData) {
       "No pending revision is loaded. Reload this recording and try again.",
     );
     assertAssignedRecordingAccess(principal, recordingId);
-    approveRecordingRevision({
+    approveRevisionCommand(principal, {
       recordingId,
-      role,
       expectedPendingRevisionId: pendingRevisionId,
+      note: asString(formData, "note"),
+      actionModeId: asString(formData, "actionModeId") || null,
     });
     revalidatePath("/workspace");
     revalidatePath(`/recordings/${recordingId}`);
@@ -397,7 +395,6 @@ export async function approveRevisionAction(formData: FormData) {
 
 export async function reopenRevisionAction(formData: FormData) {
   const principal = await requireActivePrincipal();
-  const role = principal.role;
   const recordingId = asString(formData, "recordingId");
 
   try {
@@ -407,10 +404,13 @@ export async function reopenRevisionAction(formData: FormData) {
       "No approved revision is loaded. Reload this recording and try again.",
     );
     assertAssignedRecordingAccess(principal, recordingId);
-    reopenRecordingRevision({
+    reopenRevisionCommand(principal, {
       recordingId,
-      role,
       expectedApprovedRevisionId: approvedRevisionId,
+      reason:
+        asString(formData, "reason") ||
+        "Approved transcript reopened from the legacy review action.",
+      actionModeId: asString(formData, "actionModeId") || null,
     });
     revalidatePath("/workspace");
     revalidatePath(`/recordings/${recordingId}`);

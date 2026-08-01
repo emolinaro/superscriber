@@ -9,6 +9,8 @@ export const CASEFILE_COMMAND_ERROR_CODES = [
   "NOT_FOUND",
   "ACCESS_DENIED",
   "STALE_REVISION",
+  "STATE_CHANGED",
+  "SELF_APPROVAL_FORBIDDEN",
 ] as const;
 
 export type ErrorCode = (typeof CASEFILE_COMMAND_ERROR_CODES)[number];

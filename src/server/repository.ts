@@ -11,7 +11,7 @@ import {
   Workspace,
   WorkspaceBucket,
 } from "@/domain/models";
-import { bucketRecording, approveRevision, reopenApprovedRevision } from "@/domain/workflow";
+import { bucketRecording } from "@/domain/workflow";
 import { describePolicyProfile, evaluatePolicy } from "@/domain/policy";
 import type { ApprovedTranscriptExportFormat } from "@/lib/approved-transcript-export";
 import {
@@ -213,36 +213,6 @@ export function noteRecordingDispatchFailure(params: {
   return withState((state) => {
     noteOrchestrationDispatchFailure(params.recordingId, params.detail, state);
   });
-}
-
-export function approveRecordingRevision(params: {
-  recordingId: string;
-  role: UserRole;
-  expectedPendingRevisionId: string;
-}) {
-  return withState((state) =>
-    approveRevision({
-      state,
-      recordingId: params.recordingId,
-      role: params.role,
-      expectedPendingRevisionId: params.expectedPendingRevisionId,
-    }),
-  );
-}
-
-export function reopenRecordingRevision(params: {
-  recordingId: string;
-  role: UserRole;
-  expectedApprovedRevisionId: string;
-}) {
-  return withState((state) =>
-    reopenApprovedRevision({
-      state,
-      recordingId: params.recordingId,
-      role: params.role,
-      expectedApprovedRevisionId: params.expectedApprovedRevisionId,
-    }),
-  );
 }
 
 export function resolveMedia(recordingId: string, role: UserRole) {
