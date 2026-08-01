@@ -407,9 +407,7 @@ export async function reopenRevisionAction(formData: FormData) {
     reopenRevisionCommand(principal, {
       recordingId,
       expectedApprovedRevisionId: approvedRevisionId,
-      reason:
-        asString(formData, "reason") ||
-        "Approved transcript reopened from the legacy review action.",
+      reason: asString(formData, "reason"),
       actionModeId: asString(formData, "actionModeId") || null,
     });
     revalidatePath("/workspace");
