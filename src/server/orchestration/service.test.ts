@@ -83,6 +83,7 @@ describe("orchestration service", () => {
       originalFileName: "legacy.wav",
       languageHint: "english",
       uploadedByRole: "uploader",
+      uploadedByUserId: null,
       ingestionSessionId: null,
       transcriptJobId: null,
       integrityState: "verified",

@@ -10,6 +10,7 @@ import {
   WorkspaceBucket,
 } from "@/domain/models";
 import { evaluatePolicy } from "@/domain/policy";
+import { EMPTY_AUDIT_METADATA } from "@/server/db/mappers";
 
 function nowIso() {
   return new Date().toISOString();
@@ -63,11 +64,16 @@ export function bucketRecording(recording: Recording): WorkspaceBucket {
 
 function addAuditEvent(
   state: AppState,
-  event: Omit<AuditEvent, "id" | "createdAt">,
+  event: Pick<AuditEvent, "workspaceId" | "recordingId" | "actorRole" | "type" | "detail">,
 ) {
   state.auditEvents.unshift({
     ...event,
+    actorUserId: null,
+    actorDisplayName: null,
+    effectiveRole: event.actorRole,
+    adminActionSessionId: null,
     id: createId("audit"),
+    metadata: EMPTY_AUDIT_METADATA,
     createdAt: nowIso(),
   });
 }
@@ -95,6 +101,7 @@ function createIngestionSession(
     source: recording.source,
     state: nextState,
     adapter: adapterId,
+    createdByUserId: null,
     createdAt: timestamp,
     updatedAt: timestamp,
     startedAt: options?.startedAt ?? timestamp,
@@ -150,7 +157,9 @@ export function createSystemDraftRevision(params: {
     state: "draft",
     basedOnRevisionId: null,
     createdByRole: "system",
+    createdByUserId: null,
     createdAt: nowIso(),
+    submittedByUserId: null,
     submittedAt: null,
     approvedAt: null,
     summary: params.summary,
@@ -190,6 +199,7 @@ export function createRecordingEntry(params: {
     originalFileName: params.originalFileName,
     languageHint: params.languageHint,
     uploadedByRole: params.role,
+    uploadedByUserId: null,
     ingestionSessionId: null,
     transcriptJobId: null,
     integrityState: "verifying",
@@ -267,6 +277,7 @@ export function createUploadSessionEntry(params: {
     originalFileName: params.originalFileName,
     languageHint: params.languageHint,
     uploadedByRole: params.role,
+    uploadedByUserId: null,
     ingestionSessionId: null,
     transcriptJobId: null,
     integrityState: "uploading",
@@ -502,7 +513,9 @@ export function saveDraftRevision(params: {
     state: "draft",
     basedOnRevisionId: priorRevision.id,
     createdByRole: params.role,
+    createdByUserId: null,
     createdAt: nowIso(),
+    submittedByUserId: null,
     submittedAt: null,
     approvedAt: null,
     summary: params.summary.trim() || "Updated transcript draft.",
@@ -573,6 +586,7 @@ export function submitRevision(params: {
   }
 
   revision.state = "pending_approval";
+  revision.submittedByUserId = null;
   revision.submittedAt = nowIso();
   recording.pendingRevisionId = revision.id;
   recording.updatedAt = nowIso();
@@ -583,6 +597,10 @@ export function submitRevision(params: {
     revisionId: revision.id,
     state: "pending",
     actorRole: params.role,
+    actorUserId: null,
+    actorDisplayName: null,
+    effectiveRole: params.role,
+    adminActionSessionId: null,
     createdAt: nowIso(),
     note: null,
   };
@@ -654,6 +672,10 @@ export function approveRevision(params: {
     revisionId: revision.id,
     state: "approved",
     actorRole: params.role,
+    actorUserId: null,
+    actorDisplayName: null,
+    effectiveRole: params.role,
+    adminActionSessionId: null,
     createdAt: nowIso(),
     note: "Approved in regulated-mode review flow.",
   });
@@ -718,7 +740,9 @@ export function reopenApprovedRevision(params: {
     state: "draft",
     basedOnRevisionId: approvedRevision.id,
     createdByRole: params.role,
+    createdByUserId: null,
     createdAt: nowIso(),
+    submittedByUserId: null,
     submittedAt: null,
     approvedAt: null,
     summary: `Reopened from approved revision ${approvedRevision.version}.`,
@@ -736,6 +760,10 @@ export function reopenApprovedRevision(params: {
     revisionId: approvedRevision.id,
     state: "reopened",
     actorRole: params.role,
+    actorUserId: null,
+    actorDisplayName: null,
+    effectiveRole: params.role,
+    adminActionSessionId: null,
     createdAt: nowIso(),
     note: "Approved revision reopened for a new draft cycle.",
   });

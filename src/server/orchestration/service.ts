@@ -7,6 +7,7 @@ import {
   TranscriptJob,
 } from "@/domain/models";
 import { createSystemDraftRevision } from "@/domain/workflow";
+import { EMPTY_AUDIT_METADATA } from "@/server/db/mappers";
 import {
   CanonicalOrchestrationAdapter,
 } from "@/server/orchestration/mock-engine";
@@ -51,12 +52,17 @@ function ensureCollections(state: AppState) {
 
 function addAuditEvent(
   state: AppState,
-  event: Omit<AuditEvent, "id" | "createdAt">,
+  event: Pick<AuditEvent, "workspaceId" | "recordingId" | "actorRole" | "type" | "detail">,
   nowMs: number,
 ) {
   state.auditEvents.unshift({
     ...event,
+    actorUserId: null,
+    actorDisplayName: null,
+    effectiveRole: event.actorRole,
+    adminActionSessionId: null,
     id: createAuditId(),
+    metadata: EMPTY_AUDIT_METADATA,
     createdAt: nowIsoFromMs(nowMs),
   });
 }
@@ -89,6 +95,7 @@ function bootstrapIngestionSession(recording: Recording): IngestionSession {
     source: recording.source,
     state: recording.integrityState,
     adapter: "mock-governed-engine",
+    createdByUserId: null,
     createdAt: recording.createdAt,
     updatedAt: recording.updatedAt,
     startedAt: timestamp,

@@ -1,8 +1,11 @@
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { eq } from "drizzle-orm";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { openAppDatabase, resetAppDatabaseForTests } from "@/server/db/client";
+import { runGovernedTransaction } from "@/server/db/transaction";
+import { recordings } from "@/server/db/schema";
 import { readState, withState, writeState } from "@/server/store";
 
 describe("sqlite state store", () => {
@@ -80,6 +83,29 @@ describe("sqlite state store", () => {
       expect(persisted?.verificationSummary).not.toBe(
         "Stale writer should not overwrite fresh data.",
       );
+    } finally {
+      first.sqlite.close();
+      second.sqlite.close();
+      rmSync(tempRoot, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects stale snapshot writes after a targeted governed transaction", () => {
+    const tempRoot = mkdtempSync(join(tmpdir(), "superscriber-store-"));
+    const databasePath = join(tempRoot, "state.db");
+    const first = openAppDatabase(databasePath);
+    const second = openAppDatabase(databasePath);
+
+    try {
+      const snapshot = readState(first.db);
+      const targetId = snapshot.recordings[0]?.id;
+      expect(targetId).toBeTruthy();
+
+      runGovernedTransaction((db) => {
+        db.update(recordings).set({ title: "Targeted write" }).where(eq(recordings.id, targetId!)).run();
+      }, second);
+
+      expect(() => writeState(snapshot, first.db)).toThrow(/State changed concurrently/);
     } finally {
       first.sqlite.close();
       second.sqlite.close();

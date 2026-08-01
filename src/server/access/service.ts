@@ -1,7 +1,15 @@
 import { and, desc, eq, inArray } from "drizzle-orm";
-import { type AppUser, type Principal, type RecordingAssignment, type UserRole } from "@/domain/models";
-import { getAppDb, type AppDatabase } from "@/server/db/client";
+import {
+  type AppUser,
+  type AssignmentRole,
+  type Principal,
+  type RecordingAssignment,
+  type UserRole,
+} from "@/domain/models";
+import { toAppUser, toRecordingAssignment } from "@/server/db/mappers";
+import { getAppDb, lookupAppDbBundle, type AppDatabase } from "@/server/db/client";
 import { recordingAssignments, users } from "@/server/db/schema";
+import { runGovernedTransaction } from "@/server/db/transaction";
 
 function nowIso() {
   return new Date().toISOString();
@@ -22,18 +30,6 @@ export type AccountDirectoryEntry = AppUser & {
   activeAssignmentCount: number;
 };
 
-function toAppUser(row: typeof users.$inferSelect): AppUser {
-  return {
-    id: row.id,
-    email: row.email,
-    displayName: row.displayName,
-    role: row.role,
-    isActive: row.isActive,
-    createdAt: row.createdAt,
-    updatedAt: row.updatedAt,
-  };
-}
-
 export function listLocalUsers(db: AppDatabase = getAppDb()) {
   const rows = db.select().from(users).orderBy(users.role, users.displayName).all();
 
@@ -43,7 +39,7 @@ export function listLocalUsers(db: AppDatabase = getAppDb()) {
       id: recordingAssignments.id,
     })
     .from(recordingAssignments)
-    .where(eq(recordingAssignments.isActive, true))
+    .where(eq(recordingAssignments.status, "active"))
     .all()
     .reduce<Map<string, number>>((map, row) => {
       map.set(row.userId, (map.get(row.userId) ?? 0) + 1);
@@ -67,7 +63,7 @@ export function listAssignments(
   },
   db: AppDatabase = getAppDb(),
 ) {
-  const conditions = [eq(recordingAssignments.isActive, true)];
+  const conditions = [eq(recordingAssignments.status, "active")];
 
   if (filters?.recordingIds && filters.recordingIds.length > 0) {
     conditions.push(inArray(recordingAssignments.recordingId, filters.recordingIds));
@@ -132,48 +128,77 @@ export function assignRecordingToUser(
     throw new Error("Only reviewer and approver accounts can receive recording assignments.");
   }
 
+  const assignmentRole = user.role as AssignmentRole;
   const timestamp = nowIso();
-  const existing = db
-    .select()
-    .from(recordingAssignments)
-    .where(
-      and(
-        eq(recordingAssignments.recordingId, params.recordingId),
-        eq(recordingAssignments.userId, params.userId),
-      ),
-    )
-    .get();
+  const bundle = lookupAppDbBundle(db);
 
-  if (existing) {
-    db.update(recordingAssignments)
-      .set({
+  const operation = (targetDb: AppDatabase) => {
+    const existing = targetDb
+      .select()
+      .from(recordingAssignments)
+      .where(
+        and(
+          eq(recordingAssignments.recordingId, params.recordingId),
+          eq(recordingAssignments.userId, params.userId),
+        ),
+      )
+      .get();
+
+    if (existing) {
+      targetDb.update(recordingAssignments)
+        .set({
+          assignmentRole,
+          status: "active",
+          isActive: true,
+          assignedByUserId: params.assignedByUserId,
+          updatedAt: timestamp,
+          endedAt: null,
+          endReason: null,
+          completedRevisionId: null,
+          removedByUserId: null,
+        })
+        .where(eq(recordingAssignments.id, existing.id))
+        .run();
+
+      return toRecordingAssignment({
+        ...existing,
+        assignmentRole,
+        status: "active",
         isActive: true,
         assignedByUserId: params.assignedByUserId,
         updatedAt: timestamp,
-      })
-      .where(eq(recordingAssignments.id, existing.id))
-      .run();
+        endedAt: null,
+        endReason: null,
+        completedRevisionId: null,
+        removedByUserId: null,
+      });
+    }
 
-    return {
-      ...existing,
-      isActive: true,
+    const assignment: RecordingAssignment = {
+      id: crypto.randomUUID(),
+      recordingId: params.recordingId,
+      userId: params.userId,
       assignedByUserId: params.assignedByUserId,
+      assignmentRole,
+      status: "active",
+      isActive: true,
+      createdAt: timestamp,
       updatedAt: timestamp,
-    } satisfies RecordingAssignment;
-  }
+      endedAt: null,
+      endReason: null,
+      completedRevisionId: null,
+      removedByUserId: null,
+    };
 
-  const assignment: RecordingAssignment = {
-    id: crypto.randomUUID(),
-    recordingId: params.recordingId,
-    userId: params.userId,
-    assignedByUserId: params.assignedByUserId,
-    isActive: true,
-    createdAt: timestamp,
-    updatedAt: timestamp,
+    targetDb.insert(recordingAssignments).values(assignment).run();
+    return assignment;
   };
 
-  db.insert(recordingAssignments).values(assignment).run();
-  return assignment;
+  if (bundle) {
+    return runGovernedTransaction((targetDb) => operation(targetDb), bundle);
+  }
+
+  return operation(db);
 }
 
 export function removeRecordingAssignment(
@@ -186,19 +211,32 @@ export function removeRecordingAssignment(
     .where(eq(recordingAssignments.id, assignmentId))
     .get();
 
-  if (!existing || !existing.isActive) {
+  if (!existing || existing.status !== "active") {
     return false;
   }
 
-  db.update(recordingAssignments)
-    .set({
-      isActive: false,
-      updatedAt: nowIso(),
-    })
-    .where(eq(recordingAssignments.id, assignmentId))
-    .run();
+  const timestamp = nowIso();
+  const bundle = lookupAppDbBundle(db);
+  const operation = (targetDb: AppDatabase) => {
+    targetDb.update(recordingAssignments)
+      .set({
+        status: "removed",
+        isActive: false,
+        updatedAt: timestamp,
+        endedAt: timestamp,
+        endReason: null,
+      })
+      .where(eq(recordingAssignments.id, assignmentId))
+      .run();
 
-  return true;
+    return true;
+  };
+
+  if (bundle) {
+    return runGovernedTransaction((targetDb) => operation(targetDb), bundle);
+  }
+
+  return operation(db);
 }
 
 export function visibleRecordingIdsForPrincipal(
