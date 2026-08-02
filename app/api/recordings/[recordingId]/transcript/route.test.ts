@@ -5,10 +5,15 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { eq } from "drizzle-orm";
 import { createLocalUser, toPrincipal } from "@/server/auth/service";
 import { enterActionMode } from "@/server/casefile/action-mode";
+import { actorContextForPrincipal } from "@/server/casefile/audit";
 import { resetAppDatabaseForTests, getAppDbBundle } from "@/server/db/client";
 import { auditEvents, recordings, revisions, workspaces } from "@/server/db/schema";
 import { serializeSegments } from "@/server/db/mappers";
-import { assignRecordingToUser } from "@/server/access/service";
+import {
+  assignRecordingToUser,
+  completeActiveAssignmentsForApproval,
+  resolveCasefileAccess,
+} from "@/server/access/service";
 
 const { getActivePrincipalMock, buildApprovedTranscriptExportMock } = vi.hoisted(() => ({
   getActivePrincipalMock: vi.fn(),
@@ -114,6 +119,55 @@ function exportAuditRows() {
     .all();
 }
 
+function insertActionableFixture(input: {
+  recordingId: string;
+  revisionId: string;
+  title: string;
+}) {
+  const bundle = getAppDbBundle();
+
+  bundle.db.insert(revisions).values({
+    id: input.revisionId,
+    recordingId: input.recordingId,
+    version: 1,
+    state: "pending_approval",
+    basedOnRevisionId: null,
+    createdByRole: "reviewer",
+    createdByUserId: null,
+    createdAt: "2026-08-01T12:00:00.000Z",
+    submittedByUserId: null,
+    submittedAt: "2026-08-01T12:05:00.000Z",
+    approvedAt: null,
+    summary: "Ready for approval.",
+    segmentsJson: serializeSegments(baseSegments),
+  }).run();
+
+  bundle.db.insert(recordings).values({
+    id: input.recordingId,
+    workspaceId: "workspace-1",
+    title: input.title,
+    source: "upload",
+    mediaKind: "audio",
+    mimeType: "audio/wav",
+    mediaPath: null,
+    originalFileName: `${input.title}.wav`,
+    languageHint: "en",
+    uploadedByRole: "uploader",
+    uploadedByUserId: null,
+    ingestionSessionId: null,
+    transcriptJobId: null,
+    integrityState: "verified",
+    transcriptJobState: "completed",
+    currentRevisionId: input.revisionId,
+    approvedRevisionId: null,
+    pendingRevisionId: null,
+    verificationSummary: "Ready for approval.",
+    createdAt: "2026-08-01T12:00:00.000Z",
+    updatedAt: "2026-08-01T12:05:00.000Z",
+    automationCursor: null,
+  }).run();
+}
+
 describe("GET /api/recordings/[recordingId]/transcript", () => {
   let tempRoot = "";
   const originalDatabasePath = process.env.SUPERSCRIBER_DB_PATH;
@@ -211,20 +265,75 @@ describe("GET /api/recordings/[recordingId]/transcript", () => {
     expect(exportAuditRows()).toHaveLength(0);
   });
 
-  it("returns 403 when export access is unavailable to the principal", async () => {
+  it("returns 403 when policy denies transcript export for a reviewer with preserved recording access", async () => {
     const reviewer = await createPrincipal({
       displayName: "Reviewer 2",
       email: "reviewer2@example.com",
       role: "reviewer",
     });
+    const admin = await createPrincipal({
+      displayName: "Admin 3",
+      email: "admin3@example.com",
+      role: "admin",
+    });
+    insertActionableFixture({
+      recordingId: "rec-2",
+      revisionId: "rev-reviewer-approved",
+      title: "Reviewer denied export",
+    });
+    assignRecordingToUser({
+      recordingId: "rec-2",
+      userId: reviewer.userId,
+      assignedBy: admin,
+    }, getAppDbBundle());
+
+    const bundle = getAppDbBundle();
+    bundle.db.update(revisions)
+      .set({
+        state: "approved",
+        approvedAt: "2026-08-01T12:10:00.000Z",
+        summary: "Approved transcript.",
+      })
+      .where(eq(revisions.id, "rev-reviewer-approved"))
+      .run();
+    bundle.db.update(recordings)
+      .set({
+        approvedRevisionId: "rev-reviewer-approved",
+        updatedAt: "2026-08-01T12:10:00.000Z",
+        verificationSummary: "Ready for export.",
+      })
+      .where(eq(recordings.id, "rec-2"))
+      .run();
+    completeActiveAssignmentsForApproval(
+      {
+        recordingId: "rec-2",
+        revisionId: "rev-reviewer-approved",
+        actor: actorContextForPrincipal(admin),
+      },
+      bundle.db,
+      "2026-08-01T12:10:00.000Z",
+    );
+
+    expect(
+      resolveCasefileAccess(reviewer, "rec-2", "rev-reviewer-approved", bundle.db),
+    ).toMatchObject({
+      kind: "completed_reviewer",
+      recordingId: "rec-2",
+      revisionId: "rev-reviewer-approved",
+    });
+
     getActivePrincipalMock.mockResolvedValue(reviewer);
 
     const response = await GET(
-      new Request("https://example.test/api/recordings/rec-1/transcript?format=txt"),
-      { params: Promise.resolve({ recordingId: "rec-1" }) },
+      new Request("https://example.test/api/recordings/rec-2/transcript?format=txt"),
+      { params: Promise.resolve({ recordingId: "rec-2" }) },
     );
 
     expect(response.status).toBe(403);
+    expect(await response.text()).toBe(
+      "This role cannot export approved transcripts in the current policy profile.",
+    );
+    expect(buildApprovedTranscriptExportMock).not.toHaveBeenCalled();
     expect(exportAuditRows()).toHaveLength(0);
   });
 

@@ -5,7 +5,7 @@ import { drizzle, type BetterSQLite3Database } from "drizzle-orm/better-sqlite3"
 import { runMigrations } from "@/server/db/migrations";
 import * as schema from "@/server/db/schema";
 
-const DEFAULT_DATABASE_PATH = join("data", "superscriber.db");
+const DEFAULT_DATABASE_PATH = join(/*turbopackIgnore: true*/ process.cwd(), "data", "superscriber.db");
 
 export type AppDatabase = BetterSQLite3Database<typeof schema>;
 export type AppDatabaseBundle = {

@@ -25,8 +25,8 @@ export type BootstrapReadiness = {
 };
 
 const VALID_ENGINE_MODES = new Set(["internal", "mock", "webhook"]);
-const DEFAULT_MEDIA_DIR = join("data", "media");
-const DEFAULT_UPLOAD_DIR = join("data", "uploads");
+const DEFAULT_MEDIA_DIR = join(/*turbopackIgnore: true*/ process.cwd(), "data", "media");
+const DEFAULT_UPLOAD_DIR = join(/*turbopackIgnore: true*/ process.cwd(), "data", "uploads");
 
 function ready(
   id: BootstrapReadinessCheckId,
@@ -62,7 +62,8 @@ function resolveUploadDir() {
 
 function resolveWorkerEntrypoint() {
   return (
-    process.env.SUPERSCRIBER_WORKER_ENTRYPOINT?.trim() || join("worker", "main.py")
+    process.env.SUPERSCRIBER_WORKER_ENTRYPOINT?.trim() ||
+    join(/*turbopackIgnore: true*/ process.cwd(), "worker", "main.py")
   );
 }
 

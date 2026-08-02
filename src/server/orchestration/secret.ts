@@ -2,7 +2,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { randomBytes } from "node:crypto";
 
-const SECRET_FILE = join("data", "engine.secret");
+const SECRET_FILE = join(/*turbopackIgnore: true*/ process.cwd(), "data", "engine.secret");
 
 export function resolveEngineSharedSecret() {
   const fromEnv = process.env.SUPERSCRIBER_ENGINE_SHARED_SECRET;
@@ -14,7 +14,7 @@ export function resolveEngineSharedSecret() {
     return readFileSync(SECRET_FILE, "utf8").trim();
   }
 
-  mkdirSync("data", { recursive: true });
+  mkdirSync(join(/*turbopackIgnore: true*/ process.cwd(), "data"), { recursive: true });
   const generated = randomBytes(32).toString("hex");
   writeFileSync(SECRET_FILE, generated, { encoding: "utf8", mode: 0o600 });
   return generated;

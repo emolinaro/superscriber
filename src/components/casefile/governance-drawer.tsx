@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useId, useMemo, useState, type KeyboardEvent } from "react";
 import type { CasefileViewModel } from "@/server/casefile/read-model";
 import { Modal } from "@/components/ui/modal";
 
@@ -95,6 +95,10 @@ function tabPanel(casefile: CasefileViewModel, tab: GovernanceTab) {
   }
 }
 
+function governanceTabSlug(tab: GovernanceTab) {
+  return tab.toLowerCase().replace(/[^a-z0-9]+/g, "-");
+}
+
 function GovernanceTabs({
   activeTab,
   casefile,
@@ -104,23 +108,75 @@ function GovernanceTabs({
   casefile: CasefileViewModel;
   setActiveTab: (value: GovernanceTab) => void;
 }) {
+  const tabsId = useId();
+
+  function tabId(tab: GovernanceTab) {
+    return `${tabsId}-tab-${governanceTabSlug(tab)}`;
+  }
+
+  function panelId(tab: GovernanceTab) {
+    return `${tabsId}-panel-${governanceTabSlug(tab)}`;
+  }
+
+  function activateTab(tab: GovernanceTab) {
+    setActiveTab(tab);
+    document.getElementById(tabId(tab))?.focus();
+  }
+
+  function handleKeyDown(event: KeyboardEvent<HTMLButtonElement>, index: number) {
+    let nextIndex: number | null = null;
+
+    switch (event.key) {
+      case "ArrowRight":
+        nextIndex = (index + 1) % GOVERNANCE_TABS.length;
+        break;
+      case "ArrowLeft":
+        nextIndex = (index - 1 + GOVERNANCE_TABS.length) % GOVERNANCE_TABS.length;
+        break;
+      case "Home":
+        nextIndex = 0;
+        break;
+      case "End":
+        nextIndex = GOVERNANCE_TABS.length - 1;
+        break;
+      default:
+        break;
+    }
+
+    if (nextIndex === null) {
+      return;
+    }
+
+    event.preventDefault();
+    activateTab(GOVERNANCE_TABS[nextIndex]);
+  }
+
   return (
     <>
       <div aria-label="Governance tabs" className="governance-tabs" role="tablist">
-        {GOVERNANCE_TABS.map((tab) => (
+        {GOVERNANCE_TABS.map((tab, index) => (
           <button
+            aria-controls={panelId(tab)}
             aria-selected={activeTab === tab}
             className="governance-tabs__tab"
+            id={tabId(tab)}
             key={tab}
             onClick={() => setActiveTab(tab)}
+            onKeyDown={(event) => handleKeyDown(event, index)}
             role="tab"
+            tabIndex={activeTab === tab ? 0 : -1}
             type="button"
           >
             {tab}
           </button>
         ))}
       </div>
-      <div className="governance-panel" role="tabpanel">
+      <div
+        aria-labelledby={tabId(activeTab)}
+        className="governance-panel"
+        id={panelId(activeTab)}
+        role="tabpanel"
+      >
         {tabPanel(casefile, activeTab)}
       </div>
     </>
