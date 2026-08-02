@@ -2,6 +2,27 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.3.0.0] - 2026-08-02
+
+### Added
+- Shipped a governed casefile redesign that adds a dedicated casefile workspace, role-aware workflow actions, and explicit admin action mode safeguards.
+- Added resumable upload support with creator-bound sessions, improved ingest progress handling, and guarded chunk finalization flows.
+- Added transcript-first review controls, including draft submission, request-changes, approval, and admin reopen handoffs.
+- Added role-aware work inbox and recording ledger views for uploaders, reviewers, approvers, and admins.
+- Added audited decision exports and approved export capabilities for completed casefile snapshots.
+
+### Changed
+- Reworked workspace and review surfaces to align with governed flow ownership, clearer action labels, and safer escalation states.
+- Updated orchestration, access, and store-level synchronization so governing actions remain consistent between mock and production modes.
+- Refined responsive app shell and UI behavior to keep navigation, empty-state, and auth pathways stable under constrained viewports.
+- Expanded automated coverage around auth recovery, governed ingestion, decision lifecycle, workspace inbox states, and admin controls.
+
+### Fixed
+- Fixed multiple governed workflow regressions across action session boundaries, transcript visibility, and status-poll timing.
+- Fixed assignment and reopen edge cases by preserving assignment history and routing completed-state actions to the correct next step.
+- Fixed role and status mismatches in workspace ledgers by normalizing action labels and empty states.
+- Fixed export and approved-revision handling to avoid stale snapshot access and to keep safe boundaries around protected actions.
+
 ## [0.2.0] - 2026-04-30
 
 ### Added
