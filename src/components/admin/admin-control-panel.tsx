@@ -1,4 +1,8 @@
-import { createUserAction, assignRecordingAction, unassignRecordingAction } from "@/app/actions";
+import {
+  assignRecordingFormAction as assignRecordingAction,
+  createUserFormAction as createUserAction,
+  unassignRecordingFormAction as unassignRecordingAction,
+} from "@/server/actions/administration-actions";
 import { formatDateTime, formatRoleLabel } from "@/lib/format";
 import type { AccountDirectoryEntry, AssignmentSummary } from "@/server/access/service";
 

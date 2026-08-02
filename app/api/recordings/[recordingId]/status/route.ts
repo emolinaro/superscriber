@@ -1,6 +1,9 @@
+import { eq } from "drizzle-orm";
 import { NextResponse } from "next/server";
-import { canAccessRecording } from "@/server/access/service";
-import { getRecordingDetail } from "@/server/repository";
+import { getCasefile } from "@/server/casefile/read-model";
+import { CasefileCommandError } from "@/server/casefile/errors";
+import { getAppDbBundle } from "@/server/db/client";
+import { recordings, revisions, transcriptJobs } from "@/server/db/schema";
 import { getActivePrincipal } from "@/server/session";
 
 export const runtime = "nodejs";
@@ -12,32 +15,59 @@ export async function GET(
   _request: Request,
   context: { params: Params },
 ) {
-  const principal = await getActivePrincipal();
-  if (!principal) {
-    return new NextResponse("Unauthorized", { status: 401 });
-  }
+  try {
+    const principal = await getActivePrincipal();
+    if (!principal) {
+      return new NextResponse("Unauthorized", { status: 401 });
+    }
 
-  const { recordingId } = await context.params;
-  const access = canAccessRecording(principal, recordingId);
-  if (!access.allowed) {
-    return new NextResponse(access.reason ?? "Forbidden", { status: 403 });
-  }
+    const { recordingId } = await context.params;
+    let casefile;
+    try {
+      casefile = getCasefile(principal, recordingId);
+    } catch (error) {
+      if (error instanceof CasefileCommandError && error.code === "ACCESS_DENIED") {
+        return new NextResponse(error.message, { status: 403 });
+      }
+      throw error;
+    }
 
-  const detail = getRecordingDetail(recordingId, principal.role);
-  if (!detail) {
-    return new NextResponse("Not found", { status: 404 });
-  }
+    if (!casefile) {
+      return new NextResponse("Not found", { status: 404 });
+    }
 
-  return NextResponse.json({
-    recordingId: detail.recording.id,
-    ingestionSession: detail.ingestionSession,
-    transcriptJob: detail.transcriptJob,
-    currentRevisionId: detail.recording.currentRevisionId,
-    approvedRevisionId: detail.recording.approvedRevisionId,
-    pendingRevisionId: detail.recording.pendingRevisionId,
-    integrityState: detail.recording.integrityState,
-    transcriptJobState: detail.recording.transcriptJobState,
-    verificationSummary: detail.recording.verificationSummary,
-    updatedAt: detail.recording.updatedAt,
-  });
+    const bundle = getAppDbBundle();
+    const recording = bundle.db
+      .select()
+      .from(recordings)
+      .where(eq(recordings.id, recordingId))
+      .get();
+    if (!recording) {
+      return new NextResponse("Not found", { status: 404 });
+    }
+
+    const currentRevision = recording.currentRevisionId
+      ? bundle.db.select().from(revisions).where(eq(revisions.id, recording.currentRevisionId)).get()
+      : null;
+    const transcriptJob = recording.transcriptJobId
+      ? bundle.db.select().from(transcriptJobs).where(eq(transcriptJobs.id, recording.transcriptJobId)).get()
+      : null;
+
+    return NextResponse.json({
+      workflowStage: casefile.stage,
+      currentRevisionVersion: currentRevision?.version ?? null,
+      currentRevisionId: recording.currentRevisionId,
+      approvedRevisionId: recording.approvedRevisionId,
+      pendingRevisionId: recording.pendingRevisionId,
+      progress: {
+        integrityState: recording.integrityState,
+        transcriptJobState: recording.transcriptJobState,
+        transcriptJobProgressPercent: transcriptJob?.progressPercent ?? null,
+        transcriptJobEtaSeconds: transcriptJob?.etaSeconds ?? null,
+      },
+      updatedAt: recording.updatedAt,
+    });
+  } catch {
+    return new NextResponse("Unable to load recording status.", { status: 500 });
+  }
 }

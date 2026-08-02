@@ -1,11 +1,11 @@
 import Link from "next/link";
 import { notFound, redirect } from "next/navigation";
 import {
-  approveRevisionAction,
-  reopenRevisionAction,
-  saveDraftAction,
-  submitRevisionAction,
-} from "@/app/actions";
+  approveRevisionFormAction as approveRevisionAction,
+  reopenRevisionFormAction as reopenRevisionAction,
+  saveDraftFormAction as saveDraftAction,
+  submitRevisionFormAction as submitRevisionAction,
+} from "@/server/actions/casefile-actions";
 import { canAccessRecording } from "@/server/access/service";
 import { OrchestrationStatusPoller } from "@/components/orchestration-status-poller";
 import { ReviewWorkspace } from "@/components/review-workspace";

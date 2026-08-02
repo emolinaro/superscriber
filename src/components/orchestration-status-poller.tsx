@@ -11,35 +11,59 @@ type PollerProps = {
 };
 
 type StatusSnapshot = {
-  integrityState: string;
-  transcriptJobState: string;
+  workflowStage: string;
+  currentRevisionVersion: number | null;
   currentRevisionId: string | null;
+  approvedRevisionId: string | null;
+  pendingRevisionId: string | null;
+  progress: {
+    integrityState: string;
+    transcriptJobState: string;
+    transcriptJobProgressPercent: number | null;
+    transcriptJobEtaSeconds: number | null;
+  };
   updatedAt: string;
 };
 
 function isActiveStatus(snapshot: StatusSnapshot) {
   return (
     snapshot.currentRevisionId === null &&
-    (snapshot.integrityState === "verifying" ||
-      snapshot.transcriptJobState === "queued" ||
-      snapshot.transcriptJobState === "running" ||
-      snapshot.transcriptJobState === "partial_result")
+    (snapshot.progress.integrityState === "verifying" ||
+      snapshot.progress.transcriptJobState === "queued" ||
+      snapshot.progress.transcriptJobState === "running" ||
+      snapshot.progress.transcriptJobState === "partial_result")
   );
 }
 
 export function OrchestrationStatusPoller(props: PollerProps) {
   const router = useRouter();
   const [snapshot, setSnapshot] = useState<StatusSnapshot>({
-    integrityState: props.integrityState,
-    transcriptJobState: props.transcriptJobState,
+    workflowStage: "draft_review",
+    currentRevisionVersion: null,
     currentRevisionId: props.currentRevisionId,
+    approvedRevisionId: null,
+    pendingRevisionId: null,
+    progress: {
+      integrityState: props.integrityState,
+      transcriptJobState: props.transcriptJobState,
+      transcriptJobProgressPercent: null,
+      transcriptJobEtaSeconds: null,
+    },
     updatedAt: "",
   });
   const [pollState, setPollState] = useState<"idle" | "watching" | "finalized" | "error">(
     isActiveStatus({
-      integrityState: props.integrityState,
-      transcriptJobState: props.transcriptJobState,
+      workflowStage: "draft_review",
+      currentRevisionVersion: null,
       currentRevisionId: props.currentRevisionId,
+      approvedRevisionId: null,
+      pendingRevisionId: null,
+      progress: {
+        integrityState: props.integrityState,
+        transcriptJobState: props.transcriptJobState,
+        transcriptJobProgressPercent: null,
+        transcriptJobEtaSeconds: null,
+      },
       updatedAt: "",
     })
       ? "watching"
@@ -60,8 +84,8 @@ export function OrchestrationStatusPoller(props: PollerProps) {
       const nextSnapshot = (await response.json()) as StatusSnapshot;
       const shouldKeepWatching = isActiveStatus(nextSnapshot);
       if (
-        nextSnapshot.integrityState !== snapshot.integrityState ||
-        nextSnapshot.transcriptJobState !== snapshot.transcriptJobState ||
+        nextSnapshot.progress.integrityState !== snapshot.progress.integrityState ||
+        nextSnapshot.progress.transcriptJobState !== snapshot.progress.transcriptJobState ||
         nextSnapshot.currentRevisionId !== lastRevisionIdRef.current ||
         nextSnapshot.updatedAt !== snapshot.updatedAt
       ) {
@@ -81,9 +105,17 @@ export function OrchestrationStatusPoller(props: PollerProps) {
   useEffect(() => {
     setSnapshot((current) => {
       const nextSnapshot = {
-        integrityState: props.integrityState,
-        transcriptJobState: props.transcriptJobState,
+        workflowStage: current.workflowStage,
+        currentRevisionVersion: current.currentRevisionVersion,
         currentRevisionId: props.currentRevisionId,
+        approvedRevisionId: current.approvedRevisionId,
+        pendingRevisionId: current.pendingRevisionId,
+        progress: {
+          integrityState: props.integrityState,
+          transcriptJobState: props.transcriptJobState,
+          transcriptJobProgressPercent: current.progress.transcriptJobProgressPercent,
+          transcriptJobEtaSeconds: current.progress.transcriptJobEtaSeconds,
+        },
         updatedAt: current.updatedAt,
       };
       lastRevisionIdRef.current = props.currentRevisionId;

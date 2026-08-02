@@ -1,7 +1,7 @@
 "use client";
 
 import { useActionState } from "react";
-import { createBootstrapAdminAction } from "@/app/actions";
+import { createBootstrapAdminAction } from "@/server/actions/auth-actions";
 import {
   EMPTY_BOOTSTRAP_FORM_STATE,
   type BootstrapFieldName,

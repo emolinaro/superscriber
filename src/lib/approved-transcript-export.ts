@@ -55,6 +55,7 @@ export function parseApprovedTranscriptExportFormat(value: string) {
 export function buildApprovedTranscriptExportUrl(
   baseUrl: string,
   format: ApprovedTranscriptExportFormat,
+  actionModeId?: string | null,
 ) {
   const isAbsoluteUrl = /^[a-zA-Z][a-zA-Z\d+\-.]*:/.test(baseUrl);
   const url = isAbsoluteUrl
@@ -62,6 +63,10 @@ export function buildApprovedTranscriptExportUrl(
     : new URL(baseUrl, "https://approved-transcript-export.local");
 
   url.searchParams.set("format", format);
+
+  if (actionModeId) {
+    url.searchParams.set("actionModeId", actionModeId);
+  }
 
   if (isAbsoluteUrl) {
     return url.toString();
