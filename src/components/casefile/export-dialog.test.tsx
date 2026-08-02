@@ -2,7 +2,7 @@
 
 import * as React from "react";
 import type { ComponentProps } from "react";
-import { render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ExportDialog } from "./export-dialog";
@@ -13,6 +13,28 @@ const revokeObjectUrlMock = vi.fn();
 const anchorClickMock = vi.fn();
 const originalCreateObjectURL = URL.createObjectURL;
 const originalRevokeObjectURL = URL.revokeObjectURL;
+
+function createDeferred<T>() {
+  let resolve!: (value: T) => void;
+  let reject!: (reason?: unknown) => void;
+  const promise = new Promise<T>((promiseResolve, promiseReject) => {
+    resolve = promiseResolve;
+    reject = promiseReject;
+  });
+
+  return { promise, resolve, reject };
+}
+
+function createSuccessfulExportResponse(fileName = "approved.txt") {
+  return {
+    ok: true,
+    status: 200,
+    headers: new Headers({
+      "content-disposition": `attachment; filename="${fileName}"`,
+    }),
+    blob: vi.fn().mockResolvedValue(new Blob(["approved transcript"], { type: "text/plain" })),
+  };
+}
 
 describe("ExportDialog", () => {
   beforeEach(() => {
@@ -73,6 +95,52 @@ describe("ExportDialog", () => {
     );
 
     return { onAnnouncement, onClose, onSessionRecoveryRequested };
+  }
+
+  function renderManagedDialog(overrides: Partial<ComponentProps<typeof ExportDialog>> = {}) {
+    const appRoot = document.createElement("div");
+    appRoot.id = "app-root";
+    document.body.append(appRoot);
+
+    const onClose = vi.fn();
+    const onAnnouncement = vi.fn();
+    const onSessionRecoveryRequested = vi.fn();
+
+    function Harness() {
+      const [open, setOpen] = React.useState(false);
+
+      return (
+        <>
+          <button onClick={() => setOpen(true)} type="button">
+            Open export
+          </button>
+          <ExportDialog
+            actionModeId="mode-1"
+            approvedBy="Approver Example"
+            approvedAt="2026-08-01T12:40:00.000Z"
+            onAnnouncement={onAnnouncement}
+            onClose={() => {
+              onClose();
+              setOpen(false);
+            }}
+            onSessionRecoveryRequested={onSessionRecoveryRequested}
+            open={open}
+            recordingId="rec-1"
+            revision={{ version: 3 }}
+            {...overrides}
+          />
+        </>
+      );
+    }
+
+    render(<Harness />, { container: appRoot });
+
+    return {
+      onAnnouncement,
+      onClose,
+      onSessionRecoveryRequested,
+      openTrigger: screen.getByRole("button", { name: "Open export" }),
+    };
   }
 
   it("renders the seven grouped formats with approval metadata and legacy fallback", () => {
@@ -168,14 +236,7 @@ describe("ExportDialog", () => {
 
   it("fetches the approved blob, includes actionModeId but never a revision id, and revokes the object url", async () => {
     const user = userEvent.setup();
-    fetchMock.mockResolvedValue({
-      ok: true,
-      status: 200,
-      headers: new Headers({
-        "content-disposition": 'attachment; filename="approved.txt"',
-      }),
-      blob: vi.fn().mockResolvedValue(new Blob(["approved transcript"], { type: "text/plain" })),
-    });
+    fetchMock.mockResolvedValue(createSuccessfulExportResponse());
 
     const { onAnnouncement, onClose } = renderDialog();
     await user.click(screen.getByRole("button", { name: "TXT" }));
@@ -203,6 +264,83 @@ describe("ExportDialog", () => {
     await waitFor(() => expect(onSessionRecoveryRequested).toHaveBeenCalledTimes(1));
     expect(screen.getByRole("dialog", { name: "Export approved transcript" })).toBeVisible();
     expect(onClose).not.toHaveBeenCalled();
+  });
+
+  it("keeps the modal open on Escape while an export is pending", async () => {
+    const user = userEvent.setup();
+    const deferredResponse = createDeferred<ReturnType<typeof createSuccessfulExportResponse>>();
+    fetchMock.mockReturnValue(deferredResponse.promise);
+
+    const { onClose, openTrigger } = renderManagedDialog();
+
+    await user.click(openTrigger);
+    await user.click(screen.getByRole("button", { name: "DOCX" }));
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(screen.getByRole("button", { name: "Close" })).toBeDisabled();
+
+    await user.keyboard("{Escape}");
+
+    const dialog = screen.getByRole("dialog", { name: "Export approved transcript" });
+    expect(dialog).toBeVisible();
+    expect(dialog.contains(document.activeElement)).toBe(true);
+    expect(onClose).not.toHaveBeenCalled();
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+
+    deferredResponse.resolve(createSuccessfulExportResponse());
+
+    await waitFor(() => expect(onClose).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(openTrigger).toHaveFocus());
+  });
+
+  it("keeps the modal open on backdrop click while an export is pending", async () => {
+    const user = userEvent.setup();
+    const deferredResponse = createDeferred<ReturnType<typeof createSuccessfulExportResponse>>();
+    fetchMock.mockReturnValue(deferredResponse.promise);
+
+    const { onClose, openTrigger } = renderManagedDialog();
+
+    await user.click(openTrigger);
+    await user.click(screen.getByRole("button", { name: "DOCX" }));
+
+    fireEvent.mouseDown(document.querySelector(".export-backdrop") as Element);
+
+    const dialog = screen.getByRole("dialog", { name: "Export approved transcript" });
+    expect(dialog).toBeVisible();
+    expect(dialog.contains(document.activeElement)).toBe(true);
+    expect(onClose).not.toHaveBeenCalled();
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+
+    deferredResponse.resolve(createSuccessfulExportResponse());
+
+    await waitFor(() => expect(onClose).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(openTrigger).toHaveFocus());
+  });
+
+  it("keeps the modal open on Close while an export is pending", async () => {
+    const user = userEvent.setup();
+    const deferredResponse = createDeferred<ReturnType<typeof createSuccessfulExportResponse>>();
+    fetchMock.mockReturnValue(deferredResponse.promise);
+
+    const { onClose, openTrigger } = renderManagedDialog();
+
+    await user.click(openTrigger);
+    await user.click(screen.getByRole("button", { name: "DOCX" }));
+
+    const closeButton = screen.getByRole("button", { name: "Close" });
+    expect(closeButton).toBeDisabled();
+    await user.click(closeButton);
+
+    const dialog = screen.getByRole("dialog", { name: "Export approved transcript" });
+    expect(dialog).toBeVisible();
+    expect(dialog.contains(document.activeElement)).toBe(true);
+    expect(onClose).not.toHaveBeenCalled();
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+
+    deferredResponse.resolve(createSuccessfulExportResponse());
+
+    await waitFor(() => expect(onClose).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(openTrigger).toHaveFocus());
   });
 
   it("renders inline 403 and 409 errors", async () => {

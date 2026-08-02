@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   APPROVED_TRANSCRIPT_EXPORT_FORMAT_GROUPS,
   type ApprovedTranscriptExportFormat,
@@ -59,6 +59,8 @@ export function ExportDialog({
   const [selectedFormat, setSelectedFormat] = useState<ApprovedTranscriptExportFormat | null>(null);
   const [error, setError] = useState<string | null>(null);
   const buttonRefs = useRef(new Map<ApprovedTranscriptExportFormat, HTMLButtonElement>());
+  const pendingRef = useRef(false);
+  const isPending = pendingFormat !== null;
   const metadataCopy = useMemo(() => {
     if (approvedBy) {
       return `${approvedBy} approved revision v${revision.version}.`;
@@ -83,13 +85,27 @@ export function ExportDialog({
 
   useEffect(() => {
     if (!open) {
+      pendingRef.current = false;
       setPendingFormat(null);
       setSelectedFormat(null);
       setError(null);
     }
   }, [open]);
 
+  const handleClose = useCallback(() => {
+    if (pendingRef.current) {
+      return;
+    }
+
+    onClose();
+  }, [onClose]);
+
   async function handleExport(format: ApprovedTranscriptExportFormat) {
+    if (pendingRef.current) {
+      return;
+    }
+
+    pendingRef.current = true;
     setSelectedFormat(format);
     setPendingFormat(format);
     setError(null);
@@ -123,6 +139,7 @@ export function ExportDialog({
     } catch {
       setError("Export could not be prepared. Try again.");
     } finally {
+      pendingRef.current = false;
       setPendingFormat(null);
     }
   }
@@ -130,13 +147,13 @@ export function ExportDialog({
   return (
     <Modal
       backdropClassName="export-backdrop"
-      onClose={onClose}
+      onClose={handleClose}
       open={open}
       surfaceClassName="export-dialog"
       title="Export approved transcript"
     >
       <div className="button-row modal-actions-row">
-        <button className="button button-secondary" onClick={onClose} type="button">
+        <button className="button button-secondary" disabled={isPending} onClick={handleClose} type="button">
           Close
         </button>
       </div>
