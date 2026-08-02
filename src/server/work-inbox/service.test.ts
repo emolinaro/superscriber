@@ -1,13 +1,36 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Principal, TranscriptRevision } from "@/domain/models";
 import { createLocalUser, toPrincipal } from "@/server/auth/service";
-import { listWorkInbox } from "@/server/work-inbox/service";
+import {
+  listWorkInbox,
+  parseWorkInboxFilters,
+} from "@/server/work-inbox/service";
 import { openAppDatabase, type AppDatabase } from "@/server/db/client";
 import { approvals, recordingAssignments, recordings, revisions, workspaces } from "@/server/db/schema";
 
 const FIXED_NOW = "2026-08-01T12:00:00.000Z";
 
 type TestBundle = ReturnType<typeof openAppDatabase>;
+
+const WORK_INBOX_COPY = {
+  uploader: {
+    heading: "Your uploads",
+    responsibility: "Start recordings and track each upload through processing.",
+  },
+  reviewer: {
+    heading: "Transcript review",
+    responsibility: "Review assigned drafts and submit accurate revisions for approval.",
+  },
+  approver: {
+    heading: "Approval decisions",
+    responsibility:
+      "Decide submitted revisions and reopen approved casefiles when governance requires it.",
+  },
+  admin: {
+    heading: "Recording oversight",
+    responsibility: "Monitor recordings and route governed work without acting implicitly.",
+  },
+} as const;
 
 const baseSegments = [
   {
@@ -154,6 +177,58 @@ function insertAssignment(
 }
 
 describe("listWorkInbox", () => {
+  it.each([
+    ["uploader", WORK_INBOX_COPY.uploader],
+    ["reviewer", WORK_INBOX_COPY.reviewer],
+    ["approver", WORK_INBOX_COPY.approver],
+    ["admin", WORK_INBOX_COPY.admin],
+  ] as const)("returns role-specific heading and responsibility for %s", async (role, copy) => {
+    const bundle = openAppDatabase(":memory:");
+    insertWorkspace(bundle);
+
+    try {
+      const principal = await createPrincipal(bundle.db, {
+        displayName: `${role} user`,
+        email: `${role}@example.com`,
+        role,
+      });
+
+      const inbox = listWorkInbox(principal, {}, bundle.db);
+      expect(inbox.heading).toBe(copy.heading);
+      expect(inbox.responsibility).toBe(copy.responsibility);
+    } finally {
+      bundle.sqlite.close();
+    }
+  });
+
+  it.each([
+    ["uploader", "my-uploads"],
+    ["reviewer", "to-review"],
+    ["approver", "to-decide"],
+    ["admin", "all"],
+  ] as const)("normalizes filters to the default tab for %s", (role, expectedTab) => {
+    expect(
+      parseWorkInboxFilters(
+        {
+          tab: ["invalid-tab"],
+          query: ["  Alpha  "],
+          stage: ["invalid-stage"],
+          source: ["invalid-source"],
+          assignmentUserId: ["user-1"],
+          sort: ["invalid-sort"],
+        },
+        role,
+      ),
+    ).toEqual({
+      tab: expectedTab,
+      query: "Alpha",
+      stage: null,
+      source: null,
+      assignmentUserId: "user-1",
+      sort: "default",
+    });
+  });
+
   beforeEach(() => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date(FIXED_NOW));

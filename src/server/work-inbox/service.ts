@@ -33,6 +33,32 @@ const ROLE_TABS: Record<UserRole, string[]> = {
   admin: ["all", "needs-attention", "review", "approval", "approved"],
 };
 
+const ROLE_COPY: Record<
+  UserRole,
+  {
+    heading: string;
+    responsibility: string;
+  }
+> = {
+  uploader: {
+    heading: "Your uploads",
+    responsibility: "Start recordings and track each upload through processing.",
+  },
+  reviewer: {
+    heading: "Transcript review",
+    responsibility: "Review assigned drafts and submit accurate revisions for approval.",
+  },
+  approver: {
+    heading: "Approval decisions",
+    responsibility:
+      "Decide submitted revisions and reopen approved casefiles when governance requires it.",
+  },
+  admin: {
+    heading: "Recording oversight",
+    responsibility: "Monitor recordings and route governed work without acting implicitly.",
+  },
+};
+
 const TAB_LABELS: Record<string, string> = {
   "my-uploads": "My uploads",
   "needs-attention": "Needs attention",
@@ -89,6 +115,8 @@ export type WorkInboxRow = {
 
 export type WorkInboxViewModel = {
   role: UserRole;
+  heading: string;
+  responsibility: string;
   filters: WorkInboxFilters;
   tabs: Array<{
     id: string;
@@ -121,7 +149,10 @@ function defaultTabForRole(role: UserRole) {
   return ROLE_TABS[role][0]!;
 }
 
-function parseFilters(role: UserRole, values: Record<string, string | string[] | undefined>) {
+export function parseWorkInboxFilters(
+  values: Record<string, string | string[] | undefined>,
+  role: UserRole,
+): WorkInboxFilters {
   const query = firstValue(values.query)?.trim() ?? "";
   const requestedTab = firstValue(values.tab) ?? null;
   const requestedSort = firstValue(values.sort);
@@ -523,7 +554,7 @@ export function listWorkInbox(
   values: Record<string, string | string[] | undefined> = {},
   db: AppDatabase = getAppDb(),
 ): WorkInboxViewModel {
-  const filters = parseFilters(principal.role, values);
+  const filters = parseWorkInboxFilters(values, principal.role);
   const recordingMap = loadRecordingMap(db);
   const revisionMap = loadRevisionMap(db);
   const decisionMap = loadDecisionMap(db);
@@ -555,6 +586,8 @@ export function listWorkInbox(
 
   return {
     role: principal.role,
+    heading: ROLE_COPY[principal.role].heading,
+    responsibility: ROLE_COPY[principal.role].responsibility,
     filters,
     tabs: ROLE_TABS[principal.role].map((tabId) => ({
       id: tabId,
