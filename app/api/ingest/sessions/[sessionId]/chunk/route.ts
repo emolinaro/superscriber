@@ -1,5 +1,10 @@
 import { NextResponse } from "next/server";
-import { appendUploadChunk } from "@/server/ingest/service";
+import {
+  appendUploadChunk,
+  authExpiredIngestFailure,
+  describeIngestFailure,
+  IngestError,
+} from "@/server/ingest/service";
 import { getActivePrincipal } from "@/server/session";
 
 export const runtime = "nodejs";
@@ -13,25 +18,39 @@ export async function PUT(
 ) {
   const principal = await getActivePrincipal();
   if (!principal) {
-    return new NextResponse("Unauthorized", { status: 401 });
+    const failure = authExpiredIngestFailure();
+    return NextResponse.json(failure.body, { status: failure.status });
   }
   if (principal.role !== "uploader" && principal.role !== "admin") {
-    return new NextResponse("Forbidden", { status: 403 });
+    const failure = describeIngestFailure(
+      new IngestError(
+        "ACCESS_DENIED",
+        "Only uploader and admin accounts can update ingest sessions.",
+      ),
+    );
+    return NextResponse.json(failure.body, { status: failure.status });
   }
 
   const startHeader = request.headers.get("x-superscriber-byte-start");
   const chunkStart = startHeader ? Number.parseInt(startHeader, 10) : Number.NaN;
   if (!Number.isFinite(chunkStart) || chunkStart < 0) {
-    return NextResponse.json(
-      { ok: false, error: "A valid x-superscriber-byte-start header is required." },
-      { status: 400 },
+    const failure = describeIngestFailure(
+      new IngestError(
+        "VALIDATION_ERROR",
+        "A valid x-superscriber-byte-start header is required.",
+        {
+          chunkStart: "A valid x-superscriber-byte-start header is required.",
+        },
+      ),
     );
+    return NextResponse.json(failure.body, { status: failure.status });
   }
 
   try {
     const { sessionId } = await context.params;
     const buffer = new Uint8Array(await request.arrayBuffer());
     const status = appendUploadChunk({
+      principal,
       sessionId,
       chunkStart,
       bytes: buffer,
@@ -39,12 +58,7 @@ export async function PUT(
 
     return NextResponse.json({ ok: true, status });
   } catch (error) {
-    return NextResponse.json(
-      {
-        ok: false,
-        error: error instanceof Error ? error.message : "Chunk upload failed.",
-      },
-      { status: 409 },
-    );
+    const failure = describeIngestFailure(error);
+    return NextResponse.json(failure.body, { status: failure.status });
   }
 }

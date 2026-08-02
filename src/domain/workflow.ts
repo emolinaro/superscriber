@@ -2,12 +2,14 @@ import {
   AppState,
   AuditEvent,
   IngestionSession,
+  Principal,
   Recording,
   TranscriptJob,
   TranscriptRevision,
   UserRole,
   WorkspaceBucket,
 } from "@/domain/models";
+import { actorContextForPrincipal, type ActorContext } from "@/server/casefile/audit";
 import { EMPTY_AUDIT_METADATA } from "@/server/db/mappers";
 
 function nowIso() {
@@ -62,14 +64,30 @@ export function bucketRecording(recording: Recording): WorkspaceBucket {
 
 function addAuditEvent(
   state: AppState,
-  event: Pick<AuditEvent, "workspaceId" | "recordingId" | "actorRole" | "type" | "detail">,
+  event: Pick<AuditEvent, "workspaceId" | "recordingId" | "type" | "detail"> & {
+    actor?: ActorContext;
+    actorRole?: AuditEvent["actorRole"];
+  },
 ) {
+  const actor =
+    event.actor ?? {
+      actorRole: event.actorRole ?? "system",
+      actorUserId: null,
+      actorDisplayName: null,
+      effectiveRole: event.actorRole ?? "system",
+      adminActionSessionId: null,
+    };
+
   state.auditEvents.unshift({
-    ...event,
-    actorUserId: null,
-    actorDisplayName: null,
-    effectiveRole: event.actorRole,
-    adminActionSessionId: null,
+    workspaceId: event.workspaceId,
+    recordingId: event.recordingId,
+    actorRole: actor.actorRole,
+    actorUserId: actor.actorUserId,
+    actorDisplayName: actor.actorDisplayName,
+    effectiveRole: actor.effectiveRole,
+    adminActionSessionId: actor.adminActionSessionId,
+    type: event.type,
+    detail: event.detail,
     id: createId("audit"),
     metadata: EMPTY_AUDIT_METADATA,
     createdAt: nowIso(),
@@ -85,6 +103,7 @@ function createIngestionSession(
     verificationSummary?: string;
     bytesReceived?: number | null;
     startedAt?: string | null;
+    createdByUserId?: string | null;
   },
 ): IngestionSession {
   const timestamp = nowIso();
@@ -95,7 +114,7 @@ function createIngestionSession(
     source: recording.source,
     state: nextState,
     adapter: adapterId,
-    createdByUserId: null,
+    createdByUserId: options?.createdByUserId ?? null,
     createdAt: timestamp,
     updatedAt: timestamp,
     startedAt: options?.startedAt ?? timestamp,
@@ -254,7 +273,7 @@ export function createUploadSessionEntry(params: {
   mimeType: string | null;
   originalFileName: string | null;
   languageHint: string;
-  role: UserRole;
+  principal: Principal;
   bytesExpected: number;
   adapterId?: string;
 }) {
@@ -270,8 +289,8 @@ export function createUploadSessionEntry(params: {
     mediaPath: null,
     originalFileName: params.originalFileName,
     languageHint: params.languageHint,
-    uploadedByRole: params.role,
-    uploadedByUserId: null,
+    uploadedByRole: params.principal.role,
+    uploadedByUserId: params.principal.userId,
     ingestionSessionId: null,
     transcriptJobId: null,
     integrityState: "uploading",
@@ -291,6 +310,7 @@ export function createUploadSessionEntry(params: {
     verificationSummary:
       "Upload session started. Continue from the last committed byte if the transfer is interrupted.",
     bytesReceived: 0,
+    createdByUserId: params.principal.userId,
   });
   const transcriptJob = createTranscriptJob(recording, adapterId);
   recording.ingestionSessionId = ingestionSession.id;
@@ -302,7 +322,7 @@ export function createUploadSessionEntry(params: {
   addAuditEvent(params.state, {
     workspaceId: recording.workspaceId,
     recordingId: recording.id,
-    actorRole: params.role,
+    actor: actorContextForPrincipal(params.principal),
     type: "recording.created",
     detail: `${params.source === "record" ? "Browser recording" : "Upload"} session started.`,
   });
@@ -429,4 +449,3 @@ export function finalizeUploadSession(params: {
 
   return { session, recording, job };
 }
-
