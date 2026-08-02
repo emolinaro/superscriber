@@ -88,6 +88,15 @@ describe("RecordingLedger", () => {
     expect(row?.querySelector(".status-badge__icon")).not.toBeNull();
   });
 
+  it("omits the desktop row action when the server does not supply an action label", () => {
+    render(<RecordingLedger role="uploader" rows={[uploaderRow]} />);
+
+    const rowHeader = screen.getByRole("rowheader", { name: /Owned ready item/i });
+    const row = rowHeader.closest("tr");
+    expect(row).not.toBeNull();
+    expect(within(row!).queryByRole("link")).not.toBeInTheDocument();
+  });
+
   it("renders a labeled narrow list below 960 px without duplicating the desktop table", () => {
     setViewport(390);
     render(<RecordingLedger role="uploader" rows={[uploaderRow]} />);
@@ -96,9 +105,6 @@ describe("RecordingLedger", () => {
     expect(screen.queryByRole("table", { name: "Work recordings" })).not.toBeInTheDocument();
     expect(screen.queryByRole("columnheader", { name: "Assignment" })).not.toBeInTheDocument();
     expect(screen.getByText("Uploaded by you")).toBeVisible();
-    expect(screen.getByRole("link", { name: "Open record" })).toHaveAttribute(
-      "href",
-      "/recordings/rec-owned?revision=rev-owned",
-    );
+    expect(screen.queryByRole("link")).not.toBeInTheDocument();
   });
 });

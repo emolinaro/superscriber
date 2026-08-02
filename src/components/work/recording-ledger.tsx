@@ -27,10 +27,6 @@ function toneForStage(stage: WorkInboxRow["stage"]) {
   return "info" as const;
 }
 
-function rowActionLabel(row: WorkInboxRow) {
-  return row.actionLabel ?? "Open record";
-}
-
 function columnsForRole(role: UserRole): LedgerColumn[] {
   const shared: LedgerColumn[] = [
     { id: "recording", label: "Recording" },
@@ -119,9 +115,11 @@ function LedgerTable({ role, rows }: { role: UserRole; rows: WorkInboxRow[] }) {
               <UpdatedTime row={row} />
             </td>
             <td>
-              <Link className="recording-action interactive-target" href={row.href}>
-                {rowActionLabel(row)}
-              </Link>
+              {row.actionLabel !== null ? (
+                <Link className="recording-action interactive-target" href={row.href}>
+                  {row.actionLabel}
+                </Link>
+              ) : null}
             </td>
           </tr>
         ))}
@@ -174,9 +172,11 @@ function LedgerList({ role, rows }: { role: UserRole; rows: WorkInboxRow[] }) {
                   </dd>
                 </div>
               </dl>
-              <Link className="recording-action interactive-target" href={row.href}>
-                {rowActionLabel(row)}
-              </Link>
+              {row.actionLabel !== null ? (
+                <Link className="recording-action interactive-target" href={row.href}>
+                  {row.actionLabel}
+                </Link>
+              ) : null}
             </article>
           </li>
         );

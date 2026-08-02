@@ -94,9 +94,11 @@ export function WorkInbox({ model }: { model: WorkInboxViewModel }) {
               <time dateTime={model.nextAction.updatedAtIso}>{model.nextAction.updatedAtLabel}</time>
             </div>
           </div>
-          <Link className="recording-action interactive-target" href={model.nextAction.href}>
-            {model.nextAction.actionLabel ?? "Open record"}
-          </Link>
+          {model.nextAction.actionLabel !== null ? (
+            <Link className="recording-action interactive-target" href={model.nextAction.href}>
+              {model.nextAction.actionLabel}
+            </Link>
+          ) : null}
         </section>
       ) : null}
 

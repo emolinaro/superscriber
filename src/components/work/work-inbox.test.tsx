@@ -135,6 +135,24 @@ describe("WorkInbox", () => {
     expect(screen.getByText("No transcript review is assigned to you.")).toBeVisible();
   });
 
+  it("renders next-action details without inventing an action control", () => {
+    render(
+      <WorkInbox
+        model={{
+          ...createInbox("reviewer"),
+          nextAction: {
+            ...reviewerRow,
+            actionLabel: null,
+          },
+        }}
+      />,
+    );
+
+    const nextAction = screen.getByRole("region", { name: "Next action" });
+    expect(within(nextAction).getByText("Alpha dictation")).toBeVisible();
+    expect(within(nextAction).queryByRole("link")).not.toBeInTheDocument();
+  });
+
   it.each(["uploader", "reviewer", "approver", "admin"] as const)(
     "renders exact role heading, responsibility, tabs, counts, and empty copy for %s",
     (role) => {
