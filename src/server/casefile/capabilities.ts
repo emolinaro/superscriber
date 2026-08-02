@@ -122,7 +122,7 @@ function hasApproverAuthority(
     return actorRole === "approver";
   }
 
-  return input.grant.kind === "active_approver";
+  return input.grant.kind === "active_approver" || input.grant.kind === "completed_approver";
 }
 
 function hasExportAuthority(
@@ -133,7 +133,12 @@ function hasExportAuthority(
     return true;
   }
 
-  return input.grant.kind === "active_reviewer" || input.grant.kind === "active_approver";
+  return (
+    input.grant.kind === "active_reviewer" ||
+    input.grant.kind === "active_approver" ||
+    input.grant.kind === "completed_reviewer" ||
+    input.grant.kind === "completed_approver"
+  );
 }
 
 function currentSubmitterId(input: DeriveCasefileCapabilitiesInput) {

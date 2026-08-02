@@ -19,7 +19,7 @@ export function CaseHeader({ casefile }: { casefile: CasefileViewModel }) {
         </div>
         <div>
           <dt>Revision</dt>
-          <dd>{revisionLabel}</dd>
+          <dd data-testid="current-revision">{revisionLabel}</dd>
         </div>
         <div>
           <dt>Assignment</dt>

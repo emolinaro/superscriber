@@ -478,7 +478,7 @@ function requirePendingDecisionAuthority(
 function requireReopenAuthority(state: LoadedCommandState, principal: Principal) {
   const capabilities = deriveCapabilities(state, principal);
 
-  if (capabilities.canReopen || state.grant.kind === "completed_approver") {
+  if (capabilities.canReopen) {
     return;
   }
 

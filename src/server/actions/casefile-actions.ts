@@ -5,6 +5,7 @@ import { redirect } from "next/navigation";
 import { type Principal, type TranscriptSegment } from "@/domain/models";
 import { type CommandResult, type FocusTarget } from "@/lib/command-result";
 import { authExpiredResult, toCommandResultError } from "@/lib/command-result";
+import { appendQueryMessages } from "@/lib/navigation-path";
 import {
   approveRevisionCommand,
   requestChangesCommand,
@@ -29,25 +30,13 @@ export type CasefileMutationResult = {
   focusTarget: FocusTarget;
 };
 
+type CasefileMutationSuccess = CasefileMutationResult & {
+  notice?: string;
+};
+
 function asString(formData: FormData, key: string, fallback = "") {
   const value = formData.get(key);
   return typeof value === "string" ? value : fallback;
-}
-
-function buildPath(
-  pathname: string,
-  messages: Partial<Record<"notice" | "error", string>>,
-) {
-  const search = new URLSearchParams();
-  if (messages.notice) {
-    search.set("notice", messages.notice);
-  }
-  if (messages.error) {
-    search.set("error", messages.error);
-  }
-
-  const query = search.toString();
-  return query ? `${pathname}?${query}` : pathname;
 }
 
 function parseSegmentsJson(formData: FormData) {
@@ -95,14 +84,14 @@ async function refreshCasefileMutation(
   recordingId: string,
   focusTarget: FocusTarget,
   options: { allowAccessLoss?: boolean; actionModeId?: string | null } = {},
-): Promise<CasefileMutationResult> {
+): Promise<CasefileMutationSuccess> {
   revalidatePath("/workspace");
-  revalidatePath(`/recordings/${recordingId}`);
 
   try {
     const casefile = getCasefile(principal, recordingId, {
       actionModeId: options.actionModeId ?? null,
     });
+    revalidatePath(`/recordings/${recordingId}`);
     return {
       casefile,
       nextPath: `/recordings/${recordingId}`,
@@ -118,6 +107,7 @@ async function refreshCasefileMutation(
         casefile: null,
         nextPath: "/workspace",
         focusTarget,
+        notice: "Casefile reopened. An administrator must assign the new review cycle.",
       };
     }
 
@@ -127,7 +117,7 @@ async function refreshCasefileMutation(
 
 async function runCasefileAction<T>(
   operation: (principal: Principal) => T,
-  success: (value: T, principal: Principal) => Promise<CasefileMutationResult>,
+  success: (value: T, principal: Principal) => Promise<CasefileMutationSuccess>,
   notice: (value: T) => string,
 ): Promise<CommandResult<CasefileMutationResult>> {
   const principal = await getActivePrincipal();
@@ -137,10 +127,12 @@ async function runCasefileAction<T>(
 
   try {
     const value = operation(principal);
+    const mutation = await success(value, principal);
+    const { notice: derivedNotice, ...data } = mutation;
     return {
       ok: true,
-      data: await success(value, principal),
-      notice: notice(value),
+      data,
+      notice: derivedNotice ?? notice(value),
     };
   } catch (error) {
     return toCommandResultError(error);
@@ -156,10 +148,10 @@ function redirectFromCommandResult(
       redirect("/?reason=session-expired");
     }
 
-    redirect(buildPath(fallbackPath, { error: result.message }));
+    redirect(appendQueryMessages(fallbackPath, { error: result.message }));
   }
 
-  redirect(buildPath(result.data.nextPath || fallbackPath, { notice: result.notice }));
+  redirect(appendQueryMessages(result.data.nextPath || fallbackPath, { notice: result.notice }));
 }
 
 export async function saveDraftAction(

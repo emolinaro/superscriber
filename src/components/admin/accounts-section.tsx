@@ -1,11 +1,13 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { USER_ROLES, type UserRole } from "@/domain/models";
 import { ErrorSummary } from "@/components/ui/error-summary";
 import { Modal } from "@/components/ui/modal";
 import type { CommandResult } from "@/lib/command-result";
+import { formatDateTimeIso, formatDateTimeUtc, formatRoleLabel } from "@/lib/format";
+import type { AccountDirectoryEntry } from "@/server/access/service";
 import type { AdministrationAccountsViewModel } from "@/server/administration/service";
 import {
   createUserAction as defaultCreateUserAction,
@@ -22,8 +24,8 @@ const FIELD_CONFIG = {
 } as const;
 
 type FieldName = keyof typeof FIELD_CONFIG;
-
 type AccountValues = CreateUserInput;
+type AccountRow = AdministrationAccountsViewModel["users"][number];
 
 function emptyValues(): AccountValues {
   return {
@@ -47,6 +49,29 @@ function fieldErrorsFromSchema(values: AccountValues) {
   ) as Partial<Record<FieldName, string>>;
 }
 
+function toAccountRow(user: AccountDirectoryEntry): AccountRow {
+  return {
+    id: user.id,
+    displayName: user.displayName,
+    email: user.email,
+    role: user.role,
+    roleLabel: formatRoleLabel(user.role),
+    activeAssignmentCount: user.activeAssignmentCount,
+    createdAt: user.createdAt,
+    createdAtLabel: formatDateTimeUtc(user.createdAt),
+    createdAtIso: formatDateTimeIso(user.createdAt),
+  };
+}
+
+function prependAccountRow(user: AccountRow, rows: AccountRow[]) {
+  return [user, ...rows.filter((row) => row.id !== user.id)];
+}
+
+function mergeAccountRows(modelUsers: AccountRow[], addedUsers: AccountRow[]) {
+  const addedUserIds = new Set(addedUsers.map((user) => user.id));
+  return [...addedUsers, ...modelUsers.filter((user) => !addedUserIds.has(user.id))];
+}
+
 export function AccountsSection({
   model,
   phoneSafetyMode,
@@ -66,6 +91,8 @@ export function AccountsSection({
   const [formError, setFormError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [focusUserId, setFocusUserId] = useState<string | null>(null);
+  const [addedUsers, setAddedUsers] = useState<AccountRow[]>([]);
+  const queryRef = useRef(model.query);
 
   const summaryErrors = useMemo(
     () =>
@@ -80,7 +107,19 @@ export function AccountsSection({
   );
 
   useEffect(() => {
-    if (!focusUserId || !model.users.some((user) => user.id === focusUserId)) {
+    if (queryRef.current !== model.query) {
+      queryRef.current = model.query;
+      setAddedUsers([]);
+      return;
+    }
+
+    setAddedUsers((current) => current.filter((user) => !model.users.some((modelUser) => modelUser.id === user.id)));
+  }, [model.query, model.users]);
+
+  const users = useMemo(() => mergeAccountRows(model.users, addedUsers), [addedUsers, model.users]);
+
+  useEffect(() => {
+    if (!focusUserId || !users.some((user) => user.id === focusUserId)) {
       return;
     }
 
@@ -102,7 +141,7 @@ export function AccountsSection({
     return () => {
       window.clearInterval(intervalId);
     };
-  }, [focusUserId, model.users]);
+  }, [focusUserId, users]);
 
   const closeDrawer = useCallback(() => {
     if (pending) {
@@ -150,11 +189,15 @@ export function AccountsSection({
         return;
       }
 
+      const createdUser = result.data.user;
+      if (createdUser) {
+        setAddedUsers((current) => prependAccountRow(toAccountRow(createdUser), current));
+      }
       setValues(emptyValues());
       setFieldErrors({});
       setFormError(null);
       setNotice(result.notice ?? null);
-      setFocusUserId(result.data.userId ?? null);
+      setFocusUserId(createdUser?.id ?? result.data.userId ?? null);
       setOpen(false);
       router.refresh();
     } finally {
@@ -225,7 +268,7 @@ export function AccountsSection({
               </tr>
             </thead>
             <tbody>
-              {model.users.map((user) => (
+              {users.map((user) => (
                 <tr key={user.id}>
                   <th scope="row">
                     <span id={`account-row-${user.id}`} tabIndex={-1}>
@@ -245,7 +288,7 @@ export function AccountsSection({
         </div>
 
         <ul className="administration-card-list">
-          {model.users.map((user) => (
+          {users.map((user) => (
             <li className="administration-card-list__item" key={user.id}>
               <article className="administration-card stack-tight">
                 <h3 className="card-title">{user.displayName}</h3>

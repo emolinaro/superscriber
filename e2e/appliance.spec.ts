@@ -1,356 +1,110 @@
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
-import { expect, test, type Locator, type Page } from "@playwright/test";
+import { expect, test } from "@playwright/test";
+import {
+  adminUser,
+  approverUser,
+  bootstrapAndLogin,
+  createAndAssignUsers,
+  createSilentWavFixture,
+  expireUploadSession,
+  login,
+  logout,
+  outsiderUser,
+  reviewerUser,
+  setUploadFile,
+  uploadFixture,
+  uploaderUser,
+} from "./support/appliance";
 
-type LocalUser = {
-  displayName: string;
-  email: string;
-  password: string;
-  role: "admin" | "uploader" | "reviewer" | "approver";
-};
-
-const adminUser: LocalUser = {
-  displayName: "E2E Admin",
-  email: "admin@example.com",
-  password: "Superscriber!123",
-  role: "admin",
-};
-
-const reviewerUser: LocalUser = {
-  displayName: "E2E Reviewer",
-  email: "reviewer@example.com",
-  password: "Superscriber!123",
-  role: "reviewer",
-};
-
-const approverUser: LocalUser = {
-  displayName: "E2E Approver",
-  email: "approver@example.com",
-  password: "Superscriber!123",
-  role: "approver",
-};
-
-const outsiderUser: LocalUser = {
-  displayName: "E2E Outsider",
-  email: "outsider@example.com",
-  password: "Superscriber!123",
-  role: "reviewer",
-};
-
-const recordingTitle = "E2E Interview 042";
-
-let createdRecordingId = "";
-
-function buildSilentWavBuffer({
-  durationMs = 1_500,
-  sampleRate = 8_000,
-}: {
-  durationMs?: number;
-  sampleRate?: number;
-} = {}) {
-  const sampleCount = Math.max(1, Math.floor((durationMs / 1000) * sampleRate));
-  const bytesPerSample = 2;
-  const dataSize = sampleCount * bytesPerSample;
-  const buffer = Buffer.alloc(44 + dataSize);
-
-  buffer.write("RIFF", 0);
-  buffer.writeUInt32LE(36 + dataSize, 4);
-  buffer.write("WAVE", 8);
-  buffer.write("fmt ", 12);
-  buffer.writeUInt32LE(16, 16);
-  buffer.writeUInt16LE(1, 20);
-  buffer.writeUInt16LE(1, 22);
-  buffer.writeUInt32LE(sampleRate, 24);
-  buffer.writeUInt32LE(sampleRate * bytesPerSample, 28);
-  buffer.writeUInt16LE(bytesPerSample, 32);
-  buffer.writeUInt16LE(16, 34);
-  buffer.write("data", 36);
-  buffer.writeUInt32LE(dataSize, 40);
-
-  return buffer;
-}
-
-function createFixtureFile(name: string, buffer: Buffer) {
-  const directory = mkdtempSync(join(tmpdir(), "superscriber-e2e-"));
-  const path = join(directory, name);
-  writeFileSync(path, buffer);
-
-  return {
-    name,
-    path,
-    cleanup() {
-      rmSync(directory, { recursive: true, force: true });
-    },
-  };
-}
-
-async function chooseOptionByText(select: Locator, text: string) {
-  const value = await select
-    .locator("option")
-    .filter({ hasText: text })
-    .evaluate((element) => (element as HTMLOptionElement).value);
-  await select.selectOption(value);
-}
-
-async function ensureAdminExists(page: Page) {
-  await page.goto("/");
-
-  const firstRunPill = page.getByText("First-run setup required");
-  if (!(await firstRunPill.isVisible())) {
-    return;
-  }
-
-  await page.getByLabel("Administrator name").fill(adminUser.displayName);
-  await page.getByLabel("Administrator email").fill(adminUser.email);
-  await page.getByLabel(/^Password$/).fill(adminUser.password);
-  await page.getByLabel("Confirm password").fill(adminUser.password);
-  await page.getByRole("button", { name: "Create admin" }).click();
-
-  await expect(page).toHaveURL(/notice=bootstrap-complete$/);
-}
-
-async function login(page: Page, user: Pick<LocalUser, "email" | "password">) {
-  await page.goto("/");
-  await page.getByLabel("Email").fill(user.email);
-  await page.getByLabel("Password").fill(user.password);
-  await page.getByRole("button", { name: "Sign in" }).click();
-  await expect(page).toHaveURL(/\/workspace$/);
-}
-
-async function logout(page: Page) {
-  await page.getByRole("button", { name: "Sign out" }).click();
-  await expect(page).toHaveURL(/\/\?reason=logged-out$/);
-}
-
-async function createLocalAccount(page: Page, user: LocalUser) {
-  await page.getByLabel("Name").fill(user.displayName);
-  await page.getByLabel("Email").fill(user.email);
-  await page.getByLabel("Password").fill(user.password);
-  await page.getByLabel("Role").selectOption(user.role);
-  await page.getByRole("button", { name: "Create local account" }).click();
-  await expect(
-    page.getByText(`${user.displayName} can now sign in as ${user.role}.`),
-  ).toBeVisible();
-}
-
-async function expectAdminWorkspace(page: Page) {
-  await expect(page.locator("h1.workspace-title")).toHaveText(
-    "Institutional oversight workspace",
-  );
-}
-
-test.describe.serial("single-image appliance", () => {
-  test("bootstraps local auth and surfaces wrong-password recovery", async ({ page }) => {
+test.describe.serial("mock appliance auth, ingest, and administration", () => {
+  test("bootstraps local auth, safe return paths, and logout recovery", async ({ page }) => {
     await page.goto("/");
-    await expect(page.getByText("First-run setup required")).toBeVisible();
+    await expect(page.getByRole("heading", { name: /First-run setup|Sign in/ })).toBeVisible();
+    if (await page.getByRole("heading", { name: "First-run setup" }).isVisible().catch(() => false)) {
+      await expect(page.getByRole("heading", { name: "Readiness checks" })).toBeVisible();
+      for (const check of [
+        "Database",
+        "Media storage",
+        "Upload storage",
+        "Auth secret",
+        "Engine configuration",
+      ]) {
+        await expect(page.getByText(check, { exact: true })).toBeVisible();
+      }
 
-    await page.getByLabel("Administrator name").fill(adminUser.displayName);
-    await page.getByLabel("Administrator email").fill(adminUser.email);
-    await page.getByLabel(/^Password$/).fill(adminUser.password);
-    await page.getByLabel("Confirm password").fill(adminUser.password);
-    await page.getByRole("button", { name: "Create admin" }).click();
+      await page.getByLabel("Administrator name").fill(adminUser.displayName);
+      await page.getByLabel("Administrator email").fill(adminUser.email);
+      await page.getByLabel(/^Password$/).fill(adminUser.password);
+      await page.getByLabel("Confirm password").fill(adminUser.password);
+      await page.getByRole("button", { name: "Create admin" }).click();
 
-    await expect(page).toHaveURL(/notice=bootstrap-complete$/);
-    await expect(
-      page.getByText(
-        "First-run setup is complete. Sign in with the admin account you just created.",
-      ),
-    ).toBeVisible();
+      await expect(page).toHaveURL(/notice=bootstrap-complete/);
+      await expect(
+        page.getByText(
+          "First-run setup is complete. Sign in with the admin account you just created.",
+        ),
+      ).toBeVisible();
+    } else {
+      await expect(page.getByRole("heading", { name: "Sign in" })).toBeVisible();
+    }
 
+    await expect(page.getByRole("button", { name: "Sign in" })).toBeEnabled();
     await page.getByLabel("Email").fill(adminUser.email);
-    await page.getByLabel("Password").fill("incorrect-password");
+    await page.getByLabel("Password").fill("wrong-password");
     await page.getByRole("button", { name: "Sign in" }).click();
-    await expect(
-      page.getByText("Wrong email or password. Check the details and try again."),
-    ).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Sign in" })).toBeVisible();
+    await expect(page.getByLabel("Password")).toHaveValue("");
+    await expect(page.getByRole("navigation", { name: "Primary" })).toHaveCount(0);
 
     await login(page, adminUser);
-    await expectAdminWorkspace(page);
-
-    await createLocalAccount(page, reviewerUser);
-    await createLocalAccount(page, approverUser);
-    await createLocalAccount(page, outsiderUser);
+    await page.goto("/?returnTo=%2Fadministration");
+    await expect(page).toHaveURL(/\/administration$/);
+    await expect(page.getByRole("navigation", { name: "Primary" })).toContainText(
+      "Administration",
+    );
 
     await logout(page);
-    await expect(
-      page.getByText("Your session ended safely. Sign in again when you want to continue."),
-    ).toBeVisible();
-  });
+    await expect(page.getByText("Your session ended safely.")).toBeVisible();
 
-  test("redirects expired sessions back through local sign-in", async ({ page }) => {
-    await ensureAdminExists(page);
-    await login(page, adminUser);
-    await expectAdminWorkspace(page);
-
-    await page.context().clearCookies();
-    await page.goto("/workspace");
-
-    await expect(page).toHaveURL(/\/\?reason=session-expired$/);
+    await page.goto("/administration");
+    await expect(page).toHaveURL(/reason=session-expired/);
+    await expect(page).toHaveURL(/returnTo=%2Fadministration/);
     await expect(page.getByText("Session expired. Sign in again to continue.")).toBeVisible();
 
     await login(page, adminUser);
-    await expectAdminWorkspace(page);
+    await page.goto("/?returnTo=%2Fadministration");
+    await expect(page).toHaveURL(/\/administration$/);
   });
 
-  test("uploads, assigns, reviews, denies unassigned access, and approves", async ({
+  test("supports desktop and phone ingest, recovery, microphone denial, and dispatch warnings", async ({
+    browser,
     page,
   }) => {
-    await page.setViewportSize({ width: 1280, height: 960 });
-    await login(page, adminUser);
+    await bootstrapAndLogin(page, adminUser);
+    const recordingId = await uploadFixture(page, { title: "Governed appliance seed" });
+    await createAndAssignUsers(page, recordingId);
+    await expect(page.getByRole("heading", { name: "Governed appliance seed" })).toBeVisible();
 
-    await page.getByLabel("Title").fill(recordingTitle);
-    await page.getByLabel("Audio or video file").setInputFiles({
-      name: "fixture.wav",
+    const phoneContext = await browser.newContext({
+      hasTouch: true,
+      isMobile: true,
+      viewport: { width: 390, height: 844 },
+    });
+    const phonePage = await phoneContext.newPage();
+    await login(phonePage, adminUser);
+    await phonePage.goto("/ingest");
+    await phonePage.locator("#recording-title").fill("Phone upload recording");
+    await phonePage.locator("#recording-language").selectOption("english");
+    await setUploadFile(phonePage, {
+      name: "phone-upload.wav",
       mimeType: "audio/wav",
-      buffer: buildSilentWavBuffer(),
+      buffer: Buffer.from("RIFF....WAVE"),
     });
-    await page.getByRole("button", { name: "Send to governed workspace" }).click();
+    await phonePage.getByRole("button", { name: "Upload file" }).click();
+    await expect(phonePage).toHaveURL(/\/recordings\/[^/?]+/);
+    await expect(phonePage.getByRole("heading", { name: "Phone upload recording" })).toBeVisible();
+    await phoneContext.close();
 
-    await expect(page).toHaveURL(/\/recordings\/[^/?]+/);
-    await expect(
-      page.getByText("Upload received and queued for governed verification."),
-    ).toBeVisible();
-
-    createdRecordingId = page.url().match(/\/recordings\/([^/?]+)/)?.[1] || "";
-    expect(createdRecordingId).not.toBe("");
-
-    await page.goto("/workspace");
-    await chooseOptionByText(page.getByLabel("Recording"), recordingTitle);
-    await chooseOptionByText(page.getByLabel("Assigned user"), reviewerUser.displayName);
-    await page.getByRole("button", { name: "Assign recording" }).click();
-    await expect(page.getByText("Recording assignment updated.")).toBeVisible();
-
-    await chooseOptionByText(page.getByLabel("Recording"), recordingTitle);
-    await chooseOptionByText(page.getByLabel("Assigned user"), approverUser.displayName);
-    await page.getByRole("button", { name: "Assign recording" }).click();
-    await expect(page.getByText("Recording assignment updated.")).toBeVisible();
-
-    await logout(page);
-
-    await login(page, reviewerUser);
-    await expect(page.getByText(`Next assigned: ${recordingTitle}`)).toBeVisible();
-    await page.getByRole("link", { name: "Open next assigned item" }).click();
-    await expect(page).toHaveURL(new RegExp(`/recordings/${createdRecordingId}$`));
-
-    await expect(page.locator("#review-segments")).toBeVisible({ timeout: 90_000 });
-    await expect(page.locator("#review-turns")).toHaveCount(0);
-
-    const firstSegmentRow = page.locator(
-      '#review-segments [data-review-segment-id="seg-1"]',
-    );
-    await expect(firstSegmentRow).toBeVisible();
-    await expect(firstSegmentRow.getByLabel("Speaker label for seg-1")).toBeVisible();
-    await expect(firstSegmentRow.getByLabel("Transcript text for seg-1")).toContainText(
-      "Fallback transcript generated",
-    );
-    const jumpButton = firstSegmentRow.getByRole("button", { name: /Jump to .* for / });
-    await expect(jumpButton).toBeVisible();
-    const railBox = await firstSegmentRow.locator(".review-segment-rail").boundingBox();
-    const editorBox = await firstSegmentRow.locator(".review-segment-editor").boundingBox();
-
-    expect(railBox).not.toBeNull();
-    expect(editorBox).not.toBeNull();
-    expect((railBox?.x ?? 0) + (railBox?.width ?? 0)).toBeLessThan(
-      editorBox?.x ?? 0,
-    );
-
-    const firstTranscriptField = page.getByLabel("Transcript text for seg-1");
-    await expect(firstTranscriptField).toBeVisible({ timeout: 90_000 });
-    await expect(firstTranscriptField).toContainText("Fallback transcript generated");
-    await firstTranscriptField.fill(
-      "Reviewer adjusted the fallback transcript inside the governed workspace.",
-    );
-    await page.getByRole("button", { name: "Save draft" }).click();
-    await expect(page.getByText("Draft revision saved server-side.")).toBeVisible();
-    await page.getByRole("button", { name: "Submit revision" }).click();
-    await expect(page.getByText("Revision submitted for approval.")).toBeVisible();
-    await logout(page);
-
-    await login(page, outsiderUser);
-    await page.goto(`/recordings/${createdRecordingId}`);
-    await expect(page).toHaveURL(/\/workspace\?error=/);
-    await expect(
-      page.getByText("This recording is not assigned to your account."),
-    ).toBeVisible();
-    await logout(page);
-
-    await login(page, approverUser);
-    await expect(page.getByText(`Next assigned: ${recordingTitle}`)).toBeVisible();
-    await page.getByRole("link", { name: "Open next assigned item" }).click();
-    await expect(page).toHaveURL(new RegExp(`/recordings/${createdRecordingId}$`));
-    await page.getByRole("button", { name: "Approve current revision" }).click();
-    await expect(
-      page.getByText("Transcript approved and locked under policy."),
-    ).toBeVisible();
-    const exportApprovedButton = page.getByRole("button", { name: "Export approved" });
-    await expect(exportApprovedButton).toBeVisible();
-
-    await exportApprovedButton.click();
-
-    const exportDialog = page.getByRole("dialog", { name: "Approved export formats" });
-    const closeExportDialogButton = page.getByRole("button", {
-      name: "Close approved export formats",
-    });
-    await expect(exportDialog).toBeVisible();
-    await expect(closeExportDialogButton).toBeFocused();
-    await expect(exportDialog.getByRole("heading", { name: "Document" })).toBeVisible();
-    await expect(exportDialog.getByRole("heading", { name: "Captions" })).toBeVisible();
-    await expect(
-      exportDialog.getByRole("heading", { name: "Structured data" }),
-    ).toBeVisible();
-    await expect(exportDialog.getByRole("link", { name: "DOCX" })).toHaveAttribute(
-      "href",
-      new RegExp(`/api/recordings/${createdRecordingId}/transcript\\?format=docx$`),
-    );
-    await expect(exportDialog.getByRole("link", { name: "JSON" })).toHaveAttribute(
-      "href",
-      new RegExp(`/api/recordings/${createdRecordingId}/transcript\\?format=json$`),
-    );
-
-    await page.keyboard.press("Shift+Tab");
-    await expect(exportDialog.getByRole("link", { name: "JSON" })).toBeFocused();
-    await page.keyboard.press("Tab");
-    await expect(closeExportDialogButton).toBeFocused();
-    await page.keyboard.press("Escape");
-    await expect(exportDialog).toBeHidden();
-    await expect(exportApprovedButton).toBeFocused();
-
-    await exportApprovedButton.click();
-    await expect(exportDialog).toBeVisible();
-
-    const txtDownloadLink = exportDialog.getByRole("link", { name: "TXT" });
-    const download = await Promise.all([
-      page.waitForEvent("download"),
-      txtDownloadLink.click(),
-    ]).then(([downloadEvent]) => downloadEvent);
-
-    expect(download.suggestedFilename()).toMatch(/\.txt$/);
-
-    const downloadDirectory = mkdtempSync(join(tmpdir(), "superscriber-export-"));
-    const downloadPath = join(downloadDirectory, download.suggestedFilename());
-
-    try {
-      await download.saveAs(downloadPath);
-      expect(readFileSync(downloadPath, "utf8")).toContain(
-        "Reviewer adjusted the fallback transcript inside the governed workspace.",
-      );
-    } finally {
-      rmSync(downloadDirectory, { recursive: true, force: true });
-    }
-
-    await expect(exportDialog).toBeHidden();
-  });
-
-  test("resumes an interrupted upload from the last committed chunk", async ({ page }) => {
-    await ensureAdminExists(page);
-    await login(page, adminUser);
-
-    const interruptedFixture = createFixtureFile(
-      "interrupted-resume.wav",
-      buildSilentWavBuffer({ durationMs: 80_000 }),
-    );
-
+    const interruptedFixture = createSilentWavFixture("resume-interrupted.wav", 90_000);
     let chunkRequestCount = 0;
     await page.route("**/api/ingest/sessions/*/chunk", async (route) => {
       chunkRequestCount += 1;
@@ -358,36 +112,193 @@ test.describe.serial("single-image appliance", () => {
         await route.abort("failed");
         return;
       }
-
       await route.continue();
     });
 
     try {
-      await page.getByLabel("Title").fill("Interrupted upload 007");
-      await page.getByLabel("Audio or video file").setInputFiles(interruptedFixture.path);
-      await page.getByRole("button", { name: "Send to governed workspace" }).click();
-
+      await page.goto("/ingest");
+      await page.locator("#recording-title").fill("Interrupted upload recording");
+      await page.locator("#recording-language").selectOption("english");
+      await setUploadFile(page, interruptedFixture.path);
+      await page.getByRole("button", { name: "Upload file" }).click();
       await expect(
-        page.getByText(/Choose the same file again to resume or restart safely\./),
+        page.locator("section.ingest-resume-card").getByText(/Choose the same file again to resume safely\./),
       ).toBeVisible();
 
       await page.reload();
-      await expect(
-        page.getByText(
-          `Resumable upload found for ${interruptedFixture.name}. Choose the same file and continue from 1.0 MB.`,
-        ),
-      ).toBeVisible();
+      await expect(page.getByText(/Resume upload for resume-interrupted\.wav from 1048576 B committed\./)).toBeVisible();
+      await page.locator("#recording-title").fill("Interrupted upload recording");
+      await page.locator("#recording-language").selectOption("english");
 
-      await page.getByLabel("Audio or video file").setInputFiles(interruptedFixture.path);
-      await page.getByRole("button", { name: "Send to governed workspace" }).click();
-
-      await expect(page).toHaveURL(/\/recordings\/[^/?]+/);
-      await expect(
-        page.getByText("Upload received and queued for governed verification."),
-      ).toBeVisible();
-    } finally {
       await page.unroute("**/api/ingest/sessions/*/chunk");
+      await setUploadFile(page, interruptedFixture.path);
+      await page.getByRole("button", { name: "Upload file" }).click();
+      await expect(page).toHaveURL(/\/recordings\/[^/?]+/);
+    } finally {
       interruptedFixture.cleanup();
     }
+
+    const expiredFixture = createSilentWavFixture("resume-expired.wav", 90_000);
+    chunkRequestCount = 0;
+    await page.route("**/api/ingest/sessions/*/chunk", async (route) => {
+      chunkRequestCount += 1;
+      if (chunkRequestCount === 2) {
+        await route.abort("failed");
+        return;
+      }
+      await route.continue();
+    });
+
+    try {
+      await page.goto("/ingest");
+      await page.locator("#recording-title").fill("Expired upload recording");
+      await page.locator("#recording-language").selectOption("english");
+      await setUploadFile(page, expiredFixture.path);
+      await page.getByRole("button", { name: "Upload file" }).click();
+      await expect(
+        page.locator("section.ingest-resume-card").getByText(/Choose the same file again to resume safely\./),
+      ).toBeVisible();
+
+      const pending = await page.evaluate(() =>
+        JSON.parse(window.localStorage.getItem("superscriber.pendingIngest") ?? "null"),
+      );
+      expireUploadSession(pending.sessionId);
+      await page.reload();
+      await expect(
+        page.locator("section.ingest-resume-card", {
+          hasText:
+            /Temporary upload expired and was cleaned up\. Start a new upload session to continue\.|Superscriber is checking the stored upload\./,
+        }),
+      ).toBeVisible();
+      await page.locator("#recording-title").fill("Expired upload recording");
+      await page.locator("#recording-language").selectOption("english");
+
+      await page.unroute("**/api/ingest/sessions/*/chunk");
+      await setUploadFile(page, expiredFixture.path);
+      await page.getByRole("button", { name: "Upload file" }).click();
+      await expect(page).toHaveURL(/\/recordings\/[^/?]+/);
+    } finally {
+      expiredFixture.cleanup();
+    }
+
+    const deniedContext = await browser.newContext();
+    await deniedContext.addInitScript(() => {
+      class FakeRecorder {
+        mimeType = "audio/webm";
+        state = "inactive";
+        addEventListener() {}
+        start() {
+          this.state = "recording";
+        }
+        stop() {
+          this.state = "inactive";
+        }
+      }
+
+      Object.defineProperty(window, "MediaRecorder", {
+        configurable: true,
+        writable: true,
+        value: FakeRecorder,
+      });
+      Object.defineProperty(navigator, "mediaDevices", {
+        configurable: true,
+        value: {
+          getUserMedia: () => Promise.reject(new Error("Denied")),
+        },
+      });
+    });
+    const deniedPage = await deniedContext.newPage();
+    await login(deniedPage, adminUser);
+    await deniedPage.goto("/ingest");
+    await deniedPage.getByLabel("Record audio").check();
+    await deniedPage.getByRole("button", { name: "Start recording" }).click();
+    await expect(
+      deniedPage.getByText("Microphone access was blocked. Choose Upload file to continue safely."),
+    ).toBeVisible();
+    await deniedPage.getByLabel("Upload file").check();
+    await expect(deniedPage.locator("#upload-file")).toBeVisible();
+    await deniedContext.close();
+
+    const uploaderPage = await browser.newPage();
+    await login(uploaderPage, uploaderUser);
+    await uploaderPage.route("**/api/ingest/sessions/*/finalize", async (route) => {
+      const response = await route.fetch();
+      const body = (await response.json()) as {
+        ok: true;
+        status: Record<string, unknown>;
+      };
+      await route.fulfill({
+        response,
+        json: {
+          ...body,
+          status: {
+            ...body.status,
+            warning: "Upload stored, but backend dispatch failed: Synthetic dispatch outage.",
+          },
+        },
+      });
+    });
+    await uploaderPage.goto("/ingest");
+    await uploaderPage.locator("#recording-title").fill("Uploader dispatch warning");
+    await uploaderPage.locator("#recording-language").selectOption("english");
+    await setUploadFile(uploaderPage, {
+      name: "dispatch-warning.wav",
+      mimeType: "audio/wav",
+      buffer: Buffer.from("RIFF....WAVE"),
+    });
+    await uploaderPage.getByRole("button", { name: "Upload file" }).click();
+    await expect(uploaderPage).toHaveURL(/\/workspace\?error=/);
+    await expect(
+      uploaderPage.getByText(
+        "Upload stored, but backend dispatch failed: Synthetic dispatch outage.",
+      ),
+    ).toBeVisible();
+    await uploaderPage.close();
+  });
+
+  test("shows account, assignment, history, and policy administration surfaces", async ({ page }) => {
+    await bootstrapAndLogin(page, adminUser);
+
+    await page.goto("/administration?section=accounts");
+    await expect(page.getByRole("heading", { name: "Institutional accounts" })).toBeVisible();
+    await expect(page.getByRole("cell", { name: reviewerUser.email })).toBeVisible();
+    await expect(page.getByRole("cell", { name: approverUser.email })).toBeVisible();
+    await expect(page.getByRole("cell", { name: uploaderUser.email })).toBeVisible();
+
+    const waitingRecordingId = await uploadFixture(page, { title: "Waiting compatibility record" });
+    await page.goto("/administration?section=assignments");
+    await page.getByRole("button", { name: "Assign work" }).click();
+    const assignDialog = page.getByRole("dialog", { name: "Assign governed work" });
+    await expect(assignDialog).toBeVisible();
+    await assignDialog.getByLabel("Recording search").fill("Waiting compatibility record");
+    await assignDialog.getByLabel("Assigned user search").fill(reviewerUser.displayName);
+    await expect(assignDialog.getByText("Current state: Waiting")).toBeVisible();
+    await assignDialog.getByRole("button", { name: "Cancel" }).click();
+
+    await page.goto("/administration?section=assignments");
+    await expect(page.getByRole("heading", { name: "Assignments" })).toBeVisible();
+    await expect(page.getByRole("button", { name: "Remove assignment" }).first()).toBeVisible();
+    await page.getByRole("button", { name: "Remove assignment" }).first().click();
+    const removeDialog = page.getByRole("dialog", { name: "Remove assignment" });
+    await expect(removeDialog).toBeVisible();
+    await removeDialog.getByRole("button", { name: "Remove assignment" }).click();
+    await expect(page.getByRole("status")).toContainText("Recording assignment removed.");
+
+    await page.getByRole("link", { name: "History" }).click();
+    await expect(page).toHaveURL(/status=history/);
+    await expect(page.getByRole("cell", { name: "Removed" }).first()).toBeVisible();
+
+    await login(page, outsiderUser);
+    await page.goto(`/recordings/${waitingRecordingId}`);
+    await expect(page).toHaveURL(/\/workspace\?error=/);
+    await expect(page.getByText("This casefile is not available to your account.")).toBeVisible();
+
+    await login(page, adminUser);
+    await page.goto("/administration?section=policy");
+    await expect(page.getByRole("heading", { name: "Policy" })).toBeVisible();
+    await expect(page.getByText("Request changes").first()).toBeVisible();
+    await expect(page.getByText("Phone safety").first()).toBeVisible();
+    await expect(page.getByText("Server only").first()).toBeVisible();
+
   });
 });

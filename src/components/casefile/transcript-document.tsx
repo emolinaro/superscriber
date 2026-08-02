@@ -27,7 +27,7 @@ export function TranscriptDocument({
   const readOnly = !editable || phoneSafetyMode;
 
   return (
-    <section className="transcript-document" aria-label="Transcript document">
+    <section aria-label="Transcript document" className="transcript-document" data-testid="transcript-start">
       <div className="field transcript-document__summary">
         <label className="field-label" htmlFor="revision-summary">
           Revision summary

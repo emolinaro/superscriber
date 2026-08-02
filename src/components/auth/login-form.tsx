@@ -1,13 +1,28 @@
 "use client";
 
 import { useEffect, useId, useRef, useState, useTransition, type FormEvent } from "react";
-import { useRouter } from "next/navigation";
 import { signIn } from "next-auth/react";
 import { sanitizeReturnTo } from "@/lib/safe-return-to";
 import { consumeBootstrapEmailAction } from "@/server/actions/auth-actions";
 
 function buildPostLoginPath(returnTo: string) {
   return `/?returnTo=${encodeURIComponent(returnTo)}`;
+}
+
+function signInErrorCode(result: { error?: string | null; url?: string | null } | undefined) {
+  if (result?.error) {
+    return result.error;
+  }
+
+  if (!result?.url) {
+    return null;
+  }
+
+  try {
+    return new URL(result.url, window.location.origin).searchParams.get("error");
+  } catch {
+    return null;
+  }
 }
 
 export function LoginForm({
@@ -17,7 +32,6 @@ export function LoginForm({
   initialEmail?: string;
   returnTo?: string;
 }) {
-  const router = useRouter();
   const summaryHeadingId = useId();
   const summaryRef = useRef<HTMLDivElement>(null);
   const passwordRef = useRef<HTMLInputElement>(null);
@@ -76,27 +90,28 @@ export function LoginForm({
         result = undefined;
       }
 
-      if (result?.error === "CredentialsSignin" || result?.status === 401) {
+      const errorCode = signInErrorCode(result);
+
+      if (errorCode === "CredentialsSignin" || result?.status === 401) {
         clearPassword();
         setError("Email or password was not accepted. Check both fields and try again.");
         setErrorMode("credentials");
         return;
       }
 
-      if (!result || result.error || !result.url) {
+      if (!result || errorCode || !result.url) {
         clearPassword();
         setError("Sign-in could not be completed. Your password was not saved. Try again.");
         setErrorMode("service");
         return;
       }
 
-      router.push(buildPostLoginPath(callbackUrl));
-      router.refresh();
+      window.location.assign(buildPostLoginPath(callbackUrl));
     });
   }
 
   return (
-    <form className="form-grid auth-form" noValidate onSubmit={handleSubmit}>
+    <form className="form-grid auth-form" method="post" noValidate onSubmit={handleSubmit}>
       {error ? (
         <div
           aria-labelledby={summaryHeadingId}

@@ -25,6 +25,7 @@ export function Modal({
   children,
   onClose,
   backdropClassName,
+  backdropTestId,
   surfaceClassName,
 }: {
   open: boolean;
@@ -33,6 +34,7 @@ export function Modal({
   children: ReactNode;
   onClose: () => void;
   backdropClassName?: string;
+  backdropTestId?: string;
   surfaceClassName?: string;
 }) {
   const titleId = useId();
@@ -112,6 +114,7 @@ export function Modal({
   return createPortal(
     <div
       className={backdropClassName ? `modal-backdrop ${backdropClassName}` : "modal-backdrop"}
+      data-testid={backdropTestId}
       onMouseDown={(event) => {
         if (event.target === event.currentTarget) {
           onClose();

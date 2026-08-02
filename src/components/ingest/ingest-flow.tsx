@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
+import { useEffect, useRef, useState, type FormEvent } from "react";
 import { useRouter } from "next/navigation";
 import type { RecordingSource, UserRole } from "@/domain/models";
 import { ErrorSummary, type ErrorSummaryItem } from "@/components/ui/error-summary";
@@ -23,6 +23,9 @@ const LANGUAGE_ERROR_MESSAGE = "Choose a language.";
 const FILE_ERROR_MESSAGE = "Choose a file to upload.";
 const RECORDING_ERROR_MESSAGE = "Record audio before uploading.";
 const SUCCESS_NOTICE = "Upload received. Verification has started.";
+const STABLE_UPLOAD_INTERRUPTION_ANNOUNCEMENT = "Upload interrupted.";
+const STABLE_UPLOAD_INTERRUPTION_RECOVERY =
+  "Upload interrupted. Choose the same file again to resume safely.";
 const STORED_UPLOAD_CHECK_MESSAGE = "Superscriber is checking the stored upload.";
 const STORED_UPLOAD_CHECK_DETAIL =
   "Superscriber is checking the stored upload. Choose the same file again or reload this page so it can confirm whether verification already started.";
@@ -34,6 +37,10 @@ function isDurablyFinalized(status: UploadSessionStatus) {
     status.nextAction === "none" &&
     (status.integrityState === "verified" || status.integrityState === "verifying" || status.state === "verified")
   );
+}
+
+function isInterruptedTransportError(error: unknown) {
+  return error instanceof Error && error.name === "TypeError" && error.message === "Failed to fetch";
 }
 
 function uploadLabelForSource(source: RecordingSource) {
@@ -56,7 +63,7 @@ export function IngestFlow({
 }) {
   const router = useRouter();
   const phoneSafety = usePhoneSafetyMode();
-  const recordingSupported = useMemo(() => isBrowserRecordingSupported(), []);
+  const [recordingSupported, setRecordingSupported] = useState(false);
   const [source, setSource] = useState<RecordingSource>("upload");
   const [title, setTitle] = useState("");
   const [language, setLanguage] = useState("");
@@ -76,6 +83,10 @@ export function IngestFlow({
     message: string;
   } | null>(null);
   const boundaryRef = useRef(-1);
+
+  useEffect(() => {
+    setRecordingSupported(isBrowserRecordingSupported());
+  }, []);
 
   useEffect(() => {
     if (!recordingSupported && source === "record") {
@@ -399,13 +410,19 @@ export function IngestFlow({
 
       await uploadChunks(file, session);
     } catch (error) {
-      setFlowState("interrupted");
-      setAnnouncement("Upload interrupted.");
-      setStatusMessage(
-        error instanceof Error
+      const interrupted = isInterruptedTransportError(error);
+      const statusMessage = interrupted
+        ? STABLE_UPLOAD_INTERRUPTION_RECOVERY
+        : error instanceof Error
           ? error.message
-          : "Upload interrupted. Choose the same file again to resume safely.",
-      );
+          : STABLE_UPLOAD_INTERRUPTION_RECOVERY;
+
+      setFlowState("interrupted");
+      setAnnouncement(STABLE_UPLOAD_INTERRUPTION_ANNOUNCEMENT);
+      setStatusMessage(statusMessage);
+      if (interrupted) {
+        setResumeNotice({ tone: "info", message: STABLE_UPLOAD_INTERRUPTION_RECOVERY });
+      }
     }
   }
 

@@ -369,7 +369,7 @@ describe("typed governed actions", () => {
     });
   });
 
-  it("returns workspace navigation when a completed approver reopens and loses current access", async () => {
+  it("returns the workspace reassignment notice when a completed approver reopens and loses current access", async () => {
     reopenRevisionCommandMock.mockReturnValue({ id: "rev-4" });
     getCasefileMock.mockImplementation(() => {
       throw new CasefileCommandError(
@@ -380,13 +380,40 @@ describe("typed governed actions", () => {
 
     await expect(reopenRevisionAction(reopenInput)).resolves.toEqual({
       ok: true,
-      notice: "Approved transcript reopened as a new draft cycle.",
+      notice: "Casefile reopened. An administrator must assign the new review cycle.",
       data: {
         casefile: null,
         nextPath: "/workspace",
         focusTarget: "case-state",
       },
     });
+
+    expect(revalidatePathMock).toHaveBeenCalledTimes(1);
+    expect(revalidatePathMock).toHaveBeenCalledWith("/workspace");
+    expect(revalidatePathMock).not.toHaveBeenCalledWith("/recordings/rec-1");
+  });
+
+  it("keeps the in-place reopen notice when an admin still has casefile access", async () => {
+    getActivePrincipalMock.mockResolvedValue(adminPrincipal);
+    reopenRevisionCommandMock.mockReturnValue({ id: "rev-4" });
+
+    await expect(
+      reopenRevisionAction({
+        ...reopenInput,
+        actionModeId: "mode-1",
+      }),
+    ).resolves.toEqual({
+      ok: true,
+      notice: "Approved transcript reopened as a new draft cycle.",
+      data: {
+        casefile,
+        nextPath: "/recordings/rec-1",
+        focusTarget: "case-state",
+      },
+    });
+
+    expect(revalidatePathMock).toHaveBeenNthCalledWith(1, "/workspace");
+    expect(revalidatePathMock).toHaveBeenNthCalledWith(2, "/recordings/rec-1");
   });
 });
 
@@ -402,6 +429,9 @@ describe("typed administration actions", () => {
       displayName: "Reviewer 2",
       email: "reviewer2@example.com",
       role: "reviewer",
+      isActive: true,
+      createdAt: "2026-08-01T12:10:00.000Z",
+      updatedAt: "2026-08-01T12:10:00.000Z",
     });
 
     await expect(
@@ -417,6 +447,16 @@ describe("typed administration actions", () => {
       data: {
         href: "/administration?section=accounts",
         userId: "user-2",
+        user: {
+          id: "user-2",
+          displayName: "Reviewer 2",
+          email: "reviewer2@example.com",
+          role: "reviewer",
+          isActive: true,
+          createdAt: "2026-08-01T12:10:00.000Z",
+          updatedAt: "2026-08-01T12:10:00.000Z",
+          activeAssignmentCount: 0,
+        },
       },
     });
   });

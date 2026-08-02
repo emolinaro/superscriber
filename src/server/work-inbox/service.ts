@@ -65,6 +65,7 @@ const TAB_LABELS: Record<string, string> = {
   processing: "Processing",
   ready: "Ready",
   "to-review": "To review",
+  "to-decide": "To decide",
   waiting: "Waiting",
   completed: "Completed",
   all: "All",
@@ -352,8 +353,12 @@ function classifyTab(role: UserRole, stage: CasefileWorkflowStage, completed: bo
 }
 
 function actionLabel(role: UserRole, stage: CasefileWorkflowStage, completed: boolean) {
-  if (completed || role === "uploader" || role === "admin") {
+  if (role === "uploader" || role === "admin") {
     return null;
+  }
+
+  if (completed) {
+    return "View snapshot";
   }
 
   if (role === "reviewer") {
@@ -368,7 +373,15 @@ function actionLabel(role: UserRole, stage: CasefileWorkflowStage, completed: bo
 }
 
 function isActionable(role: UserRole, stage: CasefileWorkflowStage, completed: boolean) {
-  return Boolean(actionLabel(role, stage, completed));
+  if (completed || role === "uploader" || role === "admin") {
+    return false;
+  }
+
+  if (role === "reviewer") {
+    return stage === "draft_review" || stage === "changes_requested" || stage === "reopened";
+  }
+
+  return stage === "pending_approval";
 }
 
 function createRow(params: {

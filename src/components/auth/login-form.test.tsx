@@ -88,6 +88,26 @@ describe("LoginForm", () => {
     expect(screen.getByLabelText("Password")).toHaveFocus();
   });
 
+  it("treats a CredentialsSignin error in the returned url as wrong credentials", async () => {
+    const user = userEvent.setup();
+    mockSignIn.mockResolvedValue({
+      ok: true,
+      status: 200,
+      url: "/?error=CredentialsSignin",
+    });
+
+    render(<LoginForm returnTo="/workspace" />);
+
+    await user.type(screen.getByLabelText("Email"), "reviewer@example.com");
+    await user.type(screen.getByLabelText("Password"), "wrong password");
+    await user.click(screen.getByRole("button", { name: "Sign in" }));
+
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "Email or password was not accepted. Check both fields and try again.",
+    );
+    expect(screen.getByLabelText("Password")).toHaveValue("");
+  });
+
   it("focuses the summary on service errors and states that the password was not saved", async () => {
     const user = userEvent.setup();
     mockSignIn.mockResolvedValue({ error: "Configuration" });

@@ -116,7 +116,11 @@ function LedgerTable({ role, rows }: { role: UserRole; rows: WorkInboxRow[] }) {
             </td>
             <td>
               {row.actionLabel !== null ? (
-                <Link className="recording-action interactive-target" href={row.href}>
+                <Link
+                  aria-label={row.title}
+                  className="recording-action interactive-target"
+                  href={row.href}
+                >
                   {row.actionLabel}
                 </Link>
               ) : null}
@@ -173,7 +177,11 @@ function LedgerList({ role, rows }: { role: UserRole; rows: WorkInboxRow[] }) {
                 </div>
               </dl>
               {row.actionLabel !== null ? (
-                <Link className="recording-action interactive-target" href={row.href}>
+                <Link
+                  aria-label={row.title}
+                  className="recording-action interactive-target"
+                  href={row.href}
+                >
                   {row.actionLabel}
                 </Link>
               ) : null}

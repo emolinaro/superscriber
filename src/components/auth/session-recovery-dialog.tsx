@@ -40,6 +40,7 @@ export function SessionRecoveryDialog({
     >
       <form
         className="form-grid auth-form"
+        method="post"
         noValidate
         onSubmit={(event) => {
           event.preventDefault();

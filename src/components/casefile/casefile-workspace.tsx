@@ -21,6 +21,7 @@ import type { CommandResult } from "@/lib/command-result";
 import { OrchestrationStatusPoller } from "@/components/orchestration-status-poller";
 import { SessionRecoveryDialog } from "@/components/auth/session-recovery-dialog";
 import { InlineNotice } from "@/components/ui/inline-notice";
+import { appendQueryMessages } from "@/lib/navigation-path";
 import { usePhoneSafetyMode } from "@/components/ui/phone-safety";
 import { AdminActionModeBanner, type AdminActionModeResult } from "./admin-action-mode-banner";
 import { CaseHeader } from "./case-header";
@@ -76,25 +77,45 @@ function copySegments(casefile: CasefileViewModel) {
 }
 
 function latestHref(casefile: CasefileViewModel, conflict?: CasefileConflictSnapshot | null) {
-  const url = new URL(`/recordings/${casefile.recordingId}`, window.location.origin);
+  const searchParams = new URLSearchParams();
   const revisionId = conflict?.currentRevisionId ?? casefile.revision?.id ?? null;
 
   if (revisionId) {
-    url.searchParams.set("revision", revisionId);
+    searchParams.set("revision", revisionId);
   }
   if (casefile.actionMode?.id) {
-    url.searchParams.set("actionMode", casefile.actionMode.id);
+    searchParams.set("actionMode", casefile.actionMode.id);
   }
 
-  return `${url.pathname}${url.search}`;
+  const search = searchParams.toString();
+  return `/recordings/${casefile.recordingId}${search ? `?${search}` : ""}`;
 }
 
 function isNavigableAnchor(target: EventTarget | null) {
   return target instanceof HTMLElement ? target.closest("a[href]") : null;
 }
 
+function hasActionModeIdentityChanged(current: CasefileViewModel, next: CasefileViewModel) {
+  return (
+    current.actionMode?.id !== next.actionMode?.id ||
+    current.actionMode?.effectiveRole !== next.actionMode?.effectiveRole ||
+    current.actionMode?.expiresAt !== next.actionMode?.expiresAt ||
+    current.actionMode?.purpose !== next.actionMode?.purpose ||
+    current.actionMode?.adminDisplayName !== next.actionMode?.adminDisplayName ||
+    current.actionMode?.baseRole !== next.actionMode?.baseRole
+  );
+}
+
+function isSameRevisionSnapshot(current: CasefileViewModel, next: CasefileViewModel) {
+  return current.updatedAt === next.updatedAt && current.revision?.id === next.revision?.id;
+}
+
 function shouldRefreshCasefile(current: CasefileViewModel, next: CasefileViewModel) {
-  return current.updatedAt !== next.updatedAt || current.revision?.id !== next.revision?.id;
+  return (
+    current.updatedAt !== next.updatedAt ||
+    current.revision?.id !== next.revision?.id ||
+    hasActionModeIdentityChanged(current, next)
+  );
 }
 
 function stripActionMode(current: CasefileViewModel, expired = false): CasefileViewModel {
@@ -142,16 +163,6 @@ function stripActionMode(current: CasefileViewModel, expired = false): CasefileV
       (action) => !governedKeys.includes(action.capability as (typeof governedKeys)[number]),
     ),
   };
-}
-
-function updateActionModeQuery(actionModeId: string | null) {
-  const url = new URL(window.location.href);
-  if (actionModeId) {
-    url.searchParams.set("actionMode", actionModeId);
-  } else {
-    url.searchParams.delete("actionMode");
-  }
-  window.history.replaceState(window.history.state, "", `${url.pathname}${url.search}${url.hash}`);
 }
 
 function latestApprovedDecision(casefile: CasefileViewModel) {
@@ -265,13 +276,32 @@ export function CasefileWorkspace({
   const [liveMessage, setLiveMessage] = useState("");
   const focusKeyRef = useRef<string | null>(null);
   const scrollPositionRef = useRef<{ x: number; y: number } | null>(null);
+  const casefileRef = useRef(casefile);
+  const dirtyRef = useRef(dirty);
 
   useEffect(() => {
-    if (dirty || !shouldRefreshCasefile(casefile, initialCasefile)) {
+    casefileRef.current = casefile;
+    dirtyRef.current = dirty;
+  }, [casefile, dirty]);
+
+  useEffect(() => {
+    const currentCasefile = casefileRef.current;
+    const currentDirty = dirtyRef.current;
+
+    if (!shouldRefreshCasefile(currentCasefile, initialCasefile)) {
+      return;
+    }
+
+    if (currentDirty && !isSameRevisionSnapshot(currentCasefile, initialCasefile)) {
       return;
     }
 
     setCasefile(initialCasefile);
+
+    if (currentDirty) {
+      return;
+    }
+
     setSummary(initialCasefile.revision?.summary ?? "");
     setSegments(copySegments(initialCasefile));
     setActiveSegmentId(initialCasefile.revision?.segments?.[0]?.id ?? null);
@@ -352,6 +382,17 @@ export function CasefileWorkspace({
     />
   ) : null;
 
+  function replaceCasefileHref(href: string) {
+    router.replace(href, { scroll: false });
+  }
+
+  function handleActionModeLoss(message: string, expired = false) {
+    const nextCasefile = stripActionMode(casefile, expired);
+    setCasefile(nextCasefile);
+    replaceCasefileHref(latestHref(nextCasefile, conflict));
+    setLiveMessage(message);
+  }
+
   function applyMutationResult(result: CommandResult<CasefileMutationResult>) {
     if (!result.ok) {
       if (result.code === "AUTH_EXPIRED") {
@@ -369,9 +410,7 @@ export function CasefileWorkspace({
         result.code === "ACTION_MODE_ENDED" ||
         result.code === "ACTION_MODE_REQUIRED"
       ) {
-        setCasefile((current) => stripActionMode(current, result.code === "ACTION_MODE_EXPIRED"));
-        updateActionModeQuery(null);
-        setLiveMessage(result.message);
+        handleActionModeLoss(result.message, result.code === "ACTION_MODE_EXPIRED");
         return false;
       }
 
@@ -390,7 +429,7 @@ export function CasefileWorkspace({
     if (!nextCasefile) {
       setDirty(false);
       setConflict(null);
-      router.push(result.data.nextPath);
+      router.push(appendQueryMessages(result.data.nextPath, { notice: result.notice }));
       return true;
     }
 
@@ -511,10 +550,8 @@ export function CasefileWorkspace({
         result.code === "ACTION_MODE_ENDED" ||
         result.code === "ACTION_MODE_REQUIRED"
       ) {
-        setCasefile((current) => stripActionMode(current, result.code === "ACTION_MODE_EXPIRED"));
-        updateActionModeQuery(null);
+        handleActionModeLoss(result.message, result.code === "ACTION_MODE_EXPIRED");
         setActiveDecision(null);
-        setLiveMessage(result.message);
         return { ok: true };
       }
 
@@ -570,19 +607,7 @@ export function CasefileWorkspace({
       return { ok: false, error: result.message };
     }
 
-    setCasefile((current) => ({
-      ...current,
-      actionMode: {
-        id: result.data.session.id,
-        effectiveRole: result.data.session.effectiveRole,
-        expiresAt: result.data.session.expiresAt,
-        purpose: result.data.session.purpose,
-        adminDisplayName: result.data.session.adminDisplayName,
-        baseRole: result.data.session.baseRole,
-      },
-    }));
-    updateActionModeQuery(result.data.session.id);
-    router.refresh();
+    replaceCasefileHref(result.data.href);
     setLiveMessage(result.notice ?? "Admin action mode entered.");
     return { ok: true };
   }
@@ -604,17 +629,14 @@ export function CasefileWorkspace({
       }
 
       if (result.code === "ACTION_MODE_EXPIRED" || result.code === "ACTION_MODE_ENDED") {
-        setCasefile((current) => stripActionMode(current, result.code === "ACTION_MODE_EXPIRED"));
-        updateActionModeQuery(null);
-        setLiveMessage(result.message);
+        handleActionModeLoss(result.message, result.code === "ACTION_MODE_EXPIRED");
         return { ok: true };
       }
 
       return { ok: false, error: result.message };
     }
 
-    setCasefile((current) => stripActionMode(current));
-    updateActionModeQuery(null);
+    replaceCasefileHref(result.data.href);
     setLiveMessage(result.notice ?? "Admin action mode exited.");
     return { ok: true };
   }
@@ -663,7 +685,7 @@ export function CasefileWorkspace({
         className="casefile-layout"
         data-governance-open={governanceOpen ? "true" : undefined}
       >
-        <main className="casefile-main" id="transcript-main">
+        <div className="casefile-main" id="transcript-main">
           {unresolvedNotice ? (
             <InlineNotice tone={unresolvedNotice.tone}>{unresolvedNotice.message}</InlineNotice>
           ) : null}
@@ -695,7 +717,7 @@ export function CasefileWorkspace({
           ) : (
             <CasefileStatusCards casefile={casefile} />
           )}
-        </main>
+        </div>
         <GovernanceDrawer casefile={casefile} onOpenChange={setGovernanceOpen} />
       </div>
 

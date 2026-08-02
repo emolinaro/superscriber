@@ -99,7 +99,7 @@ describe("AccountsSection", () => {
     expect(createUserAction).not.toHaveBeenCalled();
   });
 
-  it("disables submission while pending and announces success before focusing the new row", async () => {
+  it("disables submission while pending and immediately renders, deduplicates, and focuses the new row", async () => {
     const user = userEvent.setup();
     const resolveActionRef: {
       current?: (value: CommandResult<AdministrationMutationResult>) => void;
@@ -141,11 +141,40 @@ describe("AccountsSection", () => {
       data: {
         href: "/administration?section=accounts",
         userId: "user-2",
+        user: {
+          id: "user-2",
+          displayName: "Reviewer Two",
+          email: "reviewer2@example.com",
+          role: "reviewer",
+          isActive: true,
+          activeAssignmentCount: 0,
+          createdAt: "2026-08-01T12:10:00.000Z",
+          updatedAt: "2026-08-01T12:10:00.000Z",
+        },
       },
     });
 
     await waitFor(() => {
       expect(routerRefreshMock).toHaveBeenCalledTimes(1);
+      expect(screen.getByRole("rowheader", { name: "Reviewer Two" })).toBeVisible();
+    });
+
+    expect(screen.getByRole("status")).toHaveTextContent(
+      "Reviewer Two can now sign in as reviewer.",
+    );
+    const newRowHeader = screen.getByRole("rowheader", { name: "Reviewer Two" });
+    const newRow = newRowHeader.closest("tr");
+    if (!newRow) {
+      throw new Error("Expected the new account row to render.");
+    }
+    expect(within(newRow).getByRole("cell", { name: "reviewer2@example.com" })).toBeVisible();
+    expect(within(newRow).getByRole("cell", { name: "Reviewer" })).toBeVisible();
+    expect(within(newRow).getByRole("cell", { name: "0" })).toBeVisible();
+    expect(within(newRow).getByText("01 Aug 2026, 12:10 UTC")).toBeVisible();
+    expect(screen.queryByRole("dialog", { name: "Create local account" })).not.toBeInTheDocument();
+
+    await waitFor(() => {
+      expect(document.getElementById("account-row-user-2")).toHaveFocus();
     });
 
     rerender(
@@ -171,12 +200,14 @@ describe("AccountsSection", () => {
       />,
     );
 
-    expect(screen.getByRole("status")).toHaveTextContent(
-      "Reviewer Two can now sign in as reviewer.",
-    );
-    await waitFor(() => {
-      expect(document.getElementById("account-row-user-2")).toHaveFocus();
-    });
+    expect(screen.getAllByRole("rowheader", { name: "Reviewer Two" })).toHaveLength(1);
+
+    await user.click(screen.getByRole("button", { name: "Create account" }));
+    const resetDialog = screen.getByRole("dialog", { name: "Create local account" });
+    expect(within(resetDialog).getByLabelText("Name")).toHaveValue("");
+    expect(within(resetDialog).getByLabelText("Email")).toHaveValue("");
+    expect(within(resetDialog).getByLabelText("Password")).toHaveValue("");
+    expect(within(resetDialog).getByLabelText("Role")).toHaveValue("reviewer");
   });
 
   it("keeps account facts visible on phone while hiding the create drawer", () => {

@@ -8,6 +8,7 @@ import { authExpiredResult, toCommandResultError } from "@/lib/command-result";
 import {
   assignRecordingToUser,
   removeRecordingAssignment,
+  type AccountDirectoryEntry,
 } from "@/server/access/service";
 import { createLocalUser } from "@/server/auth/service";
 import { localUserSchema } from "@/server/auth/validation";
@@ -17,6 +18,7 @@ import { getActivePrincipal } from "@/server/session";
 export type AdministrationMutationResult = {
   href: string;
   userId?: string;
+  user?: AccountDirectoryEntry;
   assignmentId?: string;
   alreadyActive?: boolean;
 };
@@ -131,6 +133,10 @@ export async function createUserAction(
     (value) => ({
       href: "/administration?section=accounts",
       userId: value.id,
+      user: {
+        ...value,
+        activeAssignmentCount: 0,
+      },
     }),
     (value) => `${value.displayName} can now sign in as ${value.role}.`,
   );

@@ -10,7 +10,15 @@ import {
 } from "@/server/casefile/commands";
 import { getCasefile } from "@/server/casefile/read-model";
 import { openAppDatabase, type AppDatabase } from "@/server/db/client";
-import { approvals, auditEvents, recordings, revisions, workspaces } from "@/server/db/schema";
+import {
+  approvals,
+  auditEvents,
+  ingestionSessions,
+  recordings,
+  revisions,
+  transcriptJobs,
+  workspaces,
+} from "@/server/db/schema";
 
 const FIXED_NOW = "2026-08-01T12:00:00.000Z";
 
@@ -236,6 +244,103 @@ async function setupLifecycleFixture() {
   };
 }
 
+async function setupInFlightCasefileFixture() {
+  const bundle = openAppDatabase(":memory:");
+  insertWorkspace(bundle);
+
+  const uploader = await createPrincipal(bundle.db, {
+    displayName: "Uploader",
+    email: "uploader@example.com",
+    role: "uploader",
+  });
+  const reviewer = await createPrincipal(bundle.db, {
+    displayName: "Reviewer",
+    email: "reviewer@example.com",
+    role: "reviewer",
+  });
+  const admin = await createPrincipal(bundle.db, {
+    displayName: "Admin",
+    email: "admin@example.com",
+    role: "admin",
+  });
+
+  bundle.db.insert(recordings).values({
+    id: "rec-in-flight",
+    workspaceId: "workspace-1",
+    title: "In-flight recording",
+    source: "upload",
+    mediaKind: "audio",
+    mimeType: "audio/wav",
+    mediaPath: "/tmp/in-flight.wav",
+    originalFileName: "in-flight.wav",
+    languageHint: "english",
+    uploadedByRole: "uploader",
+    uploadedByUserId: uploader.userId,
+    ingestionSessionId: "ingest-in-flight",
+    transcriptJobId: "job-in-flight",
+    integrityState: "verifying",
+    transcriptJobState: "queued",
+    currentRevisionId: null,
+    approvedRevisionId: null,
+    pendingRevisionId: null,
+    verificationSummary: "Awaiting server-side verification.",
+    createdAt: FIXED_NOW,
+    updatedAt: FIXED_NOW,
+    automationCursor: null,
+  }).run();
+
+  bundle.db.insert(ingestionSessions).values({
+    id: "ingest-in-flight",
+    recordingId: "rec-in-flight",
+    source: "upload",
+    state: "verifying",
+    adapter: "mock-governed-engine",
+    createdByUserId: uploader.userId,
+    createdAt: FIXED_NOW,
+    updatedAt: FIXED_NOW,
+    startedAt: FIXED_NOW,
+    verifiedAt: null,
+    lastError: null,
+    verificationSummary: "Awaiting server-side verification.",
+    resumeToken: "resume-in-flight",
+    bytesReceived: null,
+    bytesExpected: null,
+  }).run();
+
+  bundle.db.insert(transcriptJobs).values({
+    id: "job-in-flight",
+    recordingId: "rec-in-flight",
+    state: "queued",
+    adapter: "mock-governed-engine",
+    claimedByWorkerId: null,
+    attemptCount: 0,
+    createdAt: FIXED_NOW,
+    updatedAt: FIXED_NOW,
+    startedAt: null,
+    completedAt: null,
+    lastHeartbeatAt: null,
+    etaSeconds: 90,
+    progressPercent: 0,
+    outputRevisionId: null,
+    lastError: null,
+    diarizationStatus: "pending",
+  }).run();
+
+  assignRecordingToUser(
+    {
+      recordingId: "rec-in-flight",
+      userId: reviewer.userId,
+      assignedBy: admin,
+    },
+    bundle,
+  );
+
+  return {
+    bundle,
+    reviewer,
+  };
+}
+
 describe("getCasefile", () => {
   beforeEach(() => {
     vi.useFakeTimers();
@@ -353,6 +458,97 @@ describe("getCasefile", () => {
       expect(casefile?.nextActions).toEqual([]);
     } finally {
       bundle.sqlite.close();
+    }
+  });
+
+  it("synchronizes mock orchestration while repeatedly reading an assigned casefile", async () => {
+    process.env.SUPERSCRIBER_ENGINE_MODE = "mock";
+    const { bundle, reviewer } = await setupInFlightCasefileFixture();
+
+    try {
+      const initial = getCasefile(reviewer, "rec-in-flight", {}, bundle.db);
+      expect(initial).toEqual(
+        expect.objectContaining({
+          stage: "verifying",
+          revision: null,
+          processing: expect.objectContaining({
+            integrityState: "verifying",
+            transcriptJobState: "queued",
+            progressPercent: 0,
+          }),
+        }),
+      );
+
+      vi.setSystemTime(new Date("2026-08-01T12:00:02.000Z"));
+      const transcribing = getCasefile(reviewer, "rec-in-flight", {}, bundle.db);
+      expect(transcribing).toEqual(
+        expect.objectContaining({
+          stage: "transcribing",
+          revision: null,
+          processing: expect.objectContaining({
+            integrityState: "verified",
+            transcriptJobState: "running",
+            progressPercent: 12,
+          }),
+        }),
+      );
+
+      vi.setSystemTime(new Date("2026-08-01T12:00:05.000Z"));
+      const draftReady = getCasefile(reviewer, "rec-in-flight", {}, bundle.db);
+      expect(draftReady).toEqual(
+        expect.objectContaining({
+          stage: "draft_review",
+          revision: expect.objectContaining({
+            state: "draft",
+            segments: expect.arrayContaining([
+              expect.objectContaining({ text: expect.any(String) }),
+            ]),
+          }),
+          processing: expect.objectContaining({
+            integrityState: "verified",
+            transcriptJobState: "completed",
+            progressPercent: 100,
+          }),
+        }),
+      );
+    } finally {
+      bundle.sqlite.close();
+      delete process.env.SUPERSCRIBER_ENGINE_MODE;
+    }
+  });
+
+  it("does not invoke mock stepping during casefile reads outside mock mode", async () => {
+    process.env.SUPERSCRIBER_ENGINE_MODE = "internal";
+    const { bundle, reviewer } = await setupInFlightCasefileFixture();
+
+    try {
+      const initial = getCasefile(reviewer, "rec-in-flight", {}, bundle.db);
+      expect(initial?.stage).toBe("verifying");
+      expect(initial?.revision).toBeNull();
+
+      vi.setSystemTime(new Date("2026-08-01T12:00:05.000Z"));
+      const unchanged = getCasefile(reviewer, "rec-in-flight", {}, bundle.db);
+      expect(unchanged).toEqual(
+        expect.objectContaining({
+          stage: "verifying",
+          revision: null,
+          processing: expect.objectContaining({
+            integrityState: "verifying",
+            transcriptJobState: "queued",
+            progressPercent: 0,
+          }),
+        }),
+      );
+      expect(
+        bundle.db
+          .select({ id: revisions.id })
+          .from(revisions)
+          .where(eq(revisions.recordingId, "rec-in-flight"))
+          .all(),
+      ).toEqual([]);
+    } finally {
+      bundle.sqlite.close();
+      delete process.env.SUPERSCRIBER_ENGINE_MODE;
     }
   });
 

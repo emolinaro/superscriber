@@ -229,6 +229,24 @@ describe("listWorkInbox", () => {
     });
   });
 
+  it("labels the approver default tab exactly as To decide", async () => {
+    const bundle = openAppDatabase(":memory:");
+    insertWorkspace(bundle);
+
+    try {
+      const approver = await createPrincipal(bundle.db, {
+        displayName: "Approver",
+        email: "approver@example.com",
+        role: "approver",
+      });
+
+      const inbox = listWorkInbox(approver, {}, bundle.db);
+      expect(inbox.tabs[0]).toMatchObject({ id: "to-decide", label: "To decide" });
+    } finally {
+      bundle.sqlite.close();
+    }
+  });
+
   beforeEach(() => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date(FIXED_NOW));
@@ -238,73 +256,111 @@ describe("listWorkInbox", () => {
     vi.useRealTimers();
   });
 
-  it("never falls back to a non-actionable reviewer item", async () => {
-    const bundle = openAppDatabase(":memory:");
-    insertWorkspace(bundle);
+  it.each([
+    {
+      role: "reviewer" as const,
+      waitingStage: "pending_approval" as const,
+      waitingRevisionId: "rev-waiting-reviewer",
+      waitingTitle: "Waiting reviewer item",
+      completedRevisionId: "rev-approved-reviewer",
+      completedTitle: "Completed reviewer item",
+      completedTabId: "completed",
+    },
+    {
+      role: "approver" as const,
+      waitingStage: "draft" as const,
+      waitingRevisionId: "rev-waiting-approver",
+      waitingTitle: "Waiting approver item",
+      completedRevisionId: "rev-approved-approver",
+      completedTitle: "Completed approver item",
+      completedTabId: "completed",
+    },
+  ])(
+    "returns a completed $role snapshot row without making it the next action",
+    async ({
+      role,
+      waitingStage,
+      waitingRevisionId,
+      waitingTitle,
+      completedRevisionId,
+      completedTitle,
+      completedTabId,
+    }) => {
+      const bundle = openAppDatabase(":memory:");
+      insertWorkspace(bundle);
 
-    try {
-      const uploader = await createPrincipal(bundle.db, {
-        displayName: "Uploader",
-        email: "uploader@example.com",
-        role: "uploader",
-      });
-      const reviewer = await createPrincipal(bundle.db, {
-        displayName: "Reviewer",
-        email: "reviewer@example.com",
-        role: "reviewer",
-      });
-      const admin = await createPrincipal(bundle.db, {
-        displayName: "Admin",
-        email: "admin@example.com",
-        role: "admin",
-      });
+      try {
+        const uploader = await createPrincipal(bundle.db, {
+          displayName: "Uploader",
+          email: "uploader@example.com",
+          role: "uploader",
+        });
+        const principal = await createPrincipal(bundle.db, {
+          displayName: role === "reviewer" ? "Reviewer" : "Approver",
+          email: `${role}@example.com`,
+          role,
+        });
+        const admin = await createPrincipal(bundle.db, {
+          displayName: "Admin",
+          email: "admin@example.com",
+          role: "admin",
+        });
 
-      insertRecording(bundle, {
-        recordingId: "rec-pending",
-        title: "Pending reviewer item",
-        uploadedByUserId: uploader.userId,
-        currentRevisionId: "rev-pending",
-        currentRevisionState: "pending_approval",
-        pendingRevisionId: "rev-pending",
-        updatedAt: "2026-08-01T12:02:00.000Z",
-      });
-      insertAssignment(bundle, {
-        id: "assignment-pending",
-        recordingId: "rec-pending",
-        userId: reviewer.userId,
-        assignedByUserId: admin.userId,
-        role: "reviewer",
-        status: "active",
-        updatedAt: "2026-08-01T12:02:00.000Z",
-      });
+        insertRecording(bundle, {
+          recordingId: `rec-waiting-${role}`,
+          title: waitingTitle,
+          uploadedByUserId: uploader.userId,
+          currentRevisionId: waitingRevisionId,
+          currentRevisionState: waitingStage === "draft" ? "draft" : waitingStage,
+          pendingRevisionId: waitingStage === "pending_approval" ? waitingRevisionId : null,
+          updatedAt: "2026-08-01T12:02:00.000Z",
+        });
+        insertAssignment(bundle, {
+          id: `assignment-waiting-${role}`,
+          recordingId: `rec-waiting-${role}`,
+          userId: principal.userId,
+          assignedByUserId: admin.userId,
+          role,
+          status: "active",
+          updatedAt: "2026-08-01T12:02:00.000Z",
+        });
 
-      insertRecording(bundle, {
-        recordingId: "rec-approved",
-        title: "Completed reviewer item",
-        uploadedByUserId: uploader.userId,
-        currentRevisionId: "rev-approved",
-        currentRevisionState: "approved",
-        approvedRevisionId: "rev-approved",
-        updatedAt: "2026-08-01T12:01:00.000Z",
-      });
-      insertAssignment(bundle, {
-        id: "assignment-completed",
-        recordingId: "rec-approved",
-        userId: reviewer.userId,
-        assignedByUserId: admin.userId,
-        role: "reviewer",
-        status: "completed",
-        updatedAt: "2026-08-01T12:01:00.000Z",
-        completedRevisionId: "rev-approved",
-      });
+        insertRecording(bundle, {
+          recordingId: `rec-completed-${role}`,
+          title: completedTitle,
+          uploadedByUserId: uploader.userId,
+          currentRevisionId: completedRevisionId,
+          currentRevisionState: "approved",
+          approvedRevisionId: completedRevisionId,
+          updatedAt: "2026-08-01T12:01:00.000Z",
+        });
+        insertAssignment(bundle, {
+          id: `assignment-completed-${role}`,
+          recordingId: `rec-completed-${role}`,
+          userId: principal.userId,
+          assignedByUserId: admin.userId,
+          role,
+          status: "completed",
+          updatedAt: "2026-08-01T12:01:00.000Z",
+          completedRevisionId,
+        });
 
-      const inbox = listWorkInbox(reviewer, {}, bundle.db);
-      expect(inbox.nextAction).toBeNull();
-      expect(inbox.tabs.find((tab) => tab.id === "waiting")?.count).toBe(1);
-    } finally {
-      bundle.sqlite.close();
-    }
-  });
+        const inbox = listWorkInbox(principal, { tab: completedTabId }, bundle.db);
+        expect(inbox.nextAction).toBeNull();
+
+        expect(inbox.rows).toEqual([
+          expect.objectContaining({
+            recordingId: `rec-completed-${role}`,
+            href: `/recordings/rec-completed-${role}?revision=${completedRevisionId}`,
+            actionLabel: "View snapshot",
+            actionable: false,
+          }),
+        ]);
+      } finally {
+        bundle.sqlite.close();
+      }
+    },
+  );
 
   it("returns exact reviewer tabs, counts, completed links, and excludes removed assignments", async () => {
     const bundle = openAppDatabase(":memory:");

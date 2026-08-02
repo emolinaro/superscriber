@@ -49,6 +49,7 @@ import {
   workspaces,
 } from "@/server/db/schema";
 import { formatDateTimeIso, formatDateTimeUtc, formatRoleLabel } from "@/lib/format";
+import { readSynchronizedState } from "@/server/store";
 
 const STAGE_LABELS: Record<CasefileWorkflowStage, string> = {
   needs_ingest_attention: "Needs ingest attention",
@@ -799,6 +800,8 @@ export function getCasefile(
   options: { revisionId?: string | null; actionModeId?: string | null } = {},
   db: AppDatabase = getAppDb(),
 ): CasefileViewModel | null {
+  readSynchronizedState(db);
+
   const recording = loadRecording(db, recordingId);
   if (!recording) {
     return null;

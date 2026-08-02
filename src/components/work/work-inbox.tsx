@@ -95,7 +95,11 @@ export function WorkInbox({ model }: { model: WorkInboxViewModel }) {
             </div>
           </div>
           {model.nextAction.actionLabel !== null ? (
-            <Link className="recording-action interactive-target" href={model.nextAction.href}>
+            <Link
+              aria-label={model.nextAction.title}
+              className="recording-action interactive-target"
+              href={model.nextAction.href}
+            >
               {model.nextAction.actionLabel}
             </Link>
           ) : null}

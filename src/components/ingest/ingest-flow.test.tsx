@@ -1,5 +1,8 @@
 // @vitest-environment jsdom
 
+import { act } from "react";
+import { hydrateRoot } from "react-dom/client";
+import { renderToString } from "react-dom/server";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -39,6 +42,9 @@ type UploadSessionStatus = {
   tempFilePresent: boolean;
   warning?: string | null;
 };
+
+const STABLE_UPLOAD_INTERRUPTION_RECOVERY_NOTICE =
+  "Upload interrupted. Choose the same file again to resume safely.";
 
 type MediaRecorderListener = (event?: Event & { data?: Blob }) => void;
 
@@ -150,6 +156,33 @@ function renderFlow(role: Extract<UserRole, "uploader" | "admin"> = "uploader") 
   return render(<IngestFlow principalRole={role} />);
 }
 
+function renderFlowOnServer(role: Extract<UserRole, "uploader" | "admin"> = "uploader") {
+  const originalWindow = globalThis.window;
+  const originalDocument = globalThis.document;
+  const originalNavigator = globalThis.navigator;
+
+  Reflect.deleteProperty(globalThis, "window");
+  Reflect.deleteProperty(globalThis, "document");
+  Reflect.deleteProperty(globalThis, "navigator");
+
+  try {
+    return renderToString(<IngestFlow principalRole={role} />);
+  } finally {
+    Object.defineProperty(globalThis, "window", {
+      configurable: true,
+      value: originalWindow,
+    });
+    Object.defineProperty(globalThis, "document", {
+      configurable: true,
+      value: originalDocument,
+    });
+    Object.defineProperty(globalThis, "navigator", {
+      configurable: true,
+      value: originalNavigator,
+    });
+  }
+}
+
 afterEach(() => {
   vi.restoreAllMocks();
   document.body.innerHTML = "";
@@ -205,6 +238,35 @@ describe("IngestFlow", () => {
 
     expect(screen.getByRole("radio", { name: /Upload file/ })).toBeVisible();
     expect(screen.queryByRole("radio", { name: /Record audio/ })).not.toBeInTheDocument();
+  });
+
+  it("hydrates the upload source before revealing browser recording support", async () => {
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
+    const serverHtml = renderFlowOnServer();
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+    container.innerHTML = serverHtml;
+
+    expect(container).toHaveTextContent("Upload file");
+    expect(container).not.toHaveTextContent("Record audio");
+
+    let root!: ReturnType<typeof hydrateRoot>;
+    await act(async () => {
+      root = hydrateRoot(container, <IngestFlow principalRole="uploader" />);
+      await Promise.resolve();
+    });
+
+    const consoleMessages = consoleError.mock.calls
+      .map((call) => call.map((part) => String(part)).join(" "))
+      .join("\n");
+
+    expect(consoleMessages).not.toMatch(/Hydration failed|did not match/i);
+    expect(screen.getByRole("radio", { name: /Upload file/ })).toBeVisible();
+    await waitFor(() => {
+      expect(screen.getByRole("radio", { name: /Record audio/ })).toBeVisible();
+    });
+
+    root.unmount();
   });
 
   it("keeps Upload selectable after microphone denial", async () => {
@@ -344,6 +406,47 @@ describe("IngestFlow", () => {
       );
     });
     expect(window.localStorage.getItem("superscriber.pendingIngest")).toBeNull();
+  });
+
+  it("preserves pending metadata on network interruption during chunk upload and shows safe recovery guidance", async () => {
+    const user = userEvent.setup();
+    const file = new File(["abcdef"], "clip.wav", {
+      type: "audio/wav",
+      lastModified: 1234,
+    });
+
+    vi.mocked(fetch)
+      .mockImplementationOnce(() => mockJsonResponse({ ok: true, status: buildStatus() }))
+      .mockImplementationOnce(() => Promise.reject(new TypeError("Failed to fetch")));
+
+    renderFlow();
+
+    await user.type(screen.getByLabelText("Title"), "Interview 001");
+    await user.selectOptions(screen.getByLabelText("Language"), "english");
+    await user.upload(screen.getByLabelText("Audio or video file"), file);
+    await user.click(screen.getByRole("button", { name: "Upload file" }));
+
+    const resumeNotice = await screen.findByText(STABLE_UPLOAD_INTERRUPTION_RECOVERY_NOTICE, {
+      selector: "section.ingest-resume-card span",
+    });
+    expect(resumeNotice).toBeVisible();
+    expect(
+      screen.getByText(STABLE_UPLOAD_INTERRUPTION_RECOVERY_NOTICE, {
+        selector: "p.body-copy",
+      }),
+    ).toBeVisible();
+    expect(screen.queryByText("Failed to fetch")).not.toBeInTheDocument();
+
+    const pending = window.localStorage.getItem("superscriber.pendingIngest");
+    expect(pending).not.toBeNull();
+    expect(JSON.parse(String(pending))).toEqual({
+      sessionId: "session-1",
+      fileName: "clip.wav",
+      fileSize: 6,
+      fileType: "audio/wav",
+      fileLastModified: 1234,
+      source: "upload",
+    });
   });
 
   it("starts a fresh session when the selected file does not match pending identity", async () => {

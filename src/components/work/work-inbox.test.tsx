@@ -41,6 +41,24 @@ const reviewerRow: WorkInboxRow = {
   assignmentUserIds: ["reviewer-1"],
 };
 
+const completedReviewerRow: WorkInboxRow = {
+  ...reviewerRow,
+  recordingId: "rec-approved",
+  title: "Completed reviewer item",
+  stage: "approved",
+  stageLabel: "Approved",
+  revisionLabel: "Approved",
+  progressLabel: "Approved",
+  assignmentLabel: "Completed snapshot",
+  updatedAt: "2026-08-01T12:01:00.000Z",
+  updatedAtLabel: "01 Aug 2026, 12:01 UTC",
+  updatedAtIso: "2026-08-01T12:01:00.000Z",
+  href: "/recordings/rec-approved?revision=rev-approved",
+  actionable: false,
+  actionLabel: "View snapshot",
+  tabId: "completed",
+};
+
 const ROLE_EMPTY_COPY: Record<UserRole, string> = {
   uploader: "No uploads yet.",
   reviewer: "No transcript review is assigned to you.",
@@ -191,9 +209,25 @@ describe("WorkInbox", () => {
     const nextAction = screen.getByRole("region", { name: "Next action" });
     expect(within(nextAction).getByText("Alpha dictation")).toBeVisible();
     expect(within(nextAction).getByText("Draft review")).toBeVisible();
-    expect(within(nextAction).getByRole("link", { name: "Open draft" })).toHaveAttribute(
-      "href",
-      "/recordings/REC-SEARCH",
+
+    const action = within(nextAction).getByRole("link", { name: "Alpha dictation" });
+    expect(action).toHaveAttribute("href", "/recordings/REC-SEARCH");
+    expect(action).toHaveTextContent("Open draft");
+  });
+
+  it("renders completed snapshot rows without promoting them into next action", () => {
+    render(
+      <WorkInbox
+        model={createInbox("reviewer", {
+          rows: [completedReviewerRow],
+          nextAction: null,
+        })}
+      />,
     );
+
+    expect(screen.queryByRole("region", { name: "Next action" })).not.toBeInTheDocument();
+    const action = screen.getByRole("link", { name: "Completed reviewer item" });
+    expect(action).toHaveAttribute("href", "/recordings/rec-approved?revision=rev-approved");
+    expect(action).toHaveTextContent("View snapshot");
   });
 });

@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 
 import userEvent from "@testing-library/user-event";
-import { cleanup, render, screen, waitFor, within } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createCasefile } from "./test-fixtures";
 import { CasefileWorkspace } from "./casefile-workspace";
@@ -10,11 +10,13 @@ const phoneSafetyModeMock = vi.fn(() => false);
 const pollerMock = vi.fn<(props: unknown) => null>(() => null);
 const routerRefreshMock = vi.fn();
 const routerPushMock = vi.fn();
+const routerReplaceMock = vi.fn();
 
 vi.mock("next/navigation", () => ({
   useRouter: () => ({
     refresh: routerRefreshMock,
     push: routerPushMock,
+    replace: routerReplaceMock,
   }),
 }));
 
@@ -44,7 +46,7 @@ function renderWorkspace(overrides: Record<string, unknown> = {}) {
   const enterAdminActionModeAction = vi.fn();
   const exitAdminActionModeAction = vi.fn();
 
-  render(
+  const view = render(
     <CasefileWorkspace
       approveAction={approveAction}
       enterAdminActionModeAction={enterAdminActionModeAction}
@@ -64,10 +66,91 @@ function renderWorkspace(overrides: Record<string, unknown> = {}) {
     exitAdminActionModeAction,
     reopenAction,
     requestChangesAction,
+    rerenderWorkspace(nextOverrides: Record<string, unknown>) {
+      view.rerender(
+        <CasefileWorkspace
+          approveAction={approveAction}
+          enterAdminActionModeAction={enterAdminActionModeAction}
+          exitAdminActionModeAction={exitAdminActionModeAction}
+          initialCasefile={createCasefile(nextOverrides)}
+          reopenAction={reopenAction}
+          requestChangesAction={requestChangesAction}
+          saveAction={saveAction}
+          submitAction={submitAction}
+          withdrawAction={withdrawAction}
+        />,
+      );
+    },
     saveAction,
     submitAction,
     withdrawAction,
   };
+}
+
+function createAdminOversightCasefile(overrides: Record<string, unknown> = {}) {
+  return createCasefile({
+    access: {
+      kind: "admin_oversight",
+      recordingId: "rec-1",
+      historical: false,
+    },
+    assignmentLabel: "Admin oversight",
+    adminActionModeOptions: [{ effectiveRole: "reviewer" }, { effectiveRole: "approver" }],
+    capabilities: {
+      ...createCasefile().capabilities,
+      canEdit: false,
+      canSave: false,
+      canSubmit: false,
+      canWithdraw: false,
+      canApprove: false,
+      canRequestChanges: false,
+      canReopen: false,
+      canExport: false,
+      denials: {
+        ...createCasefile().capabilities.denials,
+        canEdit: "admin_action_mode_required",
+        canSave: "admin_action_mode_required",
+        canSubmit: "admin_action_mode_required",
+        canWithdraw: "admin_action_mode_required",
+        canApprove: "admin_action_mode_required",
+        canRequestChanges: "admin_action_mode_required",
+        canReopen: "admin_action_mode_required",
+        canExport: "admin_action_mode_required",
+      },
+    },
+    nextActions: [],
+    ...overrides,
+  });
+}
+
+function createAdminReviewerActionModeCasefile(overrides: Record<string, unknown> = {}) {
+  return createAdminOversightCasefile({
+    actionMode: {
+      id: "mode-1",
+      effectiveRole: "reviewer",
+      expiresAt: "2026-08-01T12:30:00.000Z",
+      purpose: "Cover the assigned reviewer's documented absence.",
+      adminDisplayName: "Admin",
+      baseRole: "admin",
+    },
+    capabilities: {
+      ...createCasefile().capabilities,
+      canEdit: true,
+      canSave: true,
+      canSubmit: true,
+      denials: {
+        ...createCasefile().capabilities.denials,
+        canEdit: null,
+        canSave: null,
+        canSubmit: null,
+      },
+    },
+    nextActions: [
+      { capability: "canEdit", label: "Continue editing" },
+      { capability: "canSubmit", label: "Submit for approval" },
+    ],
+    ...overrides,
+  });
 }
 
 describe("CasefileWorkspace", () => {
@@ -80,6 +163,7 @@ describe("CasefileWorkspace", () => {
     pollerMock.mockClear();
     routerRefreshMock.mockReset();
     routerPushMock.mockReset();
+    routerReplaceMock.mockReset();
     vi.spyOn(window, "confirm").mockReturnValue(true);
   });
 
@@ -114,6 +198,117 @@ describe("CasefileWorkspace", () => {
     });
 
     expect(screen.queryAllByRole("textbox").length > 0).toBe(editable);
+  });
+
+  it("enters admin action mode via canonical replace and syncs same-revision capabilities from the server", async () => {
+    const user = userEvent.setup();
+    const { enterAdminActionModeAction, rerenderWorkspace } = renderWorkspace(
+      createAdminOversightCasefile(),
+    );
+    enterAdminActionModeAction.mockResolvedValue({
+      ok: true,
+      notice: "Admin action mode entered as reviewer.",
+      data: {
+        href: "/recordings/rec-1?actionMode=mode-1",
+        session: {
+          id: "mode-1",
+          effectiveRole: "reviewer",
+          purpose: "Cover the assigned reviewer's documented absence.",
+          expiresAt: "2026-08-01T12:30:00.000Z",
+          adminDisplayName: "Admin",
+          baseRole: "admin",
+        },
+      },
+    });
+
+    await user.click(screen.getByRole("button", { name: "Enter reviewer action mode" }));
+    const dialog = await screen.findByRole("dialog", { name: "Enter admin action mode" });
+    fireEvent.change(within(dialog).getByLabelText("Purpose"), {
+      target: { value: "Cover the assigned reviewer's documented absence." },
+    });
+    const confirmButton = screen.getAllByRole("button", { name: "Enter reviewer action mode" })[1];
+    expect(confirmButton).toBeEnabled();
+    await user.click(confirmButton);
+
+    await waitFor(() =>
+      expect(enterAdminActionModeAction).toHaveBeenCalledWith({
+        recordingId: "rec-1",
+        effectiveRole: "reviewer",
+        purpose: "Cover the assigned reviewer's documented absence.",
+      }),
+    );
+    await waitFor(() =>
+      expect(routerReplaceMock).toHaveBeenCalledWith("/recordings/rec-1?actionMode=mode-1", {
+        scroll: false,
+      }),
+    );
+    expect(screen.queryByLabelText("Admin action mode")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Save draft" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Submit for approval" })).not.toBeInTheDocument();
+
+    rerenderWorkspace(createAdminReviewerActionModeCasefile());
+
+    expect(await screen.findByLabelText("Admin action mode")).toBeVisible();
+    expect(screen.getByRole("button", { name: "Save draft" })).toBeVisible();
+    expect(screen.getByRole("button", { name: "Submit for approval" })).toBeVisible();
+    expect(
+      screen.getByRole("textbox", {
+        name: "Transcript for segment 1, 00:00-00:10",
+      }),
+    ).not.toHaveAttribute("readonly");
+  });
+
+  it("exits admin action mode via canonical replace and removes same-revision governed controls on rerender", async () => {
+    const user = userEvent.setup();
+    const { exitAdminActionModeAction, rerenderWorkspace } = renderWorkspace(
+      createAdminReviewerActionModeCasefile(),
+    );
+    exitAdminActionModeAction.mockResolvedValue({
+      ok: true,
+      notice: "Admin action mode exited.",
+      data: {
+        href: "/recordings/rec-1",
+      },
+    });
+
+    await user.click(screen.getByRole("button", { name: "Exit action mode" }));
+
+    await waitFor(() =>
+      expect(routerReplaceMock).toHaveBeenCalledWith("/recordings/rec-1", {
+        scroll: false,
+      }),
+    );
+
+    rerenderWorkspace(createAdminOversightCasefile());
+
+    await waitFor(() =>
+      expect(screen.queryByRole("button", { name: "Save draft" })).not.toBeInTheDocument(),
+    );
+    expect(screen.queryByRole("button", { name: "Submit for approval" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("textbox", { name: "Revision summary" })).not.toBeInTheDocument();
+    expect(screen.getByText("Hello world.")).toBeVisible();
+  });
+
+  it("preserves dirty text while syncing same-revision action-mode expiry", async () => {
+    const user = userEvent.setup();
+    const { rerenderWorkspace } = renderWorkspace(createAdminReviewerActionModeCasefile());
+
+    const editor = screen.getByRole("textbox", {
+      name: "Transcript for segment 1, 00:00-00:10",
+    });
+    await user.clear(editor);
+    await user.type(editor, "Local admin reviewer draft.");
+
+    rerenderWorkspace(
+      createAdminOversightCasefile({
+        actionMode: null,
+      }),
+    );
+
+    expect(screen.queryByRole("textbox", { name: "Transcript for segment 1, 00:00-00:10" })).not.toBeInTheDocument();
+    expect(screen.getByText("Local admin reviewer draft.")).toBeVisible();
+    expect(screen.queryByRole("button", { name: "Save draft" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Submit for approval" })).not.toBeInTheDocument();
   });
 
   it("renders uploader status-only facts without transcript editing", () => {
@@ -294,6 +489,60 @@ describe("CasefileWorkspace", () => {
     expect(screen.queryByRole("textbox")).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Save draft" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Submit for approval" })).not.toBeInTheDocument();
+  });
+
+  it("pushes a reopened workspace redirect with an encoded notice query and no local retry", async () => {
+    const user = userEvent.setup();
+    const { reopenAction } = renderWorkspace({
+      stage: "approved",
+      stageLabel: "Approved",
+      assignmentLabel: "Assigned approver",
+      revision: {
+        ...createCasefile().revision,
+        id: "rev-3",
+        state: "approved",
+        stateLabel: "Approved",
+        approvedAt: "2026-08-01T12:05:00.000Z",
+      },
+      capabilities: {
+        ...createCasefile().capabilities,
+        canEdit: false,
+        canSave: false,
+        canSubmit: false,
+        canWithdraw: false,
+        canApprove: false,
+        canRequestChanges: false,
+        canReopen: true,
+      },
+      nextActions: [{ capability: "canReopen", label: "Reopen as draft" }],
+    });
+    reopenAction.mockResolvedValue({
+      ok: true,
+      notice: "Casefile reopened. An administrator must assign the new review cycle.",
+      data: {
+        casefile: null,
+        nextPath: "/workspace?tab=assigned",
+        focusTarget: "case-state",
+      },
+    });
+
+    await user.click(screen.getByRole("button", { name: "Reopen as draft" }));
+    const dialog = await screen.findByRole("dialog", { name: "Reopen as draft" });
+    fireEvent.change(within(dialog).getByLabelText("Reason"), {
+      target: { value: "A new governed cycle needs reassignment." },
+    });
+    await user.click(within(screen.getByRole("dialog", { name: "Reopen as draft" })).getByRole("button", {
+      name: "Reopen as draft",
+    }));
+
+    await waitFor(() => expect(reopenAction).toHaveBeenCalledTimes(1));
+    await waitFor(() =>
+      expect(routerPushMock).toHaveBeenCalledWith(
+        "/workspace?tab=assigned&notice=Casefile+reopened.+An+administrator+must+assign+the+new+review+cycle.",
+      ),
+    );
+    expect(routerRefreshMock).not.toHaveBeenCalled();
+    expect(screen.queryByText("Recover session")).not.toBeInTheDocument();
   });
 
   it("does not render mutation controls in phone safety mode", () => {

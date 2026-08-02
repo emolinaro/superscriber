@@ -147,6 +147,7 @@ export function ExportDialog({
   return (
     <Modal
       backdropClassName="export-backdrop"
+      backdropTestId="export-backdrop"
       onClose={handleClose}
       open={open}
       surfaceClassName="export-dialog"
