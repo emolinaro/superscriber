@@ -293,9 +293,22 @@ export function CasefileWorkspace({
     () => latestHref(casefile, conflict),
     [casefile, conflict],
   );
+  const statusPoller = casefile.processing.active ? (
+    <OrchestrationStatusPoller
+      currentRevisionId={casefile.revision?.id ?? null}
+      integrityState={casefile.processing.integrityState}
+      recordingId={casefile.recordingId}
+      transcriptJobState={casefile.processing.transcriptJobState}
+    />
+  ) : null;
 
   if (casefile.statusOnly) {
-    return <UploaderStatusCasefile casefile={casefile} />;
+    return (
+      <>
+        {statusPoller}
+        <UploaderStatusCasefile casefile={casefile} />
+      </>
+    );
   }
 
   return (
@@ -304,12 +317,7 @@ export function CasefileWorkspace({
         {liveMessage}
       </span>
 
-      <OrchestrationStatusPoller
-        currentRevisionId={casefile.revision?.id ?? null}
-        integrityState={casefile.processing.integrityState}
-        recordingId={casefile.recordingId}
-        transcriptJobState={casefile.processing.transcriptJobState}
-      />
+      {statusPoller}
 
       <CaseHeader casefile={casefile} />
 
