@@ -49,10 +49,7 @@
 
 .hero-grid,
 .two-column,
-.workspace-layout,
 .review-layout,
-.metric-grid,
-.dashboard-grid,
 .recording-grid {
   display: grid;
   gap: 20px;
@@ -63,22 +60,9 @@
   align-items: stretch;
 }
 
-.workspace-layout {
-  grid-template-columns: 1.1fr 0.9fr;
-  align-items: start;
-}
-
 .review-layout {
   grid-template-columns: minmax(0, 1.25fr) minmax(320px, 0.75fr);
   align-items: start;
-}
-
-.metric-grid {
-  grid-template-columns: repeat(4, minmax(0, 1fr));
-}
-
-.dashboard-grid {
-  grid-template-columns: repeat(2, minmax(0, 1fr));
 }
 
 .recording-grid {
@@ -151,8 +135,7 @@
 
 .headline,
 .section-title,
-.card-title,
-.workspace-title {
+.card-title {
   margin: 0;
   font-family: var(--font-display);
   line-height: 1.02;
@@ -161,10 +144,6 @@
 
 .headline {
   font-size: clamp(2.8rem, 5vw, 5.2rem);
-}
-
-.workspace-title {
-  font-size: clamp(2.2rem, 4vw, 3.4rem);
 }
 
 .section-title {
@@ -315,8 +294,6 @@
 }
 
 .role-card,
-.metric-card,
-.queue-card,
 .summary-card,
 .meta-card {
   border: 1px solid var(--line);
@@ -328,29 +305,6 @@
   padding: 18px;
   display: grid;
   gap: 12px;
-}
-
-.metric-card {
-  padding: 18px;
-  display: grid;
-  gap: 6px;
-}
-
-.metric-value {
-  margin: 0;
-  font-family: var(--font-display);
-  font-size: clamp(2rem, 3vw, 2.6rem);
-}
-
-.metric-label {
-  margin: 0;
-  color: var(--muted);
-  font-size: 0.92rem;
-}
-
-.workspace-header {
-  display: grid;
-  gap: 18px;
 }
 
 .superscriber-logo {
@@ -529,58 +483,6 @@
   align-items: center;
 }
 
-.queue-board {
-  display: grid;
-  gap: 16px;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  align-items: start;
-}
-
-.queue-card {
-  padding: 18px;
-  display: grid;
-  gap: 12px;
-}
-
-.queue-card-empty {
-  gap: 10px;
-}
-
-.recording-list {
-  display: grid;
-  gap: 12px;
-}
-
-.recording-item {
-  display: grid;
-  gap: 10px;
-  padding: 14px;
-  border-radius: 16px;
-  border: 1px solid rgba(20, 36, 33, 0.08);
-  background: rgba(255, 255, 255, 0.78);
-}
-
-.recording-item-empty {
-  padding: 10px 12px;
-  background: rgba(255, 255, 255, 0.52);
-}
-
-.recording-item:hover {
-  background: rgba(255, 255, 255, 0.96);
-}
-
-.recording-item-title {
-  margin: 0;
-  font-weight: 700;
-}
-
-.recording-item-meta {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-  font-size: 0.86rem;
-  color: var(--muted);
-}
 
 .policy-grid {
   display: grid;
@@ -1230,9 +1132,6 @@
   color: var(--ink);
 }
 
-.workspace-notes-copy {
-  max-width: 78ch;
-}
 
 .review-grid {
   display: grid;
@@ -1453,14 +1352,10 @@
 
 @media (max-width: 1100px) {
   .hero-grid,
-  .workspace-layout,
   .review-layout,
   .review-grid,
   .review-summary-grid,
-  .queue-board,
   .annotation-workspace-shell,
-  .metric-grid,
-  .dashboard-grid,
   .recording-grid,
   .role-grid {
     grid-template-columns: 1fr;
@@ -1525,9 +1420,6 @@
     font-size: 2.7rem;
   }
 
-  .workspace-title {
-    font-size: 2.1rem;
-  }
 
   .annotation-rail {
     grid-template-columns: repeat(2, minmax(0, 1fr));

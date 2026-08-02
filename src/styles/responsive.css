@@ -1,3 +1,23 @@
+@media (max-width: 959px) {
+  .recording-table {
+    display: none;
+  }
+
+  .recording-list {
+    display: grid;
+  }
+}
+
+@media (min-width: 960px) {
+  .recording-table {
+    display: table;
+  }
+
+  .recording-list {
+    display: none;
+  }
+}
+
 @media (max-width: 900px) {
   .app-shell__header-content {
     grid-template-columns: 1fr;
@@ -24,11 +44,49 @@
   .empty-state,
   .page-skeleton,
   .modal-surface,
-  .auth-readiness {
+  .auth-readiness,
+  .work-filters-surface,
+  .work-next-action,
+  .work-ledger,
+  .work-loading {
     padding: var(--space-4);
   }
 
   .account-menu__surface {
     width: min(18rem, calc(100vw - var(--space-4)));
+  }
+}
+
+@media (max-width: 959px) {
+  .work-filters,
+  .work-loading__filters {
+    grid-template-columns: 1fr;
+  }
+
+  .work-next-action,
+  .work-filters-header {
+    grid-template-columns: 1fr;
+  }
+
+  .work-next-action,
+  .recording-card__header {
+    justify-content: stretch;
+  }
+}
+
+@media (max-width: 480px) {
+  .work-tabs__list {
+    display: grid;
+    grid-template-columns: 1fr;
+  }
+
+  .work-tabs__link,
+  .recording-action {
+    width: 100%;
+  }
+
+  .recording-card,
+  .recording-list__item {
+    min-width: 0;
   }
 }
