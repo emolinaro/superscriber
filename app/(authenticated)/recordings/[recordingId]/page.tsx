@@ -9,7 +9,6 @@ import {
 import { canAccessRecording } from "@/server/access/service";
 import { OrchestrationStatusPoller } from "@/components/orchestration-status-poller";
 import { ReviewWorkspace } from "@/components/review-workspace";
-import { SessionBar } from "@/components/session-bar";
 import {
   formatDateTime,
   formatRoleLabel,
@@ -73,9 +72,7 @@ export default async function RecordingPage({
       : "not_submitted";
 
   return (
-    <main className="shell shell-wide stack review-page-shell">
-      <SessionBar principal={principal} />
-
+    <div className="shell shell-wide stack review-page-shell casefile-shell">
       <section className="review-hero">
         <div className="review-hero-top">
           <div className="status-row">
@@ -303,6 +300,6 @@ export default async function RecordingPage({
           </section>
         </aside>
       </section>
-    </main>
+    </div>
   );
 }

@@ -2,7 +2,6 @@ import Link from "next/link";
 import { UserRole } from "@/domain/models";
 import { AdminControlPanel } from "@/components/admin/admin-control-panel";
 import { IngestPanel } from "@/components/ingest-panel";
-import { SessionBar } from "@/components/session-bar";
 import {
   formatDateTime,
   formatRoleLabel,
@@ -89,9 +88,7 @@ export default async function WorkspacePage({
       : [];
 
   return (
-    <main className="shell shell-wide stack">
-      <SessionBar principal={principal} />
-
+    <div className="shell shell-wide stack workspace-shell">
       <section className="panel panel-dark">
         <div className="panel-inner workspace-header">
           <div className="stack-tight">
@@ -336,6 +333,6 @@ export default async function WorkspacePage({
           </div>
         </div>
       </section>
-    </main>
+    </div>
   );
 }

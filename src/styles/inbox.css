@@ -1,0 +1,3 @@
+.workspace-shell {
+  width: min(100%, var(--work-max));
+}

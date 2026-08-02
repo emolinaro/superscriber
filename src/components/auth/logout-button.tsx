@@ -8,7 +8,7 @@ export function LogoutButton() {
 
   return (
     <button
-      className="button button-quiet"
+      className="button button-quiet interactive-target"
       disabled={isPending}
       onClick={() => {
         startTransition(async () => {

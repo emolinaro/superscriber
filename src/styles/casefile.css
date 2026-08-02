@@ -1,0 +1,3 @@
+.casefile-shell {
+  width: min(100%, var(--content-max));
+}

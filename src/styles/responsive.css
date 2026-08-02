@@ -1,0 +1,29 @@
+@media (max-width: 900px) {
+  .app-shell__header-content {
+    grid-template-columns: 1fr;
+    justify-items: start;
+    padding: var(--space-3) 0;
+  }
+
+  .app-shell__nav-list {
+    justify-content: flex-start;
+  }
+}
+
+@media (max-width: 640px) {
+  .app-shell__main {
+    padding-top: var(--space-6);
+  }
+
+  .surface-intro,
+  .error-summary,
+  .empty-state,
+  .page-skeleton,
+  .modal-surface {
+    padding: var(--space-4);
+  }
+
+  .account-menu__surface {
+    width: min(18rem, calc(100vw - var(--space-4)));
+  }
+}

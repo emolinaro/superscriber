@@ -1,0 +1,3 @@
+.ingest-shell {
+  width: min(100%, var(--work-max));
+}

@@ -5,6 +5,7 @@ export default defineConfig({
   test: {
     environment: "node",
     exclude: ["**/.next/**", "**/node_modules/**", "**/e2e/**"],
+    setupFiles: [resolve(__dirname, "src/test/setup.ts")],
   },
   resolve: {
     alias: {
