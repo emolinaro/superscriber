@@ -1,9 +1,12 @@
 "use server";
 
+import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 import { type BootstrapFormState } from "@/lib/auth-forms";
 import { createBootstrapAdmin as createBootstrapAdminAccount, hasAnyUsers } from "@/server/auth/service";
-import { bootstrapAdminSchema } from "@/server/auth/validation";
+import { bootstrapAdminSchema, normalizeEmail } from "@/server/auth/validation";
+
+const BOOTSTRAP_EMAIL_COOKIE = "superscriber.bootstrap-email";
 
 function asString(formData: FormData, key: string, fallback = "") {
   const value = formData.get(key);
@@ -74,5 +77,24 @@ export async function createBootstrapAdminAction(
     };
   }
 
+  const cookieStore = await cookies();
+  cookieStore.set(BOOTSTRAP_EMAIL_COOKIE, normalizeEmail(parsed.data.email), {
+    httpOnly: true,
+    maxAge: 60,
+    path: "/",
+    sameSite: "strict",
+  });
+
   redirect("/?notice=bootstrap-complete");
+}
+
+export async function consumeBootstrapEmailAction() {
+  const cookieStore = await cookies();
+  cookieStore.set(BOOTSTRAP_EMAIL_COOKIE, "", {
+    expires: new Date(0),
+    httpOnly: true,
+    maxAge: 0,
+    path: "/",
+    sameSite: "strict",
+  });
 }

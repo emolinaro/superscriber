@@ -8,6 +8,10 @@
   .app-shell__nav-list {
     justify-content: flex-start;
   }
+
+  .auth-surface {
+    grid-template-columns: 1fr;
+  }
 }
 
 @media (max-width: 640px) {
@@ -19,7 +23,8 @@
   .error-summary,
   .empty-state,
   .page-skeleton,
-  .modal-surface {
+  .modal-surface,
+  .auth-readiness {
     padding: var(--space-4);
   }
 

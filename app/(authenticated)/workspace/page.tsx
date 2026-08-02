@@ -42,6 +42,20 @@ function firstValue(value: string | string[] | undefined) {
   return Array.isArray(value) ? value[0] : value;
 }
 
+function buildReturnTo(params: Record<string, string | string[] | undefined>) {
+  const search = new URLSearchParams();
+
+  for (const [key, value] of Object.entries(params)) {
+    const resolved = firstValue(value);
+    if (typeof resolved === "string" && resolved.length > 0) {
+      search.set(key, resolved);
+    }
+  }
+
+  const query = search.toString();
+  return query ? `/workspace?${query}` : "/workspace";
+}
+
 function countForRole(role: UserRole, buckets: ReturnType<typeof listWorkspaceOverview>["buckets"]) {
   if (role === "reviewer") {
     return buckets.find((bucket) => bucket.bucket === "needs_review")?.recordings.length ?? 0;
@@ -61,9 +75,9 @@ export default async function WorkspacePage({
 }: {
   searchParams: SearchParams;
 }) {
-  const principal = await requireActivePrincipal();
-  const role = principal.role;
   const params = await searchParams;
+  const principal = await requireActivePrincipal(buildReturnTo(params));
+  const role = principal.role;
   const overview = listWorkspaceOverview(principal);
   const notice = firstValue(params.notice);
   const error = firstValue(params.error);

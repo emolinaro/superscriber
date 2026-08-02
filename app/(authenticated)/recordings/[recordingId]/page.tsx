@@ -33,6 +33,27 @@ function formatPercent(value: number | null) {
   return value === null ? "n/a" : `${Math.round(value)}%`;
 }
 
+function buildReturnTo(
+  recordingId: string,
+  params: Record<string, string | string[] | undefined>,
+) {
+  const search = new URLSearchParams();
+  const revision = firstValue(params.revision);
+  const actionMode = firstValue(params.actionMode);
+
+  if (revision) {
+    search.set("revision", revision);
+  }
+  if (actionMode) {
+    search.set("actionMode", actionMode);
+  }
+
+  const query = search.toString();
+  return query
+    ? `/recordings/${encodeURIComponent(recordingId)}?${query}`
+    : `/recordings/${encodeURIComponent(recordingId)}`;
+}
+
 export default async function RecordingPage({
   params,
   searchParams,
@@ -40,10 +61,12 @@ export default async function RecordingPage({
   params: Params;
   searchParams: SearchParams;
 }) {
-  const principal = await requireActivePrincipal();
-  const role = principal.role;
   const resolvedParams = await params;
   const resolvedSearchParams = await searchParams;
+  const principal = await requireActivePrincipal(
+    buildReturnTo(resolvedParams.recordingId, resolvedSearchParams),
+  );
+  const role = principal.role;
   const access = canAccessRecording(principal, resolvedParams.recordingId);
   if (!access.allowed) {
     redirect(`/workspace?error=${encodeURIComponent(access.reason ?? "This recording is not assigned to your account.")}`);

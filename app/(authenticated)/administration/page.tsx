@@ -7,7 +7,7 @@ import { requireActivePrincipal } from "@/server/session";
 export const dynamic = "force-dynamic";
 
 export default async function AdministrationPage() {
-  const principal = await requireActivePrincipal();
+  const principal = await requireActivePrincipal("/administration");
 
   if (principal.role !== "admin") {
     redirect(

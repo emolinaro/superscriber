@@ -5,7 +5,7 @@ import { requireActivePrincipal } from "@/server/session";
 export const dynamic = "force-dynamic";
 
 export default async function IngestPage() {
-  const principal = await requireActivePrincipal();
+  const principal = await requireActivePrincipal("/ingest");
 
   if (principal.role !== "uploader" && principal.role !== "admin") {
     redirect(

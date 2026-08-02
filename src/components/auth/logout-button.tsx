@@ -14,6 +14,7 @@ export function LogoutButton() {
         startTransition(async () => {
           await signOut({
             callbackUrl: "/?reason=logged-out",
+            redirect: true,
           });
         });
       }}
