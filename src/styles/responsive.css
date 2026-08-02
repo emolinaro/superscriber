@@ -93,12 +93,32 @@
   .recording-list__item,
   .ingest-source-option,
   .ingest-shell,
-  .ingest-loading-block--button {
+  .ingest-loading-block--button,
+  .casefile-page,
+  .casefile-layout,
+  .casefile-main,
+  .transcript-document,
+  .transcript-segment,
+  .governance-tablet-drawer__surface {
     min-width: 0;
   }
 
   .ingest-capture__actions,
   .ingest-actions {
     width: 100%;
+  }
+}
+
+@media (max-width: 767px) {
+  .casefile-page {
+    margin-top: calc(var(--space-6) * -1);
+  }
+
+  .media-transport {
+    top: 112px;
+  }
+
+  .transcript-segment {
+    scroll-margin-top: 148px;
   }
 }
