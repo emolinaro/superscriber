@@ -5,7 +5,10 @@ import { redirect } from "next/navigation";
 import { type UserRole } from "@/domain/models";
 import { type CommandResult } from "@/lib/command-result";
 import { authExpiredResult, toCommandResultError } from "@/lib/command-result";
-import { assignRecordingToUser, removeRecordingAssignment } from "@/server/access/service";
+import {
+  assignRecordingToUser,
+  removeRecordingAssignment,
+} from "@/server/access/service";
 import { createLocalUser } from "@/server/auth/service";
 import { localUserSchema } from "@/server/auth/validation";
 import { CasefileCommandError } from "@/server/casefile/errors";
@@ -13,6 +16,9 @@ import { getActivePrincipal } from "@/server/session";
 
 export type AdministrationMutationResult = {
   href: string;
+  userId?: string;
+  assignmentId?: string;
+  alreadyActive?: boolean;
 };
 
 export type CreateUserInput = {
@@ -27,9 +33,11 @@ export type AssignRecordingInput = {
   userId: string;
 };
 
-export type UnassignRecordingInput = {
+export type RemoveRecordingAssignmentInput = {
   assignmentId: string;
 };
+
+export type UnassignRecordingInput = RemoveRecordingAssignmentInput;
 
 function asString(formData: FormData, key: string, fallback = "") {
   const value = formData.get(key);
@@ -63,6 +71,7 @@ function requireAdmin(role: UserRole) {
 
 async function runAdministrationAction<T>(
   operation: (principal: NonNullable<Awaited<ReturnType<typeof getActivePrincipal>>>) => Promise<T> | T,
+  success: (value: T) => AdministrationMutationResult,
   notice: (value: T) => string,
 ): Promise<CommandResult<AdministrationMutationResult>> {
   const principal = await getActivePrincipal();
@@ -72,12 +81,11 @@ async function runAdministrationAction<T>(
 
   try {
     const value = await operation(principal);
+    revalidatePath("/administration");
     revalidatePath("/workspace");
     return {
       ok: true,
-      data: {
-        href: "/workspace",
-      },
+      data: success(value),
       notice: notice(value),
     };
   } catch (error) {
@@ -93,7 +101,7 @@ function redirectFromCommandResult(
       redirect("/?reason=session-expired");
     }
 
-    redirect(buildPath("/workspace", { error: result.message }));
+    redirect(buildPath("/administration", { error: result.message }));
   }
 
   redirect(buildPath(result.data.href, { notice: result.notice }));
@@ -118,9 +126,12 @@ export async function createUserAction(
         );
       }
 
-      await createLocalUser(parsed.data);
-      return parsed.data;
+      return createLocalUser(parsed.data);
     },
+    (value) => ({
+      href: "/administration?section=accounts",
+      userId: value.id,
+    }),
     (value) => `${value.displayName} can now sign in as ${value.role}.`,
   );
 }
@@ -148,12 +159,17 @@ export async function assignRecordingAction(
         assignedBy: principal,
       });
     },
+    (value) => ({
+      href: "/administration?section=assignments",
+      assignmentId: value.assignment.id,
+      alreadyActive: value.alreadyActive,
+    }),
     () => "Recording assignment updated.",
   );
 }
 
-export async function unassignRecordingAction(
-  input: UnassignRecordingInput,
+export async function removeRecordingAssignmentAction(
+  input: RemoveRecordingAssignmentInput,
 ): Promise<CommandResult<AdministrationMutationResult>> {
   return runAdministrationAction(
     (principal) => {
@@ -173,8 +189,18 @@ export async function unassignRecordingAction(
         removedBy: principal,
       });
     },
+    (value) => ({
+      href: "/administration?section=assignments",
+      assignmentId: value.id,
+    }),
     () => "Recording assignment removed.",
   );
+}
+
+export async function unassignRecordingAction(
+  input: UnassignRecordingInput,
+): Promise<CommandResult<AdministrationMutationResult>> {
+  return removeRecordingAssignmentAction(input);
 }
 
 export async function createUserFormAction(formData: FormData) {
@@ -197,10 +223,14 @@ export async function assignRecordingFormAction(formData: FormData) {
   );
 }
 
-export async function unassignRecordingFormAction(formData: FormData) {
+export async function removeRecordingAssignmentFormAction(formData: FormData) {
   return redirectFromCommandResult(
-    await unassignRecordingAction({
+    await removeRecordingAssignmentAction({
       assignmentId: asString(formData, "assignmentId"),
     }),
   );
+}
+
+export async function unassignRecordingFormAction(formData: FormData) {
+  return removeRecordingAssignmentFormAction(formData);
 }

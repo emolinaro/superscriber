@@ -48,14 +48,19 @@ function insertRecordingFixture(
     currentRevisionId: string;
     approvedRevisionId?: string | null;
     uploadedByUserId?: string | null;
+    integrityState?: "capturing" | "uploading" | "verifying" | "verified" | "verification_failed" | "interrupted";
+    transcriptJobState?: "queued" | "running" | "partial_result" | "completed" | "failed" | "cancelled";
   },
 ) {
-  bundle.db.insert(workspaces).values({
-    id: "workspace-1",
-    name: "Test workspace",
-    slug: "test-workspace",
-    policyProfileId: "strict",
-  }).run();
+  const existingWorkspace = bundle.db.select().from(workspaces).get();
+  if (!existingWorkspace) {
+    bundle.db.insert(workspaces).values({
+      id: "workspace-1",
+      name: "Test workspace",
+      slug: "test-workspace",
+      policyProfileId: "strict",
+    }).run();
+  }
 
   const revisionIds = new Set([
     params.currentRevisionId,
@@ -67,6 +72,12 @@ function insertRecordingFixture(
   let version = 1;
   for (const revisionId of revisionIds) {
     if (!revisionId) {
+      continue;
+    }
+
+    const existingRevision = bundle.db.select().from(revisions).where(eq(revisions.id, revisionId)).get();
+    if (existingRevision) {
+      version += 1;
       continue;
     }
 
@@ -102,8 +113,8 @@ function insertRecordingFixture(
     uploadedByUserId: params.uploadedByUserId ?? null,
     ingestionSessionId: null,
     transcriptJobId: null,
-    integrityState: "verified",
-    transcriptJobState: "completed",
+    integrityState: params.integrityState ?? "verified",
+    transcriptJobState: params.transcriptJobState ?? "completed",
     currentRevisionId: params.currentRevisionId,
     approvedRevisionId: params.approvedRevisionId ?? null,
     pendingRevisionId: null,
@@ -240,6 +251,144 @@ function resolveAccessForTest(
 }
 
 describe("access service", () => {
+  it("returns truthful assignment compatibility facts", () => {
+    expect(
+      accessService.assertAssignmentCompatible(
+        {
+          integrityState: "verified",
+          transcriptJobState: "completed",
+          approvedRevisionId: null,
+          currentRevisionId: "rev-1",
+        },
+        "reviewer",
+      ),
+    ).toBe("Actionable");
+
+    expect(
+      accessService.assertAssignmentCompatible(
+        {
+          integrityState: "verifying",
+          transcriptJobState: "queued",
+          approvedRevisionId: null,
+          currentRevisionId: null,
+        },
+        "reviewer",
+      ),
+    ).toBe("Waiting");
+
+    expect(
+      accessService.assertAssignmentCompatible(
+        {
+          integrityState: "verified",
+          transcriptJobState: "completed",
+          approvedRevisionId: "rev-approved",
+          currentRevisionId: "rev-approved",
+        },
+        "approver",
+      ),
+    ).toBe("Reopen authority");
+
+    expect(() =>
+      accessService.assertAssignmentCompatible(
+        {
+          integrityState: "verification_failed",
+          transcriptJobState: "completed",
+          approvedRevisionId: null,
+          currentRevisionId: null,
+        },
+        "reviewer",
+      ),
+    ).toThrowError(expect.objectContaining({ message: "Review work cannot be assigned until ingest recovers." }));
+  });
+
+  it("blocks forged assignment inserts inside the transaction while allowing waiting and reopen authority", async () => {
+    const bundle = openAppDatabase(":memory:");
+
+    try {
+      const admin = await createLocalUser({
+        displayName: "Admin",
+        email: "admin@example.com",
+        password: "correct horse battery staple",
+        role: "admin",
+      }, bundle.db);
+      const reviewer = await createLocalUser({
+        displayName: "Reviewer",
+        email: "reviewer@example.com",
+        password: "correct horse battery staple",
+        role: "reviewer",
+      }, bundle.db);
+      const approver = await createLocalUser({
+        displayName: "Approver",
+        email: "approver@example.com",
+        password: "correct horse battery staple",
+        role: "approver",
+      }, bundle.db);
+      const adminPrincipal = toPrincipal(admin);
+
+      insertRecordingFixture(bundle, {
+        recordingId: "rec-processing",
+        currentRevisionId: "rev-processing",
+        integrityState: "verifying",
+        transcriptJobState: "running",
+      });
+      insertRecordingFixture(bundle, {
+        recordingId: "rec-approved",
+        currentRevisionId: "rev-approved",
+        approvedRevisionId: "rev-approved",
+      });
+      insertRecordingFixture(bundle, {
+        recordingId: "rec-failed",
+        currentRevisionId: "rev-failed",
+        integrityState: "verification_failed",
+        transcriptJobState: "completed",
+      });
+
+      expect(
+        assignForTest({
+          recordingId: "rec-processing",
+          userId: reviewer.id,
+          assignedBy: adminPrincipal,
+        }, bundle).assignment.id,
+      ).toBeTruthy();
+
+      expect(
+        assignForTest({
+          recordingId: "rec-approved",
+          userId: approver.id,
+          assignedBy: adminPrincipal,
+        }, bundle).assignment.id,
+      ).toBeTruthy();
+
+      expect(() =>
+        assignForTest({
+          recordingId: "rec-approved",
+          userId: reviewer.id,
+          assignedBy: adminPrincipal,
+        }, bundle),
+      ).toThrowError(
+        expect.objectContaining({
+          code: "VALIDATION_ERROR",
+          message: "Reviewer work cannot be assigned to an approved casefile.",
+        }),
+      );
+
+      expect(() =>
+        assignForTest({
+          recordingId: "rec-failed",
+          userId: reviewer.id,
+          assignedBy: adminPrincipal,
+        }, bundle),
+      ).toThrowError(
+        expect.objectContaining({
+          code: "VALIDATION_ERROR",
+          message: "Review work cannot be assigned until ingest recovers.",
+        }),
+      );
+    } finally {
+      bundle.sqlite.close();
+    }
+  });
+
   it("keeps completed history and creates a new row on reassignment", async () => {
     const bundle = openAppDatabase(":memory:");
 
@@ -260,8 +409,7 @@ describe("access service", () => {
 
       insertRecordingFixture(bundle, {
         recordingId: "rec-1",
-        currentRevisionId: "rev-approved",
-        approvedRevisionId: "rev-approved",
+        currentRevisionId: "rev-1",
       });
 
       const first = assignForTest({
@@ -325,8 +473,7 @@ describe("access service", () => {
 
       insertRecordingFixture(bundle, {
         recordingId: "rec-1",
-        currentRevisionId: "rev-approved",
-        approvedRevisionId: "rev-approved",
+        currentRevisionId: "rev-1",
         uploadedByUserId: uploader.id,
       });
 
@@ -381,8 +528,7 @@ describe("access service", () => {
 
       insertRecordingFixture(bundle, {
         recordingId: "rec-1",
-        currentRevisionId: "rev-approved",
-        approvedRevisionId: "rev-approved",
+        currentRevisionId: "rev-1",
       });
 
       assignForTest({
@@ -583,8 +729,7 @@ describe("access service", () => {
 
       insertRecordingFixture(bundle, {
         recordingId: "rec-1",
-        currentRevisionId: "rev-approved",
-        approvedRevisionId: "rev-approved",
+        currentRevisionId: "rev-1",
       });
 
       assignForTest({

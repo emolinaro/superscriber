@@ -2,12 +2,17 @@ import { desc } from "drizzle-orm";
 import { describePolicyProfile, evaluatePolicy } from "@/domain/policy";
 import type {
   ApprovalRecord,
+  AssignmentRole,
   PolicyProfileId,
   Principal,
   Recording,
   TranscriptRevision,
 } from "@/domain/models";
-import { listAssignableUsers, listLocalUsers } from "@/server/access/service";
+import {
+  assertAssignmentCompatible,
+  listAssignableUsers,
+  listLocalUsers,
+} from "@/server/access/service";
 import { CasefileCommandError } from "@/server/casefile/errors";
 import { getAppDb, type AppDatabase } from "@/server/db/client";
 import {
@@ -16,13 +21,27 @@ import {
   toRecordingAssignment,
   toRevision,
 } from "@/server/db/mappers";
-import { approvals, recordingAssignments, recordings, revisions, workspaces } from "@/server/db/schema";
+import {
+  approvals,
+  recordingAssignments,
+  recordings,
+  revisions,
+  workspaces,
+} from "@/server/db/schema";
 import { formatDateTimeIso, formatDateTimeUtc, formatRoleLabel } from "@/lib/format";
 import {
   buildRecordingHref,
   deriveStageForSelection,
   formatWorkflowStageLabel,
 } from "@/server/casefile/read-model";
+
+export type AdministrationSection = "accounts" | "assignments" | "policy";
+
+export type AdministrationAssignmentCompatibility = {
+  allowed: boolean;
+  label: "Actionable" | "Waiting" | "Reopen authority" | "Unavailable";
+  reason: string | null;
+};
 
 export type AdministrationAccountsViewModel = {
   section: "accounts";
@@ -47,16 +66,20 @@ export type AdministrationAssignmentsViewModel = {
     recordingId: string | null;
     userId: string | null;
     role: "reviewer" | "approver" | null;
-    status: "active" | "history" | "completed" | "removed";
+    status: "active" | "history";
     from: string | null;
     to: string | null;
   };
   columns: Array<{ id: string; label: string }>;
-  stateOptions: Array<{ id: string; label: string }>;
+  stateOptions: Array<{ id: "active" | "history"; label: string }>;
   recordings: Array<{
     recordingId: string;
     title: string;
     stageLabel: string;
+    compatibility: {
+      reviewer: AdministrationAssignmentCompatibility;
+      approver: AdministrationAssignmentCompatibility;
+    };
   }>;
   assignableUsers: Array<{
     id: string;
@@ -70,10 +93,14 @@ export type AdministrationAssignmentsViewModel = {
     stageLabel: string;
     userId: string;
     userDisplayName: string;
+    userEmail: string;
     role: "reviewer" | "approver";
     roleLabel: string;
     status: "active" | "completed" | "removed";
     statusLabel: string;
+    outcomeLabel: string | null;
+    completedRevisionId: string | null;
+    completedRevisionLabel: string | null;
     updatedAt: string;
     updatedAtLabel: string;
     updatedAtIso: string;
@@ -111,19 +138,27 @@ const ACCOUNT_COLUMNS = [
   { id: "createdAt", label: "Created" },
 ] as const;
 
-const ASSIGNMENT_COLUMNS = [
+const ACTIVE_ASSIGNMENT_COLUMNS = [
+  { id: "recording", label: "Recording" },
+  { id: "stage", label: "Stage" },
+  { id: "user", label: "Assignee" },
+  { id: "role", label: "Role" },
+  { id: "updatedAt", label: "Updated" },
+  { id: "actions", label: "Controls" },
+] as const;
+
+const HISTORY_ASSIGNMENT_COLUMNS = [
   { id: "recording", label: "Recording" },
   { id: "user", label: "Assignee" },
   { id: "role", label: "Role" },
-  { id: "status", label: "Status" },
+  { id: "outcome", label: "Outcome" },
+  { id: "completedRevision", label: "Completed revision" },
   { id: "updatedAt", label: "Updated" },
 ] as const;
 
 const ASSIGNMENT_STATUS_OPTIONS = [
   { id: "active", label: "Active" },
   { id: "history", label: "History" },
-  { id: "completed", label: "Completed" },
-  { id: "removed", label: "Removed" },
 ] as const;
 
 function firstValue(value: string | string[] | undefined) {
@@ -150,7 +185,6 @@ function parseIso(value: string | string[] | undefined) {
 function parseAssignmentFilters(
   values: Record<string, string | string[] | undefined>,
 ): AdministrationAssignmentsViewModel["filters"] {
-  const status = firstValue(values.status);
   return {
     recordingId: firstValue(values.recordingId) ?? null,
     userId: firstValue(values.userId) ?? null,
@@ -158,10 +192,7 @@ function parseAssignmentFilters(
       firstValue(values.role) === "reviewer" || firstValue(values.role) === "approver"
         ? (firstValue(values.role) as "reviewer" | "approver")
         : null,
-    status:
-      status === "history" || status === "completed" || status === "removed"
-        ? status
-        : "active",
+    status: firstValue(values.status) === "history" ? "history" : "active",
     from: parseIso(values.from),
     to: parseIso(values.to),
   };
@@ -221,19 +252,46 @@ function stageLabelForRecording(
   );
 }
 
-function matchesStatus(
-  status: AdministrationAssignmentsViewModel["filters"]["status"],
-  assignmentStatus: "active" | "completed" | "removed",
-) {
-  if (status === "history") {
-    return assignmentStatus !== "active";
-  }
-
-  return assignmentStatus === status;
-}
-
 function statusLabel(status: "active" | "completed" | "removed") {
   return status.charAt(0).toUpperCase() + status.slice(1);
+}
+
+function completedRevisionLabel(
+  completedRevisionId: string | null,
+  revisionMap: Map<string, TranscriptRevision>,
+) {
+  if (!completedRevisionId) {
+    return "-";
+  }
+
+  const revision = revisionMap.get(completedRevisionId);
+  return revision ? `Approved v${revision.version}` : completedRevisionId;
+}
+
+function assignmentCompatibility(
+  recording: Pick<
+    Recording,
+    "integrityState" | "transcriptJobState" | "approvedRevisionId" | "currentRevisionId"
+  >,
+  role: AssignmentRole,
+): AdministrationAssignmentCompatibility {
+  try {
+    return {
+      allowed: true,
+      label: assertAssignmentCompatible(recording, role),
+      reason: null,
+    };
+  } catch (error) {
+    if (error instanceof CasefileCommandError && error.code === "VALIDATION_ERROR") {
+      return {
+        allowed: false,
+        label: "Unavailable",
+        reason: error.message,
+      };
+    }
+
+    throw error;
+  }
 }
 
 function policyProfileLabel(profileId: PolicyProfileId) {
@@ -255,7 +313,7 @@ function buildPolicyRows(profileId: PolicyProfileId) {
   return [
     {
       id: "playback",
-      label: "Media playback",
+      label: "Playback",
       uploader: allowedText(uploader.canViewMedia),
       reviewer: allowedText(reviewer.canViewMedia),
       approver: allowedText(approver.canViewMedia),
@@ -263,7 +321,7 @@ function buildPolicyRows(profileId: PolicyProfileId) {
     },
     {
       id: "raw-download",
-      label: "Raw media download",
+      label: "Raw download",
       uploader: allowedText(uploader.canDownloadRawMedia),
       reviewer: allowedText(reviewer.canDownloadRawMedia),
       approver: allowedText(approver.canDownloadRawMedia),
@@ -271,7 +329,7 @@ function buildPolicyRows(profileId: PolicyProfileId) {
     },
     {
       id: "draft-edit",
-      label: "Draft edit",
+      label: "Edit draft",
       uploader: allowedText(uploader.canEditDraft),
       reviewer: allowedText(reviewer.canEditDraft),
       approver: allowedText(approver.canEditDraft),
@@ -279,7 +337,7 @@ function buildPolicyRows(profileId: PolicyProfileId) {
     },
     {
       id: "submit",
-      label: "Submit for approval",
+      label: "Submit",
       uploader: allowedText(uploader.canSubmitForApproval),
       reviewer: allowedText(reviewer.canSubmitForApproval),
       approver: allowedText(approver.canSubmitForApproval),
@@ -287,7 +345,7 @@ function buildPolicyRows(profileId: PolicyProfileId) {
     },
     {
       id: "withdraw",
-      label: "Withdraw submission",
+      label: "Withdraw",
       uploader: "Denied",
       reviewer: "Allowed",
       approver: "Denied",
@@ -343,20 +401,23 @@ export function listAdministration(
 ): AdministrationViewModel {
   requireAdmin(principal);
 
-  const section = firstValue(values.section);
-  if (section === "assignments") {
+  if (firstValue(values.section) === "assignments") {
     const filters = parseAssignmentFilters(values);
     const recordingMap = loadRecordingMap(db);
     const revisionMap = loadRevisionMap(db);
     const decisionMap = loadDecisionMap(db);
     const userMap = new Map(listLocalUsers(db).map((user) => [user.id, user]));
+    const isHistory = filters.status === "history";
+
     const assignments = db
       .select()
       .from(recordingAssignments)
       .orderBy(desc(recordingAssignments.updatedAt))
       .all()
       .map(toRecordingAssignment)
-      .filter((assignment) => matchesStatus(filters.status, assignment.status))
+      .filter((assignment) =>
+        isHistory ? assignment.status !== "active" : assignment.status === "active",
+      )
       .filter((assignment) => !filters.recordingId || assignment.recordingId === filters.recordingId)
       .filter((assignment) => !filters.userId || assignment.userId === filters.userId)
       .filter((assignment) => !filters.role || assignment.assignmentRole === filters.role)
@@ -377,10 +438,17 @@ export function listAdministration(
           stageLabel: stageLabelForRecording(recording, revisionMap, decisionMap),
           userId: assignment.userId,
           userDisplayName: user?.displayName ?? `Unknown ${formatRoleLabel(assignment.assignmentRole)}`,
+          userEmail: user?.email ?? "Unknown email",
           role: assignment.assignmentRole,
           roleLabel: formatRoleLabel(assignment.assignmentRole),
           status: assignment.status,
           statusLabel: statusLabel(assignment.status),
+          outcomeLabel: assignment.status === "active" ? null : statusLabel(assignment.status),
+          completedRevisionId: assignment.completedRevisionId,
+          completedRevisionLabel:
+            assignment.status === "active"
+              ? null
+              : completedRevisionLabel(assignment.completedRevisionId, revisionMap),
           updatedAt: assignment.updatedAt,
           updatedAtLabel: formatDateTimeUtc(assignment.updatedAt),
           updatedAtIso: formatDateTimeIso(assignment.updatedAt),
@@ -391,12 +459,16 @@ export function listAdministration(
     return {
       section: "assignments",
       filters,
-      columns: [...ASSIGNMENT_COLUMNS],
+      columns: isHistory ? [...HISTORY_ASSIGNMENT_COLUMNS] : [...ACTIVE_ASSIGNMENT_COLUMNS],
       stateOptions: [...ASSIGNMENT_STATUS_OPTIONS],
       recordings: Array.from(recordingMap.values()).map((recording) => ({
         recordingId: recording.id,
         title: recording.title,
         stageLabel: stageLabelForRecording(recording, revisionMap, decisionMap),
+        compatibility: {
+          reviewer: assignmentCompatibility(recording, "reviewer"),
+          approver: assignmentCompatibility(recording, "approver"),
+        },
       })),
       assignableUsers: listAssignableUsers(db).map((user) => ({
         id: user.id,
@@ -407,7 +479,7 @@ export function listAdministration(
     };
   }
 
-  if (section === "policy") {
+  if (firstValue(values.section) === "policy") {
     const workspace = db.select().from(workspaces).get();
     const profileId = workspace?.policyProfileId ?? "strict";
     return {

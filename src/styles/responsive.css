@@ -1,9 +1,11 @@
 @media (max-width: 959px) {
-  .recording-table {
+  .recording-table,
+  .administration-table-wrap {
     display: none;
   }
 
-  .recording-list {
+  .recording-list,
+  .administration-card-list {
     display: grid;
   }
 }
@@ -13,7 +15,8 @@
     display: table;
   }
 
-  .recording-list {
+  .recording-list,
+  .administration-card-list {
     display: none;
   }
 }
@@ -50,7 +53,9 @@
   .work-ledger,
   .work-loading,
   .ingest-status-card,
-  .ingest-transfer-card {
+  .ingest-transfer-card,
+  .administration-phone-notice,
+  .administration-status {
     padding: var(--space-4);
   }
 
@@ -61,7 +66,9 @@
 
 @media (max-width: 959px) {
   .work-filters,
-  .work-loading__filters {
+  .work-loading__filters,
+  .administration-search,
+  .administration-filters {
     grid-template-columns: 1fr;
   }
 
@@ -71,7 +78,8 @@
   }
 
   .work-next-action,
-  .recording-card__header {
+  .recording-card__header,
+  .administration-section__header {
     justify-content: stretch;
   }
 }
@@ -85,7 +93,9 @@
   .work-tabs__link,
   .recording-action,
   .ingest-actions .button,
-  .ingest-capture__actions .button {
+  .ingest-capture__actions .button,
+  .administration-nav__link,
+  .administration-subnav__link {
     width: 100%;
   }
 
@@ -99,7 +109,8 @@
   .casefile-main,
   .transcript-document,
   .transcript-segment,
-  .governance-tablet-drawer__surface {
+  .governance-tablet-drawer__surface,
+  .administration-drawer {
     min-width: 0;
   }
 

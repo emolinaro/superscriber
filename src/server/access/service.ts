@@ -12,6 +12,7 @@ import {
   insertAuditEvent,
   type ActorContext,
 } from "@/server/casefile/audit";
+import { CasefileCommandError } from "@/server/casefile/errors";
 import {
   getAppDb,
   getAppDbBundle,
@@ -62,6 +63,66 @@ function nowIso() {
   return new Date().toISOString();
 }
 
+function isIngestFailure(recording: {
+  integrityState: "capturing" | "uploading" | "verifying" | "verified" | "verification_failed" | "interrupted";
+  transcriptJobState: "queued" | "running" | "partial_result" | "completed" | "failed" | "cancelled";
+}) {
+  return (
+    recording.integrityState === "interrupted" ||
+    recording.integrityState === "verification_failed" ||
+    recording.transcriptJobState === "failed" ||
+    recording.transcriptJobState === "cancelled"
+  );
+}
+
+function isProcessing(recording: {
+  integrityState: "capturing" | "uploading" | "verifying" | "verified" | "verification_failed" | "interrupted";
+  transcriptJobState: "queued" | "running" | "partial_result" | "completed" | "failed" | "cancelled";
+}) {
+  return (
+    recording.integrityState === "capturing" ||
+    recording.integrityState === "uploading" ||
+    recording.integrityState === "verifying" ||
+    recording.transcriptJobState === "queued" ||
+    recording.transcriptJobState === "running" ||
+    recording.transcriptJobState === "partial_result"
+  );
+}
+
+export function assertAssignmentCompatible(
+  recording: {
+    integrityState: "capturing" | "uploading" | "verifying" | "verified" | "verification_failed" | "interrupted";
+    transcriptJobState: "queued" | "running" | "partial_result" | "completed" | "failed" | "cancelled";
+    approvedRevisionId: string | null;
+    currentRevisionId: string | null;
+  },
+  assignmentRole: AssignmentRole,
+): "Actionable" | "Waiting" | "Reopen authority" {
+  if (isIngestFailure(recording)) {
+    throw new CasefileCommandError(
+      "VALIDATION_ERROR",
+      "Review work cannot be assigned until ingest recovers.",
+    );
+  }
+
+  if (recording.approvedRevisionId && assignmentRole === "reviewer") {
+    throw new CasefileCommandError(
+      "VALIDATION_ERROR",
+      "Reviewer work cannot be assigned to an approved casefile.",
+    );
+  }
+
+  if (recording.approvedRevisionId) {
+    return "Reopen authority";
+  }
+
+  if (isProcessing(recording)) {
+    return "Waiting";
+  }
+
+  return "Actionable";
+}
+
 function activeStatusCondition(statuses: AssignmentStatus[]) {
   return statuses.length === 1
     ? eq(recordingAssignments.status, statuses[0])
@@ -74,6 +135,9 @@ function getRecordingContext(db: AppDatabase, recordingId: string) {
       id: recordings.id,
       workspaceId: recordings.workspaceId,
       currentRevisionId: recordings.currentRevisionId,
+      approvedRevisionId: recordings.approvedRevisionId,
+      integrityState: recordings.integrityState,
+      transcriptJobState: recordings.transcriptJobState,
       uploadedByUserId: recordings.uploadedByUserId,
     })
     .from(recordings)
@@ -264,6 +328,8 @@ export function assignRecordingToUser(
     }
 
     const recording = getRecordingContextOrThrow(db, params.recordingId);
+    assertAssignmentCompatible(recording, assignmentRole);
+
     const assignment: RecordingAssignment = {
       id: crypto.randomUUID(),
       recordingId: params.recordingId,

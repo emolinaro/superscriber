@@ -54,6 +54,8 @@ function insertRecording(
     currentRevisionId?: string | null;
     currentRevisionState?: "draft" | "approved";
     approvedRevisionId?: string | null;
+    integrityState?: "capturing" | "uploading" | "verifying" | "verified" | "verification_failed" | "interrupted";
+    transcriptJobState?: "queued" | "running" | "partial_result" | "completed" | "failed" | "cancelled";
     updatedAt: string;
   },
 ) {
@@ -89,8 +91,8 @@ function insertRecording(
     uploadedByUserId: params.uploadedByUserId,
     ingestionSessionId: null,
     transcriptJobId: null,
-    integrityState: "verified",
-    transcriptJobState: "completed",
+    integrityState: params.integrityState ?? "verified",
+    transcriptJobState: params.transcriptJobState ?? "completed",
     currentRevisionId: params.currentRevisionId ?? null,
     approvedRevisionId: params.approvedRevisionId ?? null,
     pendingRevisionId: null,
@@ -204,7 +206,7 @@ describe("listAdministration", () => {
     }
   });
 
-  it("returns active and history assignment sections with filters and assignable state labels", async () => {
+  it("returns active and history assignment sections with exact columns, UTC filters, and truthful compatibility facts", async () => {
     const bundle = openAppDatabase(":memory:");
     insertWorkspace(bundle);
 
@@ -284,6 +286,7 @@ describe("listAdministration", () => {
         uploadedByUserId: uploader.userId,
         currentRevisionId: "rev-record",
         currentRevisionState: "draft",
+        transcriptJobState: "running",
         updatedAt: "2026-08-01T12:06:00.000Z",
       });
       insertAssignment(bundle, {
@@ -302,14 +305,46 @@ describe("listAdministration", () => {
         throw new Error("Expected assignments section.");
       }
       expect(activeView.filters.status).toBe("active");
+      expect(activeView.columns.map((column) => column.id)).toEqual([
+        "recording",
+        "stage",
+        "user",
+        "role",
+        "updatedAt",
+        "actions",
+      ]);
       expect(activeView.assignments.map((assignment) => assignment.status)).toEqual([
         "active",
         "active",
       ]);
       expect(activeView.recordings).toEqual(
         expect.arrayContaining([
-          expect.objectContaining({ recordingId: "rec-draft", stageLabel: "Draft review" }),
-          expect.objectContaining({ recordingId: "rec-approved", stageLabel: "Approved" }),
+          expect.objectContaining({
+            recordingId: "rec-draft",
+            stageLabel: "Draft review",
+            compatibility: expect.objectContaining({
+              reviewer: expect.objectContaining({ allowed: true, label: "Actionable" }),
+              approver: expect.objectContaining({ allowed: true, label: "Actionable" }),
+            }),
+          }),
+          expect.objectContaining({
+            recordingId: "rec-approved",
+            stageLabel: "Approved",
+            compatibility: expect.objectContaining({
+              reviewer: expect.objectContaining({
+                allowed: false,
+                reason: "Reviewer work cannot be assigned to an approved casefile.",
+              }),
+              approver: expect.objectContaining({ allowed: true, label: "Reopen authority" }),
+            }),
+          }),
+          expect.objectContaining({
+            recordingId: "rec-record",
+            stageLabel: "Transcribing",
+            compatibility: expect.objectContaining({
+              reviewer: expect.objectContaining({ allowed: true, label: "Waiting" }),
+            }),
+          }),
         ]),
       );
 
@@ -329,11 +364,26 @@ describe("listAdministration", () => {
       if (historyView.section !== "assignments") {
         throw new Error("Expected assignments section.");
       }
+      expect(historyView.columns.map((column) => column.id)).toEqual([
+        "recording",
+        "user",
+        "role",
+        "outcome",
+        "completedRevision",
+        "updatedAt",
+      ]);
+      expect(historyView.filters.from).toBe("2026-08-01T12:02:00.000Z");
+      expect(historyView.filters.to).toBe("2026-08-01T12:03:30.000Z");
       expect(historyView.assignments.map((assignment) => assignment.status)).toEqual([
         "completed",
       ]);
-      expect(historyView.assignments[0]?.href).toBe(
-        "/recordings/rec-approved?revision=rev-approved",
+      expect(historyView.assignments[0]).toEqual(
+        expect.objectContaining({
+          outcomeLabel: "Completed",
+          completedRevisionId: "rev-approved",
+          completedRevisionLabel: "Approved v1",
+          href: "/recordings/rec-approved?revision=rev-approved",
+        }),
       );
     } finally {
       bundle.sqlite.close();

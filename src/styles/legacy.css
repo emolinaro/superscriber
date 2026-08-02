@@ -484,29 +484,6 @@
 }
 
 
-.policy-grid {
-  display: grid;
-  gap: 12px;
-}
-
-.admin-list {
-  display: grid;
-  gap: 12px;
-}
-
-.policy-row {
-  display: flex;
-  justify-content: space-between;
-  gap: 16px;
-  padding-bottom: 10px;
-  border-bottom: 1px solid var(--line);
-}
-
-.policy-row:last-child {
-  padding-bottom: 0;
-  border-bottom: 0;
-}
-
 .form-grid,
 .transcript-grid,
 .segment-list,

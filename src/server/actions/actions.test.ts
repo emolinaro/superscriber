@@ -415,7 +415,8 @@ describe("typed administration actions", () => {
       ok: true,
       notice: "Reviewer 2 can now sign in as reviewer.",
       data: {
-        href: "/workspace",
+        href: "/administration?section=accounts",
+        userId: "user-2",
       },
     });
   });
@@ -436,7 +437,9 @@ describe("typed administration actions", () => {
       ok: true,
       notice: "Recording assignment updated.",
       data: {
-        href: "/workspace",
+        href: "/administration?section=assignments",
+        assignmentId: "assign-1",
+        alreadyActive: false,
       },
     });
 
@@ -448,8 +451,29 @@ describe("typed administration actions", () => {
       ok: true,
       notice: "Recording assignment removed.",
       data: {
-        href: "/workspace",
+        href: "/administration?section=assignments",
+        assignmentId: "assign-1",
       },
+    });
+  });
+
+  it("surfaces forged assignment compatibility denials without redirecting", async () => {
+    assignRecordingToUserMock.mockImplementation(() => {
+      throw new CasefileCommandError(
+        "VALIDATION_ERROR",
+        "Review work cannot be assigned until ingest recovers.",
+      );
+    });
+
+    await expect(
+      assignRecordingAction({
+        recordingId: "rec-failed",
+        userId: "user-2",
+      }),
+    ).resolves.toEqual({
+      ok: false,
+      code: "VALIDATION_ERROR",
+      message: "Review work cannot be assigned until ingest recovers.",
     });
   });
 });
@@ -469,6 +493,8 @@ describe("typed admin action mode actions", () => {
       startedAt: "2026-08-01T12:00:00.000Z",
       expiresAt: "2026-08-01T12:30:00.000Z",
       adminUserId: "admin-1",
+      adminDisplayName: "Admin",
+      baseRole: "admin",
       endedAt: null,
       endReason: null,
     };
