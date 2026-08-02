@@ -1,5 +1,5 @@
 import { redirect } from "next/navigation";
-import { IngestPanel } from "@/components/ingest-panel";
+import { IngestFlow } from "@/components/ingest/ingest-flow";
 import { requireActivePrincipal } from "@/server/session";
 
 export const dynamic = "force-dynamic";
@@ -18,13 +18,14 @@ export default async function IngestPage() {
       <section className="surface-intro surface-intro--ingest">
         <div className="surface-intro__copy">
           <p className="surface-intro__eyebrow">Governed ingest</p>
-          <h1 className="surface-intro__title">Capture or upload directly into the managed queue.</h1>
+          <h1 className="surface-intro__title">Bring audio into the governed queue without losing your place.</h1>
           <p className="surface-intro__description">
-            This temporary wrapper keeps the current ingest component available while the new ingest experience lands in a later task.
+            Choose a source, add the required details, and let the browser resume from the
+            last committed byte when a transfer is interrupted.
           </p>
         </div>
       </section>
-      <IngestPanel />
+      <IngestFlow principalRole={principal.role} />
     </div>
   );
 }

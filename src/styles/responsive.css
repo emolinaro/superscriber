@@ -48,7 +48,9 @@
   .work-filters-surface,
   .work-next-action,
   .work-ledger,
-  .work-loading {
+  .work-loading,
+  .ingest-status-card,
+  .ingest-transfer-card {
     padding: var(--space-4);
   }
 
@@ -81,12 +83,22 @@
   }
 
   .work-tabs__link,
-  .recording-action {
+  .recording-action,
+  .ingest-actions .button,
+  .ingest-capture__actions .button {
     width: 100%;
   }
 
   .recording-card,
-  .recording-list__item {
+  .recording-list__item,
+  .ingest-source-option,
+  .ingest-shell,
+  .ingest-loading-block--button {
     min-width: 0;
+  }
+
+  .ingest-capture__actions,
+  .ingest-actions {
+    width: 100%;
   }
 }

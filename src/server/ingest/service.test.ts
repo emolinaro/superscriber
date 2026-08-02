@@ -1,4 +1,4 @@
-import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync, unlinkSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -399,11 +399,44 @@ describe("resumable ingest service", () => {
     );
   });
 
-  it("fails finalize when uploaded bytes do not match the expected size", async () => {
+  it("fails finalize when the temporary upload is missing and forces restart", async () => {
     const payload = Buffer.from("governed-upload");
     const session = createResumableUploadSession({
       principal: uploaderPrincipal,
       title: "Interview 007",
+      languageHint: "english",
+      source: "upload",
+      fileName: "interview.wav",
+      mimeType: "audio/wav",
+      fileSize: payload.length,
+    });
+
+    appendUploadChunk({
+      principal: uploaderPrincipal,
+      sessionId: session.sessionId,
+      chunkStart: 0,
+      bytes: payload,
+    });
+
+    unlinkSync(join(process.env.SUPERSCRIBER_UPLOAD_TMP_DIR ?? "", `${session.sessionId}.upload`));
+
+    await expect(
+      finalizeResumableUploadSession(session.sessionId, uploaderPrincipal),
+    ).rejects.toMatchObject({
+      code: "STATE_CHANGED",
+      message: "Temporary upload is missing. Start a new upload session.",
+    });
+
+    const failed = getResumableUploadSession(session.sessionId, uploaderPrincipal);
+    expect(failed.state).toBe("verification_failed");
+    expect(failed.nextAction).toBe("restart");
+  });
+
+  it("fails finalize when uploaded bytes do not match the expected size", async () => {
+    const payload = Buffer.from("governed-upload");
+    const session = createResumableUploadSession({
+      principal: uploaderPrincipal,
+      title: "Interview 007b",
       languageHint: "english",
       source: "upload",
       fileName: "interview.wav",
