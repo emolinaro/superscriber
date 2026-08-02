@@ -23,8 +23,18 @@ const LANGUAGE_ERROR_MESSAGE = "Choose a language.";
 const FILE_ERROR_MESSAGE = "Choose a file to upload.";
 const RECORDING_ERROR_MESSAGE = "Record audio before uploading.";
 const SUCCESS_NOTICE = "Upload received. Verification has started.";
+const STORED_UPLOAD_CHECK_MESSAGE = "Superscriber is checking the stored upload.";
+const STORED_UPLOAD_CHECK_DETAIL =
+  "Superscriber is checking the stored upload. Choose the same file again or reload this page so it can confirm whether verification already started.";
 
 type FlowState = "idle" | "preparing" | "uploading" | "interrupted" | "finalizing";
+
+function isDurablyFinalized(status: UploadSessionStatus) {
+  return (
+    status.nextAction === "none" &&
+    (status.integrityState === "verified" || status.integrityState === "verifying" || status.state === "verified")
+  );
+}
 
 function uploadLabelForSource(source: RecordingSource) {
   return source === "record" ? "Upload recording" : "Upload file";
@@ -87,6 +97,29 @@ export function IngestFlow({
     setAnnouncement("");
   }
 
+  function finishDurableUpload(status: UploadSessionStatus) {
+    clearPendingIngest();
+    setResumeNotice(null);
+    const query = new URLSearchParams();
+    if (status.warning) {
+      query.set("error", status.warning);
+    } else {
+      query.set("notice", SUCCESS_NOTICE);
+    }
+
+    const destination =
+      principalRole === "admin" ? `/recordings/${status.recordingId}` : "/workspace";
+    router.push(`${destination}?${query.toString()}`);
+    router.refresh();
+  }
+
+  function showStoredUploadChecking() {
+    setFlowState("interrupted");
+    setAnnouncement(STORED_UPLOAD_CHECK_MESSAGE);
+    setStatusMessage(STORED_UPLOAD_CHECK_MESSAGE);
+    setResumeNotice({ tone: "info", message: STORED_UPLOAD_CHECK_DETAIL });
+  }
+
   async function refreshPendingNotice(sessionId: string, fileName: string) {
     try {
       const response = await fetch(`/api/ingest/sessions/${sessionId}`, {
@@ -121,11 +154,15 @@ export function IngestFlow({
         return status;
       }
 
-      clearPendingIngest();
-      setResumeNotice({ tone: "info", message: SUCCESS_NOTICE });
+      if (isDurablyFinalized(status)) {
+        finishDurableUpload(status);
+        return status;
+      }
+
+      showStoredUploadChecking();
       return status;
     } catch {
-      clearPendingIngest();
+      showStoredUploadChecking();
       return null;
     }
   }
@@ -218,33 +255,52 @@ export function IngestFlow({
     return status;
   }
 
+  async function reconcileFinalizeResponseLoss(session: UploadSessionStatus) {
+    try {
+      const status = await loadSession(session.sessionId);
+
+      if (status.nextAction === "restart") {
+        const message =
+          status.verificationSummary ||
+          "The previous upload can no longer continue. Start a new upload.";
+        clearPendingIngest();
+        setFlowState("interrupted");
+        setAnnouncement(message);
+        setStatusMessage(message);
+        setResumeNotice({ tone: "warning", message });
+        return;
+      }
+
+      if (isDurablyFinalized(status)) {
+        finishDurableUpload(status);
+        return;
+      }
+    } catch {
+      // Fall through to the safe checking copy below.
+    }
+
+    showStoredUploadChecking();
+  }
+
   async function finalizeUpload(session: UploadSessionStatus) {
     setFlowState("finalizing");
     setStatusMessage("Upload complete. Finalizing verification.");
     setAnnouncement("Finalizing upload.");
 
-    const response = await fetch(`/api/ingest/sessions/${session.sessionId}/finalize`, {
-      method: "POST",
-    });
-    const { status } = await readJson<{
-      ok: true;
-      status: UploadSessionStatus;
-      nextPath: string;
-    }>(response);
+    try {
+      const response = await fetch(`/api/ingest/sessions/${session.sessionId}/finalize`, {
+        method: "POST",
+      });
+      const { status } = await readJson<{
+        ok: true;
+        status: UploadSessionStatus;
+        nextPath: string;
+      }>(response);
 
-    clearPendingIngest();
-    setResumeNotice(null);
-    const query = new URLSearchParams();
-    if (status.warning) {
-      query.set("error", status.warning);
-    } else {
-      query.set("notice", SUCCESS_NOTICE);
+      finishDurableUpload(status);
+    } catch {
+      await reconcileFinalizeResponseLoss(session);
     }
-
-    const destination =
-      principalRole === "admin" ? `/recordings/${status.recordingId}` : "/workspace";
-    router.push(`${destination}?${query.toString()}`);
-    router.refresh();
   }
 
   async function uploadChunks(file: File, session: UploadSessionStatus) {
@@ -329,6 +385,11 @@ export function IngestFlow({
         }
       } else {
         session = await createSession(file, source);
+      }
+
+      if (isDurablyFinalized(session)) {
+        finishDurableUpload(session);
+        return;
       }
 
       if (session.nextAction === "finalize") {

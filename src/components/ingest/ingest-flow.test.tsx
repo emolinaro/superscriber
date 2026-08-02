@@ -463,6 +463,125 @@ describe("IngestFlow", () => {
     });
   });
 
+  it("reconciles a lost finalize response from authoritative status without re-finalizing", async () => {
+    const user = userEvent.setup();
+    const file = new File(["abcdef"], "clip.wav", {
+      type: "audio/wav",
+      lastModified: 1234,
+    });
+
+    vi.mocked(fetch)
+      .mockImplementationOnce(() => mockJsonResponse({ ok: true, status: buildStatus() }))
+      .mockImplementationOnce(() =>
+        mockJsonResponse({ ok: true, status: buildStatus({ bytesReceived: 6, progressPercent: 100, nextAction: "finalize" }) }),
+      )
+      .mockImplementationOnce(() => Promise.reject(new TypeError("Failed to fetch")))
+      .mockImplementationOnce(() =>
+        mockJsonResponse({
+          ok: true,
+          status: buildStatus({
+            bytesReceived: 6,
+            progressPercent: 100,
+            nextAction: "none",
+            state: "verified",
+            integrityState: "verified",
+            tempFilePresent: false,
+          }),
+        }),
+      );
+
+    renderFlow("admin");
+
+    await user.type(screen.getByLabelText("Title"), "Interview 001");
+    await user.selectOptions(screen.getByLabelText("Language"), "english");
+    await user.upload(screen.getByLabelText("Audio or video file"), file);
+    await user.click(screen.getByRole("button", { name: "Upload file" }));
+
+    await waitFor(() => {
+      expect(mockPush).toHaveBeenCalledWith(
+        "/recordings/recording-1?notice=Upload+received.+Verification+has+started.",
+      );
+    });
+    expect(window.localStorage.getItem("superscriber.pendingIngest")).toBeNull();
+    expect(
+      vi
+        .mocked(fetch)
+        .mock.calls.filter(([input]) => String(input).includes("/finalize")),
+    ).toHaveLength(1);
+    expect(
+      vi
+        .mocked(fetch)
+        .mock.calls.filter(([input]) => String(input).includes("/chunk")),
+    ).toHaveLength(1);
+  });
+
+  it("keeps safe pending metadata when finalize reconciliation is unreachable and inspects first after reload", async () => {
+    const user = userEvent.setup();
+    const file = new File(["abcdef"], "clip.wav", {
+      type: "audio/wav",
+      lastModified: 1234,
+    });
+
+    vi.mocked(fetch)
+      .mockImplementationOnce(() => mockJsonResponse({ ok: true, status: buildStatus() }))
+      .mockImplementationOnce(() =>
+        mockJsonResponse({ ok: true, status: buildStatus({ bytesReceived: 6, progressPercent: 100, nextAction: "finalize" }) }),
+      )
+      .mockImplementationOnce(() => Promise.reject(new TypeError("Failed to fetch")))
+      .mockImplementationOnce(() => Promise.reject(new TypeError("Failed to fetch")));
+
+    const firstRender = renderFlow();
+
+    await user.type(screen.getByLabelText("Title"), "Interview 001");
+    await user.selectOptions(screen.getByLabelText("Language"), "english");
+    await user.upload(screen.getByLabelText("Audio or video file"), file);
+    await user.click(screen.getByRole("button", { name: "Upload file" }));
+
+    expect(
+      await screen.findByText(
+        "Superscriber is checking the stored upload. Choose the same file again or reload this page so it can confirm whether verification already started.",
+      ),
+    ).toBeVisible();
+    expect(window.localStorage.getItem("superscriber.pendingIngest")).not.toBeNull();
+    expect(mockPush).not.toHaveBeenCalled();
+
+    firstRender.unmount();
+    mockPush.mockReset();
+    vi.mocked(fetch).mockReset();
+    vi.mocked(fetch).mockImplementationOnce(() =>
+      mockJsonResponse({
+        ok: true,
+        status: buildStatus({
+          bytesReceived: 6,
+          progressPercent: 100,
+          nextAction: "none",
+          state: "verified",
+          integrityState: "verified",
+          tempFilePresent: false,
+        }),
+      }),
+    );
+
+    renderFlow();
+
+    await waitFor(() => {
+      expect(mockPush).toHaveBeenCalledWith(
+        "/workspace?notice=Upload+received.+Verification+has+started.",
+      );
+    });
+    expect(window.localStorage.getItem("superscriber.pendingIngest")).toBeNull();
+    expect(
+      vi
+        .mocked(fetch)
+        .mock.calls.filter(([input]) => String(input).includes("/finalize")),
+    ).toHaveLength(0);
+    expect(
+      vi
+        .mocked(fetch)
+        .mock.calls.filter(([input]) => String(input).includes("/chunk")),
+    ).toHaveLength(0);
+  });
+
   it("routes durable dispatch failures without asking for a re-upload", async () => {
     const user = userEvent.setup();
     const file = new File(["abcdef"], "clip.wav", {
