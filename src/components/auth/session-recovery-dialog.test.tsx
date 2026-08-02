@@ -53,6 +53,29 @@ describe("SessionRecoveryDialog", () => {
     mockSignIn.mockReset();
   });
 
+  it("focuses the error summary and clears the password after a failed recovery", async () => {
+    const user = userEvent.setup();
+    const appRoot = document.createElement("div");
+    appRoot.id = "app-root";
+    document.body.append(appRoot);
+    mockSignIn.mockResolvedValue({ ok: false, error: "CredentialsSignin" });
+
+    render(<RecoveryHarness />, { container: appRoot });
+
+    await user.click(screen.getByRole("button", { name: "Save draft" }));
+    await user.type(screen.getByLabelText("Email"), "reviewer@example.com");
+    await user.type(screen.getByLabelText("Password"), "wrong password");
+    await user.click(screen.getByRole("button", { name: "Recover session" }));
+
+    await waitFor(() => {
+      expect(screen.getByRole("alert")).toHaveFocus();
+    });
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      "Session recovery failed. Your password was not saved. Try again.",
+    );
+    expect(screen.getByLabelText("Password")).toHaveValue("");
+  });
+
   it("uses redirect:false credentials, restores focus, and does not retry the prior command", async () => {
     const user = userEvent.setup();
     const appRoot = document.createElement("div");

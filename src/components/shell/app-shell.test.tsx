@@ -53,6 +53,22 @@ describe("AppShell", () => {
     expect(links.every((link) => link.classList.contains("interactive-target"))).toBe(true);
   });
 
+  it("marks the active navigation link with aria-current and keeps the header styling hook", () => {
+    mockUsePathname.mockReturnValue("/administration/accounts");
+
+    render(
+      <AppShell principal={principal("admin")}>
+        <div>Workspace body</div>
+      </AppShell>,
+    );
+
+    expect(screen.getByRole("banner")).toHaveClass("app-shell__header");
+    expect(screen.getByRole("link", { name: "Administration", current: "page" })).toHaveClass(
+      "app-shell__nav-link",
+    );
+    expect(screen.getByRole("link", { name: "Work" })).not.toHaveAttribute("aria-current");
+  });
+
   it("renders a skip link, 44 px target class hooks, and account details", async () => {
     const user = userEvent.setup();
 

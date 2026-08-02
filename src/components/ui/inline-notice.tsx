@@ -9,8 +9,13 @@ export function InlineNotice({
   tone: NoticeTone;
   children: ReactNode;
 }) {
+  const liveProps =
+    tone === "danger"
+      ? ({ role: "alert" } as const)
+      : ({ "aria-live": "polite", role: "status" } as const);
+
   return (
-    <div className="inline-notice" data-tone={tone} role="status">
+    <div className="inline-notice" data-tone={tone} {...liveProps}>
       <span aria-hidden="true" className="inline-notice__icon">
         {tone === "success" ? "✓" : tone === "warning" ? "!" : tone === "danger" ? "×" : "i"}
       </span>

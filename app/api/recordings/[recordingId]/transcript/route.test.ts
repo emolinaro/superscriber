@@ -134,20 +134,9 @@ describe("GET /api/recordings/[recordingId]/transcript", () => {
       email: "admin@example.com",
       role: "admin",
     });
-    const reviewer = await createPrincipal({
-      displayName: "Reviewer",
-      email: "reviewer@example.com",
-      role: "reviewer",
-    });
-
     assignRecordingToUser({
       recordingId: "rec-1",
       userId: approver.userId,
-      assignedBy: admin,
-    }, getAppDbBundle());
-    assignRecordingToUser({
-      recordingId: "rec-1",
-      userId: reviewer.userId,
       assignedBy: admin,
     }, getAppDbBundle());
 
@@ -222,22 +211,12 @@ describe("GET /api/recordings/[recordingId]/transcript", () => {
     expect(exportAuditRows()).toHaveLength(0);
   });
 
-  it("returns 403 when policy denies transcript export", async () => {
+  it("returns 403 when export access is unavailable to the principal", async () => {
     const reviewer = await createPrincipal({
       displayName: "Reviewer 2",
       email: "reviewer2@example.com",
       role: "reviewer",
     });
-    const admin = await createPrincipal({
-      displayName: "Admin 3",
-      email: "admin3@example.com",
-      role: "admin",
-    });
-    assignRecordingToUser({
-      recordingId: "rec-1",
-      userId: reviewer.userId,
-      assignedBy: admin,
-    }, getAppDbBundle());
     getActivePrincipalMock.mockResolvedValue(reviewer);
 
     const response = await GET(

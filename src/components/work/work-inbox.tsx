@@ -8,10 +8,10 @@ import { WorkFilters } from "./work-filters";
 
 const EMPTY_COPY: Record<UserRole, Record<string, string>> = {
   uploader: {
-    "my-uploads": "No uploads are in this view.",
-    "needs-attention": "No uploads are in this view.",
-    processing: "No uploads are in this view.",
-    ready: "No uploads are in this view.",
+    "my-uploads": "No uploads yet.",
+    "needs-attention": "No uploads yet.",
+    processing: "No uploads yet.",
+    ready: "No uploads yet.",
   },
   reviewer: {
     "to-review": "No transcript review is assigned to you.",
@@ -19,16 +19,16 @@ const EMPTY_COPY: Record<UserRole, Record<string, string>> = {
     completed: "No transcript review is assigned to you.",
   },
   approver: {
-    "to-decide": "No approval decision is assigned to you.",
-    waiting: "No approval decision is assigned to you.",
-    completed: "No approval decision is assigned to you.",
+    "to-decide": "No approval decision is waiting for you.",
+    waiting: "No approval decision is waiting for you.",
+    completed: "No approval decision is waiting for you.",
   },
   admin: {
-    all: "No recordings are in this view.",
-    "needs-attention": "No recordings are in this view.",
-    review: "No recordings are in this view.",
-    approval: "No recordings are in this view.",
-    approved: "No recordings are in this view.",
+    all: "No recordings match these filters.",
+    "needs-attention": "No recordings match these filters.",
+    review: "No recordings match these filters.",
+    approval: "No recordings match these filters.",
+    approved: "No recordings match these filters.",
   },
 };
 

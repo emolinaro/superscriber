@@ -2,11 +2,11 @@
 
 import { useEffect, useMemo, useState } from "react";
 import type { CasefileViewModel } from "@/server/casefile/read-model";
+import { Modal } from "@/components/ui/modal";
 
 const GOVERNANCE_TABS = ["Policy", "Provenance", "Assignments", "Revisions", "Decisions", "Audit"] as const;
 
 type GovernanceTab = (typeof GOVERNANCE_TABS)[number];
-
 type ViewportMode = "phone" | "tablet" | "desktop";
 
 function readViewportMode(): ViewportMode {
@@ -95,21 +95,53 @@ function tabPanel(casefile: CasefileViewModel, tab: GovernanceTab) {
   }
 }
 
-function DesktopDrawer({
-  casefile,
-  open,
-  setOpen,
+function GovernanceTabs({
   activeTab,
+  casefile,
   setActiveTab,
 }: {
-  casefile: CasefileViewModel;
-  open: boolean;
-  setOpen: (value: boolean) => void;
   activeTab: GovernanceTab;
+  casefile: CasefileViewModel;
   setActiveTab: (value: GovernanceTab) => void;
 }) {
   return (
-    <aside className="governance-drawer" data-open={open || undefined}>
+    <>
+      <div aria-label="Governance tabs" className="governance-tabs" role="tablist">
+        {GOVERNANCE_TABS.map((tab) => (
+          <button
+            aria-selected={activeTab === tab}
+            className="governance-tabs__tab"
+            key={tab}
+            onClick={() => setActiveTab(tab)}
+            role="tab"
+            type="button"
+          >
+            {tab}
+          </button>
+        ))}
+      </div>
+      <div className="governance-panel" role="tabpanel">
+        {tabPanel(casefile, activeTab)}
+      </div>
+    </>
+  );
+}
+
+function DesktopDrawer({
+  activeTab,
+  casefile,
+  open,
+  setActiveTab,
+  setOpen,
+}: {
+  activeTab: GovernanceTab;
+  casefile: CasefileViewModel;
+  open: boolean;
+  setActiveTab: (value: GovernanceTab) => void;
+  setOpen: (value: boolean) => void;
+}) {
+  return (
+    <aside aria-label="Governance" className="governance-drawer" data-open={open || undefined}>
       <button
         aria-expanded={open}
         className="button button-secondary governance-drawer__toggle"
@@ -120,23 +152,7 @@ function DesktopDrawer({
       </button>
       {open ? (
         <div className="governance-drawer__surface">
-          <div aria-label="Governance tabs" className="governance-tabs" role="tablist">
-            {GOVERNANCE_TABS.map((tab) => (
-              <button
-                aria-selected={activeTab === tab}
-                className="governance-tabs__tab"
-                key={tab}
-                onClick={() => setActiveTab(tab)}
-                role="tab"
-                type="button"
-              >
-                {tab}
-              </button>
-            ))}
-          </div>
-          <div className="governance-panel" role="tabpanel">
-            {tabPanel(casefile, activeTab)}
-          </div>
+          <GovernanceTabs activeTab={activeTab} casefile={casefile} setActiveTab={setActiveTab} />
         </div>
       ) : null}
     </aside>
@@ -144,17 +160,17 @@ function DesktopDrawer({
 }
 
 function TabletDrawer({
+  activeTab,
   casefile,
   open,
-  setOpen,
-  activeTab,
   setActiveTab,
+  setOpen,
 }: {
+  activeTab: GovernanceTab;
   casefile: CasefileViewModel;
   open: boolean;
-  setOpen: (value: boolean) => void;
-  activeTab: GovernanceTab;
   setActiveTab: (value: GovernanceTab) => void;
+  setOpen: (value: boolean) => void;
 }) {
   return (
     <div className="governance-tablet-drawer">
@@ -166,32 +182,19 @@ function TabletDrawer({
       >
         Open governance
       </button>
-      {open ? (
-        <div className="governance-tablet-drawer__backdrop" role="presentation">
-          <aside aria-label="Governance" aria-modal="true" className="governance-tablet-drawer__surface" role="dialog">
-            <div aria-label="Governance tabs" className="governance-tabs" role="tablist">
-              {GOVERNANCE_TABS.map((tab) => (
-                <button
-                  aria-selected={activeTab === tab}
-                  className="governance-tabs__tab"
-                  key={tab}
-                  onClick={() => setActiveTab(tab)}
-                  role="tab"
-                  type="button"
-                >
-                  {tab}
-                </button>
-              ))}
-            </div>
-            <div className="governance-panel" role="tabpanel">
-              {tabPanel(casefile, activeTab)}
-            </div>
-            <button className="button button-primary" onClick={() => setOpen(false)} type="button">
-              Close governance
-            </button>
-          </aside>
-        </div>
-      ) : null}
+      <Modal
+        backdropClassName="governance-tablet-drawer__backdrop"
+        description="Inspect policy, provenance, assignments, revisions, decisions, and audit facts."
+        onClose={() => setOpen(false)}
+        open={open}
+        surfaceClassName="governance-tablet-drawer__surface"
+        title="Governance"
+      >
+        <GovernanceTabs activeTab={activeTab} casefile={casefile} setActiveTab={setActiveTab} />
+        <button className="button button-primary" onClick={() => setOpen(false)} type="button">
+          Close governance
+        </button>
+      </Modal>
     </div>
   );
 }
@@ -209,7 +212,13 @@ function PhoneAccordions({ casefile }: { casefile: CasefileViewModel }) {
   );
 }
 
-export function GovernanceDrawer({ casefile }: { casefile: CasefileViewModel }) {
+export function GovernanceDrawer({
+  casefile,
+  onOpenChange,
+}: {
+  casefile: CasefileViewModel;
+  onOpenChange?: (open: boolean) => void;
+}) {
   const [viewportMode, setViewportMode] = useState<ViewportMode>("phone");
   const [open, setOpen] = useState(false);
   const [activeTab, setActiveTab] = useState<GovernanceTab>("Policy");
@@ -222,10 +231,14 @@ export function GovernanceDrawer({ casefile }: { casefile: CasefileViewModel }) 
   }, []);
 
   useEffect(() => {
-    if (viewportMode !== "desktop") {
+    if (viewportMode === "phone") {
       setOpen(false);
     }
   }, [viewportMode]);
+
+  useEffect(() => {
+    onOpenChange?.(viewportMode === "desktop" && open);
+  }, [onOpenChange, open, viewportMode]);
 
   const drawer = useMemo(() => {
     if (viewportMode === "phone") {

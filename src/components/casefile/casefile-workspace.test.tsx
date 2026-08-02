@@ -255,6 +255,45 @@ describe("CasefileWorkspace", () => {
       "_blank",
     );
     expect(within(conflict).getByRole("button", { name: "Discard local changes and reload latest" })).toBeVisible();
+    expect(screen.queryByRole("button", { name: "Save draft" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Submit for approval" })).not.toBeInTheDocument();
+  });
+
+  it("shows a safe completed-without-revision notice and no capability controls", () => {
+    renderWorkspace({
+      stage: "completed",
+      stageLabel: "Completed",
+      revision: null,
+      revisions: [],
+      capabilities: {
+        ...createCasefile().capabilities,
+        canEdit: false,
+        canSave: false,
+        canSubmit: false,
+        canWithdraw: false,
+        canApprove: false,
+        canRequestChanges: false,
+        canReopen: false,
+        canExport: false,
+      },
+      nextActions: [],
+      processing: {
+        active: false,
+        integrityState: "verified",
+        transcriptJobState: "completed",
+        progressPercent: null,
+        etaSeconds: null,
+        verificationSummary: "Transcript processing completed.",
+        recoveryHint: "Return to Work while the governed revision is repaired.",
+      },
+    });
+
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      "Transcript processing completed without a revision.",
+    );
+    expect(screen.queryByRole("textbox")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Save draft" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Submit for approval" })).not.toBeInTheDocument();
   });
 
   it("does not render mutation controls in phone safety mode", () => {

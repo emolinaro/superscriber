@@ -3,7 +3,7 @@
 export default function RootError({
   reset,
 }: {
-  error: Error & { digest?: string };
+  error: Error & { digest?: string; correlationId?: string };
   reset: () => void;
 }) {
   return (
@@ -11,7 +11,7 @@ export default function RootError({
       <section className="surface-intro stack">
         <div>
           <p className="surface-intro__eyebrow">Authentication</p>
-          <h1 className="surface-intro__title">The sign-in page could not be loaded safely.</h1>
+          <h1 className="surface-intro__title">Superscriber could not load sign-in.</h1>
           <p className="surface-intro__description">
             Retry the page. No credentials were saved.
           </p>

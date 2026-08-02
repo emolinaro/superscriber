@@ -20,6 +20,7 @@ import type { CasefileConflictSnapshot } from "@/server/casefile/errors";
 import type { CommandResult } from "@/lib/command-result";
 import { OrchestrationStatusPoller } from "@/components/orchestration-status-poller";
 import { SessionRecoveryDialog } from "@/components/auth/session-recovery-dialog";
+import { InlineNotice } from "@/components/ui/inline-notice";
 import { usePhoneSafetyMode } from "@/components/ui/phone-safety";
 import { AdminActionModeBanner, type AdminActionModeResult } from "./admin-action-mode-banner";
 import { CaseHeader } from "./case-header";
@@ -164,34 +165,62 @@ function latestApprovedDecision(casefile: CasefileViewModel) {
   return null;
 }
 
+function CasefileStatusCards({ casefile }: { casefile: CasefileViewModel }) {
+  return (
+    <div className="casefile-status-only__grid">
+      <article className="panel panel-strong">
+        <div className="panel-inner stack-tight">
+          <h2 className="section-title">Processing progress</h2>
+          <p className="body-copy">
+            {casefile.processing.progressPercent === null
+              ? casefile.stageLabel
+              : `${Math.round(casefile.processing.progressPercent)}% complete`}
+          </p>
+          <p className="field-note">{casefile.processing.verificationSummary ?? "Status available."}</p>
+          {casefile.processing.recoveryHint ? (
+            <p className="field-note">{casefile.processing.recoveryHint}</p>
+          ) : null}
+        </div>
+      </article>
+      <article className="panel panel-strong">
+        <div className="panel-inner stack-tight">
+          <h2 className="section-title">Safe metadata</h2>
+          <p className="body-copy">Source: {casefile.sourceLabel}</p>
+          <p className="body-copy">Language: {casefile.provenance.languageHint}</p>
+          <p className="field-note">Updated {casefile.updatedAtLabel}</p>
+        </div>
+      </article>
+    </div>
+  );
+}
+
+function unresolvedCasefileNotice(casefile: CasefileViewModel, conflict: CasefileConflictSnapshot | null) {
+  if (conflict) {
+    return null;
+  }
+
+  if (casefile.processing.active) {
+    return {
+      tone: "warning" as const,
+      message: "Transcript processing is still running. Check the progress below.",
+    };
+  }
+
+  if (!casefile.revision) {
+    return {
+      tone: "danger" as const,
+      message: "Transcript processing completed without a revision.",
+    };
+  }
+
+  return null;
+}
+
 function UploaderStatusCasefile({ casefile }: { casefile: CasefileViewModel }) {
   return (
     <section className="casefile-status-only" aria-label="Recording status">
       <CaseHeader casefile={casefile} />
-      <div className="casefile-status-only__grid">
-        <article className="panel panel-strong">
-          <div className="panel-inner stack-tight">
-            <h2 className="section-title">Processing progress</h2>
-            <p className="body-copy">
-              {casefile.processing.progressPercent === null
-                ? casefile.stageLabel
-                : `${Math.round(casefile.processing.progressPercent)}% complete`}
-            </p>
-            <p className="field-note">{casefile.processing.verificationSummary ?? "Status available."}</p>
-            {casefile.processing.recoveryHint ? (
-              <p className="field-note">{casefile.processing.recoveryHint}</p>
-            ) : null}
-          </div>
-        </article>
-        <article className="panel panel-strong">
-          <div className="panel-inner stack-tight">
-            <h2 className="section-title">Safe metadata</h2>
-            <p className="body-copy">Source: {casefile.sourceLabel}</p>
-            <p className="body-copy">Language: {casefile.provenance.languageHint}</p>
-            <p className="field-note">Updated {casefile.updatedAtLabel}</p>
-          </div>
-        </article>
-      </div>
+      <CasefileStatusCards casefile={casefile} />
     </section>
   );
 }
@@ -231,6 +260,7 @@ export function CasefileWorkspace({
   const [activeSegmentId, setActiveSegmentId] = useState(
     initialCasefile.revision?.segments?.[0]?.id ?? null,
   );
+  const [governanceOpen, setGovernanceOpen] = useState(false);
   const [seekRequestMs, setSeekRequestMs] = useState<number | null>(null);
   const [liveMessage, setLiveMessage] = useState("");
   const focusKeyRef = useRef<string | null>(null);
@@ -301,7 +331,13 @@ export function CasefileWorkspace({
     return () => document.removeEventListener("focusin", handleFocus);
   }, []);
 
-  const editable = casefile.capabilities.canEdit && !casefile.access.historical && !phoneSafetyMode;
+  const unresolved = conflict !== null || casefile.processing.active || !casefile.revision;
+  const unresolvedNotice = unresolvedCasefileNotice(casefile, conflict);
+  const editable =
+    casefile.capabilities.canEdit &&
+    !casefile.access.historical &&
+    !phoneSafetyMode &&
+    !unresolved;
   const approvedDecision = latestApprovedDecision(casefile);
   const currentCasefileLatestHref = useMemo(
     () => latestHref(casefile, conflict),
@@ -602,14 +638,16 @@ export function CasefileWorkspace({
 
       <CaseHeader casefile={casefile} />
 
-      <AdminActionModeBanner
-        entryOptions={casefile.adminActionModeOptions}
-        onEnter={handleEnterActionMode}
-        onExit={handleExitActionMode}
-        phoneSafetyMode={phoneSafetyMode}
-        recordingTitle={casefile.title}
-        session={casefile.actionMode}
-      />
+      {casefile.revision ? (
+        <AdminActionModeBanner
+          entryOptions={casefile.adminActionModeOptions}
+          onEnter={handleEnterActionMode}
+          onExit={handleExitActionMode}
+          phoneSafetyMode={phoneSafetyMode}
+          recordingTitle={casefile.title}
+          session={casefile.actionMode}
+        />
+      ) : null}
 
       {conflict ? (
         <ConflictPanel
@@ -621,42 +659,55 @@ export function CasefileWorkspace({
         />
       ) : null}
 
-      <div className="casefile-layout">
+      <div
+        className="casefile-layout"
+        data-governance-open={governanceOpen ? "true" : undefined}
+      >
         <main className="casefile-main" id="transcript-main">
-          <MediaTransport
-            activeSegmentId={activeSegmentId}
-            mediaDenialReason={casefile.media.denialReason}
-            mediaKind={casefile.media.kind}
-            mediaUrl={casefile.media.url}
-            onActiveSegmentChange={setActiveSegmentId}
-            onSeekHandled={() => setSeekRequestMs(null)}
-            seekRequestMs={seekRequestMs}
-            segments={segments}
-          />
-          <TranscriptDocument
-            activeSegmentId={activeSegmentId}
-            editable={editable}
-            onSeek={(startMs) => setSeekRequestMs(startMs)}
-            onSummaryChange={updateSummary}
-            onUpdateSpeaker={updateSpeaker}
-            onUpdateText={updateText}
-            phoneSafetyMode={phoneSafetyMode}
-            segments={segments}
-            summary={summary}
-          />
+          {unresolvedNotice ? (
+            <InlineNotice tone={unresolvedNotice.tone}>{unresolvedNotice.message}</InlineNotice>
+          ) : null}
+
+          {casefile.revision ? (
+            <>
+              <MediaTransport
+                activeSegmentId={activeSegmentId}
+                mediaDenialReason={casefile.media.denialReason}
+                mediaKind={casefile.media.kind}
+                mediaUrl={casefile.media.url}
+                onActiveSegmentChange={setActiveSegmentId}
+                onSeekHandled={() => setSeekRequestMs(null)}
+                seekRequestMs={seekRequestMs}
+                segments={segments}
+              />
+              <TranscriptDocument
+                activeSegmentId={activeSegmentId}
+                editable={editable}
+                onSeek={(startMs) => setSeekRequestMs(startMs)}
+                onSummaryChange={updateSummary}
+                onUpdateSpeaker={updateSpeaker}
+                onUpdateText={updateText}
+                phoneSafetyMode={phoneSafetyMode}
+                segments={segments}
+                summary={summary}
+              />
+            </>
+          ) : (
+            <CasefileStatusCards casefile={casefile} />
+          )}
         </main>
-        <GovernanceDrawer casefile={casefile} />
+        <GovernanceDrawer casefile={casefile} onOpenChange={setGovernanceOpen} />
       </div>
 
       <StateActionBar
         assignmentLabel={casefile.assignmentLabel}
-        canApprove={casefile.capabilities.canApprove}
-        canExport={casefile.capabilities.canExport}
-        canReopen={casefile.capabilities.canReopen}
-        canRequestChanges={casefile.capabilities.canRequestChanges}
-        canSave={casefile.capabilities.canSave}
-        canSubmit={casefile.capabilities.canSubmit}
-        canWithdraw={casefile.capabilities.canWithdraw}
+        canApprove={!unresolved && casefile.capabilities.canApprove}
+        canExport={!unresolved && casefile.capabilities.canExport}
+        canReopen={!unresolved && casefile.capabilities.canReopen}
+        canRequestChanges={!unresolved && casefile.capabilities.canRequestChanges}
+        canSave={!unresolved && casefile.capabilities.canSave}
+        canSubmit={!unresolved && casefile.capabilities.canSubmit}
+        canWithdraw={!unresolved && casefile.capabilities.canWithdraw}
         dirty={dirty}
         onApprove={() => {
           if (!phoneSafetyMode) {

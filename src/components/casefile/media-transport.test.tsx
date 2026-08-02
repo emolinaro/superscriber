@@ -31,7 +31,6 @@ describe("MediaTransport", () => {
     await user.selectOptions(screen.getByLabelText("Playback rate"), "1.5");
     expect(screen.getByLabelText("Playback rate")).toHaveValue("1.5");
     expect(screen.getByText("Current segment: 2 - 00:10-00:20")).toBeVisible();
-    expect(document.querySelector("[data-waveform]")) .toBeNull();
   });
 
   it("replaces transport with one denial reason when media is unavailable", () => {

@@ -73,7 +73,6 @@ export function SessionRecoveryDialog({
             if (!result || result.error || result.ok === false) {
               clearPassword();
               setError("Session recovery failed. Your password was not saved. Try again.");
-              passwordRef.current?.focus();
               return;
             }
 

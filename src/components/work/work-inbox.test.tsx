@@ -42,10 +42,10 @@ const reviewerRow: WorkInboxRow = {
 };
 
 const ROLE_EMPTY_COPY: Record<UserRole, string> = {
-  uploader: "No uploads are in this view.",
+  uploader: "No uploads yet.",
   reviewer: "No transcript review is assigned to you.",
-  approver: "No approval decision is assigned to you.",
-  admin: "No recordings are in this view.",
+  approver: "No approval decision is waiting for you.",
+  admin: "No recordings match these filters.",
 };
 
 const ROLE_TABS: Record<UserRole, Array<{ id: string; label: string; count: number }>> = {

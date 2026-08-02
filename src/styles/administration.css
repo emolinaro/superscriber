@@ -3,9 +3,7 @@
 }
 
 .surface-intro--administration {
-  background:
-    linear-gradient(180deg, rgba(255, 252, 246, 0.98), rgba(247, 250, 250, 0.94)),
-    var(--color-paper);
+  background: var(--color-paper);
 }
 
 .administration-nav__inner,

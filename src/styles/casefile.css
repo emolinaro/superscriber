@@ -338,23 +338,14 @@ html {
 }
 
 .governance-tablet-drawer__backdrop {
-  position: fixed;
-  inset: 0;
-  z-index: 20;
-  display: flex;
-  justify-content: flex-end;
-  padding: var(--space-4);
-  background: rgba(22, 28, 45, 0.45);
+  justify-items: end;
 }
 
 .governance-tablet-drawer__surface {
   width: min(24rem, 100%);
-  height: calc(100vh - var(--space-8));
+  max-height: calc(100dvh - var(--space-8));
   overflow: auto;
-  padding: var(--space-4);
   border-radius: var(--radius-surface);
-  background: var(--color-paper);
-  box-shadow: var(--shadow-1);
 }
 
 .governance-accordion {
@@ -379,8 +370,12 @@ html {
     grid-template-columns: minmax(0, 1fr) auto;
   }
 
+  .casefile-layout[data-governance-open="true"] {
+    grid-template-columns: minmax(0, 7fr) minmax(280px, 3fr);
+  }
+
   .governance-drawer[data-open] {
-    width: clamp(20rem, 30vw, 28rem);
+    width: 100%;
   }
 }
 
