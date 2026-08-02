@@ -8,6 +8,15 @@ import { CasefileWorkspace } from "./casefile-workspace";
 
 const phoneSafetyModeMock = vi.fn(() => false);
 const pollerMock = vi.fn<(props: unknown) => null>(() => null);
+const routerRefreshMock = vi.fn();
+const routerPushMock = vi.fn();
+
+vi.mock("next/navigation", () => ({
+  useRouter: () => ({
+    refresh: routerRefreshMock,
+    push: routerPushMock,
+  }),
+}));
 
 vi.mock("@/components/ui/phone-safety", () => ({
   usePhoneSafetyMode: () => phoneSafetyModeMock(),
@@ -28,15 +37,37 @@ vi.mock("@/components/orchestration-status-poller", () => ({
 function renderWorkspace(overrides: Record<string, unknown> = {}) {
   const saveAction = vi.fn();
   const submitAction = vi.fn();
+  const withdrawAction = vi.fn();
+  const requestChangesAction = vi.fn();
+  const approveAction = vi.fn();
+  const reopenAction = vi.fn();
+  const enterAdminActionModeAction = vi.fn();
+  const exitAdminActionModeAction = vi.fn();
+
   render(
     <CasefileWorkspace
+      approveAction={approveAction}
+      enterAdminActionModeAction={enterAdminActionModeAction}
+      exitAdminActionModeAction={exitAdminActionModeAction}
       initialCasefile={createCasefile(overrides)}
+      reopenAction={reopenAction}
+      requestChangesAction={requestChangesAction}
       saveAction={saveAction}
       submitAction={submitAction}
+      withdrawAction={withdrawAction}
     />,
   );
 
-  return { saveAction, submitAction };
+  return {
+    approveAction,
+    enterAdminActionModeAction,
+    exitAdminActionModeAction,
+    reopenAction,
+    requestChangesAction,
+    saveAction,
+    submitAction,
+    withdrawAction,
+  };
 }
 
 describe("CasefileWorkspace", () => {
@@ -47,6 +78,8 @@ describe("CasefileWorkspace", () => {
   beforeEach(() => {
     phoneSafetyModeMock.mockReturnValue(false);
     pollerMock.mockClear();
+    routerRefreshMock.mockReset();
+    routerPushMock.mockReset();
     vi.spyOn(window, "confirm").mockReturnValue(true);
   });
 
@@ -207,11 +240,12 @@ describe("CasefileWorkspace", () => {
     await user.clear(summary);
     await user.type(summary, "Local draft summary");
     await user.click(screen.getByRole("button", { name: "Submit for approval" }));
+    await user.click(screen.getAllByRole("button", { name: "Submit for approval" })[1]);
 
     expect(await screen.findByText("Recover session")).toBeVisible();
     expect(summary).toHaveValue("Local draft summary");
 
-    await user.click(screen.getByRole("button", { name: "Submit for approval" }));
+    await user.click(screen.getAllByRole("button", { name: "Submit for approval" })[1]);
 
     const conflict = await screen.findByRole("region", { name: "Revision conflict" });
     expect(within(conflict).getByText("Loaded revision: rev-1")).toBeVisible();

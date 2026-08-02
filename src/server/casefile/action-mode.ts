@@ -38,7 +38,13 @@ export type ExitActionModeInput = {
   actionModeId: string;
 };
 
-export type ResolvedAdminActionMode = Pick<AdminActionSession, "id" | "effectiveRole" | "expiresAt">;
+export type ResolvedAdminActionMode = Pick<
+  AdminActionSession,
+  "id" | "effectiveRole" | "expiresAt" | "purpose"
+> & {
+  adminDisplayName: string;
+  baseRole: "admin";
+};
 
 function toAdminActionSession(
   row: typeof adminActionSessions.$inferSelect,
@@ -411,6 +417,9 @@ export function resolveActionMode(
       id: expired.session.id,
       effectiveRole: expired.session.effectiveRole,
       expiresAt: expired.session.expiresAt,
+      purpose: expired.session.purpose,
+      adminDisplayName: principal.displayName,
+      baseRole: "admin",
     };
   }
 
@@ -418,5 +427,8 @@ export function resolveActionMode(
     id: session.id,
     effectiveRole: session.effectiveRole,
     expiresAt: session.expiresAt,
+    purpose: session.purpose,
+    adminDisplayName: principal.displayName,
+    baseRole: "admin",
   };
 }

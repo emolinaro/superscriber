@@ -1,7 +1,19 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import type { SaveDraftCommandInput, SubmitRevisionCommandInput } from "@/server/casefile/commands";
+import { useRouter } from "next/navigation";
+import type {
+  ApproveRevisionCommandInput,
+  ReopenRevisionCommandInput,
+  RequestChangesCommandInput,
+  SaveDraftCommandInput,
+  SubmitRevisionCommandInput,
+  WithdrawRevisionCommandInput,
+} from "@/server/casefile/commands";
+import type {
+  EnterAdminActionModeResult,
+  ExitAdminActionModeResult,
+} from "@/server/actions/admin-action-mode-actions";
 import type { CasefileMutationResult } from "@/server/actions/casefile-actions";
 import type { CasefileViewModel } from "@/server/casefile/read-model";
 import type { CasefileConflictSnapshot } from "@/server/casefile/errors";
@@ -9,8 +21,15 @@ import type { CommandResult } from "@/lib/command-result";
 import { OrchestrationStatusPoller } from "@/components/orchestration-status-poller";
 import { SessionRecoveryDialog } from "@/components/auth/session-recovery-dialog";
 import { usePhoneSafetyMode } from "@/components/ui/phone-safety";
+import { AdminActionModeBanner, type AdminActionModeResult } from "./admin-action-mode-banner";
 import { CaseHeader } from "./case-header";
+import {
+  DecisionDialog,
+  type DecisionDialogResult,
+  type DecisionKind,
+} from "./decision-dialog";
 import { ConflictPanel } from "./conflict-panel";
+import { ExportDialog } from "./export-dialog";
 import { GovernanceDrawer } from "./governance-drawer";
 import { MediaTransport } from "./media-transport";
 import { StateActionBar } from "./state-action-bar";
@@ -23,6 +42,33 @@ type SaveAction = (
 type SubmitAction = (
   input: SubmitRevisionCommandInput,
 ) => Promise<CommandResult<CasefileMutationResult>>;
+
+type WithdrawAction = (
+  input: WithdrawRevisionCommandInput,
+) => Promise<CommandResult<CasefileMutationResult>>;
+
+type RequestChangesAction = (
+  input: RequestChangesCommandInput,
+) => Promise<CommandResult<CasefileMutationResult>>;
+
+type ApproveAction = (
+  input: ApproveRevisionCommandInput,
+) => Promise<CommandResult<CasefileMutationResult>>;
+
+type ReopenAction = (
+  input: ReopenRevisionCommandInput,
+) => Promise<CommandResult<CasefileMutationResult>>;
+
+type EnterAdminActionModeAction = (input: {
+  recordingId: string;
+  effectiveRole: "reviewer" | "approver";
+  purpose: string;
+}) => Promise<CommandResult<EnterAdminActionModeResult>>;
+
+type ExitAdminActionModeAction = (input: {
+  recordingId: string;
+  actionModeId: string;
+}) => Promise<CommandResult<ExitAdminActionModeResult>>;
 
 function copySegments(casefile: CasefileViewModel) {
   return casefile.revision?.segments?.map((segment) => ({ ...segment })) ?? [];
@@ -48,6 +94,74 @@ function isNavigableAnchor(target: EventTarget | null) {
 
 function shouldRefreshCasefile(current: CasefileViewModel, next: CasefileViewModel) {
   return current.updatedAt !== next.updatedAt || current.revision?.id !== next.revision?.id;
+}
+
+function stripActionMode(current: CasefileViewModel, expired = false): CasefileViewModel {
+  const governedKeys = [
+    "canEdit",
+    "canSave",
+    "canSubmit",
+    "canWithdraw",
+    "canApprove",
+    "canRequestChanges",
+    "canReopen",
+    "canExport",
+  ] as const;
+  const denial = expired ? "admin_action_mode_expired" : "admin_action_mode_required";
+
+  return {
+    ...current,
+    actionMode: null,
+    capabilities:
+      current.access.kind === "admin_oversight"
+        ? {
+            ...current.capabilities,
+            canEdit: false,
+            canSave: false,
+            canSubmit: false,
+            canWithdraw: false,
+            canApprove: false,
+            canRequestChanges: false,
+            canReopen: false,
+            canExport: false,
+            denials: {
+              ...current.capabilities.denials,
+              canEdit: denial,
+              canSave: denial,
+              canSubmit: denial,
+              canWithdraw: denial,
+              canApprove: denial,
+              canRequestChanges: denial,
+              canReopen: denial,
+              canExport: denial,
+            },
+          }
+        : current.capabilities,
+    nextActions: current.nextActions.filter(
+      (action) => !governedKeys.includes(action.capability as (typeof governedKeys)[number]),
+    ),
+  };
+}
+
+function updateActionModeQuery(actionModeId: string | null) {
+  const url = new URL(window.location.href);
+  if (actionModeId) {
+    url.searchParams.set("actionMode", actionModeId);
+  } else {
+    url.searchParams.delete("actionMode");
+  }
+  window.history.replaceState(window.history.state, "", `${url.pathname}${url.search}${url.hash}`);
+}
+
+function latestApprovedDecision(casefile: CasefileViewModel) {
+  for (let index = casefile.decisions.length - 1; index >= 0; index -= 1) {
+    const decision = casefile.decisions[index];
+    if (decision?.state === "approved") {
+      return decision;
+    }
+  }
+
+  return null;
 }
 
 function UploaderStatusCasefile({ casefile }: { casefile: CasefileViewModel }) {
@@ -86,20 +200,34 @@ export function CasefileWorkspace({
   initialCasefile,
   saveAction,
   submitAction,
+  withdrawAction,
+  requestChangesAction,
+  approveAction,
+  reopenAction,
+  enterAdminActionModeAction,
+  exitAdminActionModeAction,
 }: {
   initialCasefile: CasefileViewModel;
   saveAction: SaveAction;
   submitAction: SubmitAction;
+  withdrawAction: WithdrawAction;
+  requestChangesAction: RequestChangesAction;
+  approveAction: ApproveAction;
+  reopenAction: ReopenAction;
+  enterAdminActionModeAction: EnterAdminActionModeAction;
+  exitAdminActionModeAction: ExitAdminActionModeAction;
 }) {
+  const router = useRouter();
   const phoneSafetyMode = usePhoneSafetyMode();
   const [casefile, setCasefile] = useState(initialCasefile);
   const [summary, setSummary] = useState(initialCasefile.revision?.summary ?? "");
   const [segments, setSegments] = useState(copySegments(initialCasefile));
   const [dirty, setDirty] = useState(false);
   const [saving, setSaving] = useState(false);
-  const [submitting, setSubmitting] = useState(false);
   const [sessionRecoveryOpen, setSessionRecoveryOpen] = useState(false);
   const [conflict, setConflict] = useState<CasefileConflictSnapshot | null>(null);
+  const [activeDecision, setActiveDecision] = useState<DecisionKind | null>(null);
+  const [exportOpen, setExportOpen] = useState(false);
   const [activeSegmentId, setActiveSegmentId] = useState(
     initialCasefile.revision?.segments?.[0]?.id ?? null,
   );
@@ -174,15 +302,19 @@ export function CasefileWorkspace({
   }, []);
 
   const editable = casefile.capabilities.canEdit && !casefile.access.historical && !phoneSafetyMode;
-  const submitEnabled = casefile.capabilities.canSubmit && !phoneSafetyMode;
-
-  const nextCasefileFromResult = (result: CommandResult<CasefileMutationResult>) => {
-    if (!result.ok || !result.data.casefile) {
-      return null;
-    }
-
-    return result.data.casefile;
-  };
+  const approvedDecision = latestApprovedDecision(casefile);
+  const currentCasefileLatestHref = useMemo(
+    () => latestHref(casefile, conflict),
+    [casefile, conflict],
+  );
+  const statusPoller = casefile.processing.active ? (
+    <OrchestrationStatusPoller
+      currentRevisionId={casefile.revision?.id ?? null}
+      integrityState={casefile.processing.integrityState}
+      recordingId={casefile.recordingId}
+      transcriptJobState={casefile.processing.transcriptJobState}
+    />
+  ) : null;
 
   function applyMutationResult(result: CommandResult<CasefileMutationResult>) {
     if (!result.ok) {
@@ -196,24 +328,47 @@ export function CasefileWorkspace({
         return false;
       }
 
+      if (
+        result.code === "ACTION_MODE_EXPIRED" ||
+        result.code === "ACTION_MODE_ENDED" ||
+        result.code === "ACTION_MODE_REQUIRED"
+      ) {
+        setCasefile((current) => stripActionMode(current, result.code === "ACTION_MODE_EXPIRED"));
+        updateActionModeQuery(null);
+        setLiveMessage(result.message);
+        return false;
+      }
+
+      if (result.code === "STATE_CHANGED") {
+        setActiveDecision(null);
+        router.refresh();
+        setLiveMessage(result.message);
+        return false;
+      }
+
       setLiveMessage(result.message);
       return false;
     }
 
-    const nextCasefile = nextCasefileFromResult(result);
-    if (nextCasefile) {
-      setCasefile(nextCasefile);
-      setSummary(nextCasefile.revision?.summary ?? "");
-      setSegments(copySegments(nextCasefile));
-      setActiveSegmentId(nextCasefile.revision?.segments?.[0]?.id ?? null);
+    const nextCasefile = result.data.casefile;
+    if (!nextCasefile) {
+      setDirty(false);
+      setConflict(null);
+      router.push(result.data.nextPath);
+      return true;
     }
+
+    setCasefile(nextCasefile);
+    setSummary(nextCasefile.revision?.summary ?? "");
+    setSegments(copySegments(nextCasefile));
+    setActiveSegmentId(nextCasefile.revision?.segments?.[0]?.id ?? null);
     setConflict(null);
     setDirty(false);
+    setLiveMessage(result.notice ?? `Case state updated to ${nextCasefile.stageLabel}.`);
 
     requestAnimationFrame(() => {
       if (result.data.focusTarget === "case-state") {
         document.getElementById("case-state")?.focus();
-        setLiveMessage(`Case state updated to ${nextCasefile?.stageLabel ?? casefile.stageLabel}.`);
         return;
       }
 
@@ -250,22 +405,89 @@ export function CasefileWorkspace({
     setSaving(false);
   }
 
-  async function handleSubmit() {
-    if (!submitEnabled || phoneSafetyMode || !casefile.revision) {
-      return;
+  async function runDecision(kind: DecisionKind, detail: { reason: string; note: string }): Promise<DecisionDialogResult> {
+    if (phoneSafetyMode || !casefile.revision) {
+      return { ok: false };
     }
 
-    setSubmitting(true);
-    const result = await submitAction({
-      recordingId: casefile.recordingId,
-      expectedCurrentRevisionId: casefile.revision.id,
-      summary,
-      segments,
-      hasUnsavedChanges: dirty,
-      actionModeId: casefile.actionMode?.id ?? null,
-    });
+    let result: CommandResult<CasefileMutationResult>;
+
+    if (kind === "submit") {
+      result = await submitAction({
+        recordingId: casefile.recordingId,
+        expectedCurrentRevisionId: casefile.revision.id,
+        summary,
+        segments,
+        hasUnsavedChanges: dirty,
+        actionModeId: casefile.actionMode?.id ?? null,
+      });
+    } else if (kind === "withdraw") {
+      result = await withdrawAction({
+        recordingId: casefile.recordingId,
+        expectedPendingRevisionId: casefile.revision.id,
+        reason: detail.reason,
+        actionModeId: casefile.actionMode?.id ?? null,
+      });
+    } else if (kind === "requestChanges") {
+      result = await requestChangesAction({
+        recordingId: casefile.recordingId,
+        expectedPendingRevisionId: casefile.revision.id,
+        reason: detail.reason,
+        actionModeId: casefile.actionMode?.id ?? null,
+      });
+    } else if (kind === "approve") {
+      result = await approveAction({
+        recordingId: casefile.recordingId,
+        expectedPendingRevisionId: casefile.revision.id,
+        note: detail.note,
+        actionModeId: casefile.actionMode?.id ?? null,
+      });
+    } else {
+      result = await reopenAction({
+        recordingId: casefile.recordingId,
+        expectedApprovedRevisionId: casefile.revision.id,
+        reason: detail.reason,
+        actionModeId: casefile.actionMode?.id ?? null,
+      });
+    }
+
+    if (!result.ok) {
+      if (result.code === "AUTH_EXPIRED") {
+        setSessionRecoveryOpen(true);
+        return { ok: false };
+      }
+
+      if (result.code === "STATE_CHANGED") {
+        setActiveDecision(null);
+        router.refresh();
+        setLiveMessage(result.message);
+        return { ok: false };
+      }
+
+      if (result.code === "STALE_REVISION" && result.latest) {
+        setConflict(result.latest);
+        setActiveDecision(null);
+        return { ok: false };
+      }
+
+      if (
+        result.code === "ACTION_MODE_EXPIRED" ||
+        result.code === "ACTION_MODE_ENDED" ||
+        result.code === "ACTION_MODE_REQUIRED"
+      ) {
+        setCasefile((current) => stripActionMode(current, result.code === "ACTION_MODE_EXPIRED"));
+        updateActionModeQuery(null);
+        setActiveDecision(null);
+        setLiveMessage(result.message);
+        return { ok: true };
+      }
+
+      return { ok: false, error: result.message };
+    }
+
     applyMutationResult(result);
-    setSubmitting(false);
+    setActiveDecision(null);
+    return { ok: true };
   }
 
   function updateSummary(nextSummary: string) {
@@ -289,18 +511,77 @@ export function CasefileWorkspace({
     setDirty(true);
   }
 
-  const currentCasefileLatestHref = useMemo(
-    () => latestHref(casefile, conflict),
-    [casefile, conflict],
-  );
-  const statusPoller = casefile.processing.active ? (
-    <OrchestrationStatusPoller
-      currentRevisionId={casefile.revision?.id ?? null}
-      integrityState={casefile.processing.integrityState}
-      recordingId={casefile.recordingId}
-      transcriptJobState={casefile.processing.transcriptJobState}
-    />
-  ) : null;
+  async function handleEnterActionMode(input: {
+    effectiveRole: "reviewer" | "approver";
+    purpose: string;
+  }): Promise<AdminActionModeResult> {
+    if (phoneSafetyMode) {
+      return { ok: false };
+    }
+
+    const result = await enterAdminActionModeAction({
+      recordingId: casefile.recordingId,
+      effectiveRole: input.effectiveRole,
+      purpose: input.purpose,
+    });
+
+    if (!result.ok) {
+      if (result.code === "AUTH_EXPIRED") {
+        setSessionRecoveryOpen(true);
+        return { ok: false };
+      }
+
+      return { ok: false, error: result.message };
+    }
+
+    setCasefile((current) => ({
+      ...current,
+      actionMode: {
+        id: result.data.session.id,
+        effectiveRole: result.data.session.effectiveRole,
+        expiresAt: result.data.session.expiresAt,
+        purpose: result.data.session.purpose,
+        adminDisplayName: result.data.session.adminDisplayName,
+        baseRole: result.data.session.baseRole,
+      },
+    }));
+    updateActionModeQuery(result.data.session.id);
+    router.refresh();
+    setLiveMessage(result.notice ?? "Admin action mode entered.");
+    return { ok: true };
+  }
+
+  async function handleExitActionMode(): Promise<AdminActionModeResult> {
+    if (!casefile.actionMode) {
+      return { ok: true };
+    }
+
+    const result = await exitAdminActionModeAction({
+      recordingId: casefile.recordingId,
+      actionModeId: casefile.actionMode.id,
+    });
+
+    if (!result.ok) {
+      if (result.code === "AUTH_EXPIRED") {
+        setSessionRecoveryOpen(true);
+        return { ok: false };
+      }
+
+      if (result.code === "ACTION_MODE_EXPIRED" || result.code === "ACTION_MODE_ENDED") {
+        setCasefile((current) => stripActionMode(current, result.code === "ACTION_MODE_EXPIRED"));
+        updateActionModeQuery(null);
+        setLiveMessage(result.message);
+        return { ok: true };
+      }
+
+      return { ok: false, error: result.message };
+    }
+
+    setCasefile((current) => stripActionMode(current));
+    updateActionModeQuery(null);
+    setLiveMessage(result.notice ?? "Admin action mode exited.");
+    return { ok: true };
+  }
 
   if (casefile.statusOnly) {
     return (
@@ -320,6 +601,15 @@ export function CasefileWorkspace({
       {statusPoller}
 
       <CaseHeader casefile={casefile} />
+
+      <AdminActionModeBanner
+        entryOptions={casefile.adminActionModeOptions}
+        onEnter={handleEnterActionMode}
+        onExit={handleExitActionMode}
+        phoneSafetyMode={phoneSafetyMode}
+        recordingTitle={casefile.title}
+        session={casefile.actionMode}
+      />
 
       {conflict ? (
         <ConflictPanel
@@ -360,20 +650,75 @@ export function CasefileWorkspace({
 
       <StateActionBar
         assignmentLabel={casefile.assignmentLabel}
+        canApprove={casefile.capabilities.canApprove}
+        canExport={casefile.capabilities.canExport}
+        canReopen={casefile.capabilities.canReopen}
+        canRequestChanges={casefile.capabilities.canRequestChanges}
         canSave={casefile.capabilities.canSave}
-        canSubmit={submitEnabled}
+        canSubmit={casefile.capabilities.canSubmit}
+        canWithdraw={casefile.capabilities.canWithdraw}
         dirty={dirty}
+        onApprove={() => {
+          if (!phoneSafetyMode) {
+            setActiveDecision("approve");
+          }
+        }}
+        onExport={() => {
+          if (!phoneSafetyMode) {
+            setExportOpen(true);
+          }
+        }}
+        onReopen={() => {
+          if (!phoneSafetyMode) {
+            setActiveDecision("reopen");
+          }
+        }}
+        onRequestChanges={() => {
+          if (!phoneSafetyMode) {
+            setActiveDecision("requestChanges");
+          }
+        }}
         onSave={() => {
           void handleSave();
         }}
         onSubmit={() => {
-          void handleSubmit();
+          if (!phoneSafetyMode) {
+            setActiveDecision("submit");
+          }
+        }}
+        onWithdraw={() => {
+          if (!phoneSafetyMode) {
+            setActiveDecision("withdraw");
+          }
         }}
         phoneSafetyMode={phoneSafetyMode}
         saving={saving}
         stageLabel={casefile.stageLabel}
-        submitting={submitting}
       />
+
+      {activeDecision && casefile.revision ? (
+        <DecisionDialog
+          kind={activeDecision}
+          onCancel={() => setActiveDecision(null)}
+          onConfirm={(detail) => runDecision(activeDecision, detail)}
+          open={!phoneSafetyMode}
+          revision={casefile.revision}
+        />
+      ) : null}
+
+      {exportOpen && casefile.revision ? (
+        <ExportDialog
+          actionModeId={casefile.actionMode?.id ?? null}
+          approvedAt={approvedDecision?.createdAt ?? casefile.revision.approvedAt ?? null}
+          approvedBy={approvedDecision?.actorDisplay ?? null}
+          onAnnouncement={(message) => setLiveMessage(message)}
+          onClose={() => setExportOpen(false)}
+          onSessionRecoveryRequested={() => setSessionRecoveryOpen(true)}
+          open={!phoneSafetyMode}
+          recordingId={casefile.recordingId}
+          revision={{ version: casefile.revision.version }}
+        />
+      ) : null}
 
       <SessionRecoveryDialog
         onClose={() => setSessionRecoveryOpen(false)}

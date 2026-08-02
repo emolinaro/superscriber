@@ -109,6 +109,18 @@
   }
 }
 
+@media (min-width: 768px) and (max-width: 959px) {
+  .export-backdrop {
+    align-items: end;
+  }
+
+  .export-dialog {
+    width: min(100vw, 42rem);
+    max-width: none;
+    border-radius: 16px 16px 0 0;
+  }
+}
+
 @media (max-width: 767px) {
   .casefile-page {
     margin-top: calc(var(--space-6) * -1);

@@ -26,6 +26,9 @@ vi.mock("@/components/auth/session-recovery-dialog", () => ({
 function renderStatusOnlyWorkspace(overrides: Record<string, unknown> = {}) {
   return render(
     <CasefileWorkspace
+      approveAction={vi.fn()}
+      enterAdminActionModeAction={vi.fn()}
+      exitAdminActionModeAction={vi.fn()}
       initialCasefile={createCasefile({
         statusOnly: true,
         access: { kind: "uploader_status", recordingId: "rec-1", historical: false },
@@ -45,8 +48,11 @@ function renderStatusOnlyWorkspace(overrides: Record<string, unknown> = {}) {
         },
         ...overrides,
       })}
+      reopenAction={vi.fn()}
+      requestChangesAction={vi.fn()}
       saveAction={vi.fn()}
       submitAction={vi.fn()}
+      withdrawAction={vi.fn()}
     />,
   );
 }

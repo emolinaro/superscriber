@@ -11,7 +11,10 @@ import {
 import { getActivePrincipal } from "@/server/session";
 
 export type EnterAdminActionModeResult = {
-  session: Awaited<ReturnType<typeof enterActionMode>>;
+  session: Awaited<ReturnType<typeof enterActionMode>> & {
+    adminDisplayName: string;
+    baseRole: "admin";
+  };
   href: string;
 };
 
@@ -36,7 +39,11 @@ export async function enterAdminActionModeAction(
     return {
       ok: true,
       data: {
-        session,
+        session: {
+          ...session,
+          adminDisplayName: principal.displayName,
+          baseRole: "admin",
+        },
         href: `/recordings/${input.recordingId}?actionMode=${session.id}`,
       },
       notice: `Admin action mode entered as ${session.effectiveRole}.`,

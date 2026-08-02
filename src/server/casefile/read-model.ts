@@ -153,6 +153,10 @@ export type CasefileNextActionViewModel = {
   label: string;
 };
 
+export type AdminActionModeOptionViewModel = {
+  effectiveRole: "reviewer" | "approver";
+};
+
 export type CasefileViewModel = {
   statusOnly: boolean;
   recordingId: string;
@@ -174,7 +178,11 @@ export type CasefileViewModel = {
     id: string;
     effectiveRole: "reviewer" | "approver";
     expiresAt: string;
+    purpose: string;
+    adminDisplayName: string;
+    baseRole: "admin";
   } | null;
+  adminActionModeOptions: AdminActionModeOptionViewModel[];
   capabilities: CasefileCapabilities;
   media: {
     kind: Recording["mediaKind"];
@@ -554,6 +562,55 @@ function nextActions(capabilities: CasefileCapabilities): CasefileNextActionView
   );
 }
 
+function adminActionModeOptions(input: {
+  principal: Principal;
+  grant: CasefileAccessGrant;
+  policyProfileId: PolicyProfileId;
+  recording: Recording;
+  revision: TranscriptRevision | null;
+  actionMode: CasefileViewModel["actionMode"];
+}): AdminActionModeOptionViewModel[] {
+  if (
+    input.principal.role !== "admin" ||
+    input.grant.kind !== "admin_oversight" ||
+    !input.revision ||
+    input.recording.currentRevisionId !== input.revision.id
+  ) {
+    return [];
+  }
+
+  const options: AdminActionModeOptionViewModel[] = [];
+
+  for (const effectiveRole of ["reviewer", "approver"] as const) {
+    const simulated = deriveCasefileCapabilities({
+      principal: input.principal,
+      grant: input.grant,
+      policyProfileId: input.policyProfileId,
+      recording: input.recording,
+      revision: input.revision,
+      actionMode: {
+        id: `preview-${effectiveRole}`,
+        effectiveRole,
+      },
+      actionModeExpired: false,
+    });
+
+    const allowed =
+      effectiveRole === "reviewer"
+        ? simulated.canEdit || simulated.canSave || simulated.canSubmit || simulated.canWithdraw
+        : simulated.canApprove ||
+          simulated.canRequestChanges ||
+          simulated.canReopen ||
+          simulated.canExport;
+
+    if (allowed) {
+      options.push({ effectiveRole });
+    }
+  }
+
+  return options;
+}
+
 function assignmentLabelForGrant(grant: CasefileAccessGrant) {
   switch (grant.kind) {
     case "uploader_status":
@@ -806,6 +863,14 @@ export function getCasefile(
       historical: Boolean(selectedRevision && selectedRevision.id !== recording.currentRevisionId),
     },
     actionMode,
+    adminActionModeOptions: adminActionModeOptions({
+      principal,
+      grant,
+      policyProfileId,
+      recording,
+      revision: selectedRevision,
+      actionMode,
+    }),
     capabilities,
     media: mediaView(recording, capabilities),
     processing: processingView(recording, ingestionSession, transcriptJob),

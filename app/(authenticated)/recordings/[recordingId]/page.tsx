@@ -1,8 +1,16 @@
 import { notFound, redirect } from "next/navigation";
 import {
+  approveRevisionAction,
+  reopenRevisionAction,
+  requestChangesAction,
   saveDraftAction,
   submitRevisionAction,
+  withdrawRevisionAction,
 } from "@/server/actions/casefile-actions";
+import {
+  enterAdminActionModeAction,
+  exitAdminActionModeAction,
+} from "@/server/actions/admin-action-mode-actions";
 import { CasefileCommandError } from "@/server/casefile/errors";
 import { getCasefile } from "@/server/casefile/read-model";
 import { requireActivePrincipal } from "@/server/session";
@@ -77,9 +85,15 @@ export default async function RecordingPage({
 
   return (
     <CasefileWorkspace
+      approveAction={approveRevisionAction}
+      enterAdminActionModeAction={enterAdminActionModeAction}
+      exitAdminActionModeAction={exitAdminActionModeAction}
       initialCasefile={casefile}
+      reopenAction={reopenRevisionAction}
+      requestChangesAction={requestChangesAction}
       saveAction={saveDraftAction}
       submitAction={submitRevisionAction}
+      withdrawAction={withdrawRevisionAction}
     />
   );
 }

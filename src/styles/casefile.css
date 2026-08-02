@@ -171,6 +171,78 @@ html {
   font-weight: 600;
 }
 
+.action-mode-banner,
+.action-mode-entry-row,
+.casefile-decision-dialog__facts,
+.export-dialog__meta,
+.export-group-list,
+.export-group,
+.export-option-list {
+  display: grid;
+  gap: var(--space-3);
+}
+
+.action-mode-banner {
+  padding: var(--space-4);
+  border: 1px solid rgba(42, 118, 94, 0.24);
+  border-radius: var(--radius-surface);
+  background: rgba(232, 246, 239, 0.92);
+}
+
+.action-mode-entry-row {
+  grid-template-columns: repeat(auto-fit, minmax(14rem, max-content));
+}
+
+.casefile-decision-dialog__facts,
+.export-dialog__meta {
+  padding: var(--space-3);
+  border: 1px solid var(--color-line);
+  border-radius: var(--radius-control);
+  background: rgba(255, 252, 246, 0.8);
+}
+
+.casefile-decision-dialog__facts p,
+.export-dialog__meta p {
+  margin: 0;
+}
+
+.modal-actions-row {
+  justify-content: flex-end;
+}
+
+.export-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  display: grid;
+  place-items: center;
+}
+
+.export-dialog {
+  width: min(35rem, calc(100vw - 2rem));
+  max-height: calc(100dvh - 2rem);
+  overflow: auto;
+}
+
+.export-group__title {
+  margin: 0;
+}
+
+.export-option-list {
+  grid-template-columns: repeat(auto-fit, minmax(12rem, 1fr));
+}
+
+.export-option {
+  min-height: 7rem;
+  align-items: start;
+  text-align: left;
+}
+
+.export-option strong,
+.export-option span {
+  display: block;
+}
+
 .casefile-status-only__grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -326,7 +398,9 @@ html {
   .case-header__facts,
   .casefile-status-only__grid,
   .media-transport__actions,
-  .casefile-action-bar {
+  .casefile-action-bar,
+  .action-mode-entry-row,
+  .export-option-list {
     grid-template-columns: 1fr;
   }
 

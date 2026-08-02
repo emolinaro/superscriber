@@ -24,12 +24,16 @@ export function Modal({
   description,
   children,
   onClose,
+  backdropClassName,
+  surfaceClassName,
 }: {
   open: boolean;
   title: string;
   description?: string;
   children: ReactNode;
   onClose: () => void;
+  backdropClassName?: string;
+  surfaceClassName?: string;
 }) {
   const titleId = useId();
   const descriptionId = useId();
@@ -107,7 +111,7 @@ export function Modal({
 
   return createPortal(
     <div
-      className="modal-backdrop"
+      className={backdropClassName ? `modal-backdrop ${backdropClassName}` : "modal-backdrop"}
       onMouseDown={(event) => {
         if (event.target === event.currentTarget) {
           onClose();
@@ -118,7 +122,7 @@ export function Modal({
         aria-describedby={description ? descriptionId : undefined}
         aria-labelledby={titleId}
         aria-modal="true"
-        className="modal-surface"
+        className={surfaceClassName ? `modal-surface ${surfaceClassName}` : "modal-surface"}
         ref={dialogRef}
         role="dialog"
         tabIndex={-1}

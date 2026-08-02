@@ -41,6 +41,7 @@ export function createCasefile(overrides: Record<string, unknown> = {}) {
       historical: false,
     },
     actionMode: null,
+    adminActionModeOptions: [],
     capabilities: {
       canViewStatus: true,
       canViewTranscript: true,

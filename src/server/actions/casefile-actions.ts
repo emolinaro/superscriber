@@ -94,13 +94,15 @@ async function refreshCasefileMutation(
   principal: Principal,
   recordingId: string,
   focusTarget: FocusTarget,
-  options: { allowAccessLoss?: boolean } = {},
+  options: { allowAccessLoss?: boolean; actionModeId?: string | null } = {},
 ): Promise<CasefileMutationResult> {
   revalidatePath("/workspace");
   revalidatePath(`/recordings/${recordingId}`);
 
   try {
-    const casefile = getCasefile(principal, recordingId);
+    const casefile = getCasefile(principal, recordingId, {
+      actionModeId: options.actionModeId ?? null,
+    });
     return {
       casefile,
       nextPath: `/recordings/${recordingId}`,
@@ -166,7 +168,9 @@ export async function saveDraftAction(
   return runCasefileAction(
     (principal) => saveDraftCommand(principal, input),
     async (_revision, principal) =>
-      refreshCasefileMutation(principal, input.recordingId, "retain"),
+      refreshCasefileMutation(principal, input.recordingId, "retain", {
+        actionModeId: input.actionModeId ?? null,
+      }),
     () => "Draft revision saved server-side.",
   );
 }
@@ -177,7 +181,9 @@ export async function submitRevisionAction(
   return runCasefileAction(
     (principal) => submitRevisionCommand(principal, input),
     async (_revision, principal) =>
-      refreshCasefileMutation(principal, input.recordingId, "case-state"),
+      refreshCasefileMutation(principal, input.recordingId, "case-state", {
+        actionModeId: input.actionModeId ?? null,
+      }),
     () => "Revision submitted for approval.",
   );
 }
@@ -188,7 +194,9 @@ export async function withdrawRevisionAction(
   return runCasefileAction(
     (principal) => withdrawRevisionCommand(principal, input),
     async (_revision, principal) =>
-      refreshCasefileMutation(principal, input.recordingId, "case-state"),
+      refreshCasefileMutation(principal, input.recordingId, "case-state", {
+        actionModeId: input.actionModeId ?? null,
+      }),
     () => "Revision withdrawn back to draft.",
   );
 }
@@ -199,7 +207,9 @@ export async function requestChangesAction(
   return runCasefileAction(
     (principal) => requestChangesCommand(principal, input),
     async (_revision, principal) =>
-      refreshCasefileMutation(principal, input.recordingId, "case-state"),
+      refreshCasefileMutation(principal, input.recordingId, "case-state", {
+        actionModeId: input.actionModeId ?? null,
+      }),
     () => "Changes requested before approval.",
   );
 }
@@ -210,7 +220,9 @@ export async function approveRevisionAction(
   return runCasefileAction(
     (principal) => approveRevisionCommand(principal, input),
     async (_result, principal) =>
-      refreshCasefileMutation(principal, input.recordingId, "case-state"),
+      refreshCasefileMutation(principal, input.recordingId, "case-state", {
+        actionModeId: input.actionModeId ?? null,
+      }),
     () => "Transcript approved and locked under policy.",
   );
 }
@@ -223,6 +235,7 @@ export async function reopenRevisionAction(
     async (_revision, principal) =>
       refreshCasefileMutation(principal, input.recordingId, "case-state", {
         allowAccessLoss: true,
+        actionModeId: input.actionModeId ?? null,
       }),
     () => "Approved transcript reopened as a new draft cycle.",
   );

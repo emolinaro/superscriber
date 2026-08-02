@@ -1,4 +1,5 @@
 import type { CasefileViewModel } from "@/server/casefile/read-model";
+import { formatRoleLabel } from "@/lib/format";
 
 export function CaseHeader({ casefile }: { casefile: CasefileViewModel }) {
   const revisionLabel = casefile.revision ? `v${casefile.revision.version}` : "-";
@@ -24,6 +25,12 @@ export function CaseHeader({ casefile }: { casefile: CasefileViewModel }) {
           <dt>Assignment</dt>
           <dd>{casefile.assignmentLabel}</dd>
         </div>
+        {casefile.actionMode ? (
+          <div>
+            <dt>Effective role</dt>
+            <dd>{formatRoleLabel(casefile.actionMode.effectiveRole)}</dd>
+          </div>
+        ) : null}
         {casefile.historicalLabel ? (
           <div>
             <dt>Snapshot</dt>
