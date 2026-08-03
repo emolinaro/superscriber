@@ -64,6 +64,7 @@ export const users = sqliteTable(
     passwordHash: text("password_hash").notNull(),
     role: text("role", { enum: USER_ROLES }).$type<UserRole>().notNull(),
     isActive: integer("is_active", { mode: "boolean" }).notNull().default(true),
+    authVersion: integer("auth_version").notNull().default(1),
     createdAt: text("created_at").notNull(),
     updatedAt: text("updated_at").notNull(),
   },
@@ -71,6 +72,64 @@ export const users = sqliteTable(
     emailUnique: uniqueIndex("users_email_unique").on(table.email),
     roleIdx: index("users_role_idx").on(table.role),
     activeIdx: index("users_active_idx").on(table.isActive),
+  }),
+);
+
+export const AUTH_SOURCES = ["local", "authentik", "break_glass"] as const;
+export type AuthSource = (typeof AUTH_SOURCES)[number];
+
+export const AUTH_SESSION_STATUSES = ["active", "revoked", "expired"] as const;
+export type AuthSessionStatus = (typeof AUTH_SESSION_STATUSES)[number];
+
+export const SECURITY_EVENT_OUTCOMES = ["success", "denied", "error"] as const;
+export type SecurityEventOutcome = (typeof SECURITY_EVENT_OUTCOMES)[number];
+
+export const authSessions = sqliteTable(
+  "auth_sessions",
+  {
+    id: text("id").primaryKey(),
+    userId: text("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "restrict" }),
+    authSource: text("auth_source", { enum: AUTH_SOURCES }).$type<AuthSource>().notNull(),
+    authVersion: integer("auth_version").notNull(),
+    providerSid: text("provider_sid"),
+    status: text("status", { enum: AUTH_SESSION_STATUSES })
+      .$type<AuthSessionStatus>()
+      .notNull(),
+    createdAt: text("created_at").notNull(),
+    lastSeenAt: text("last_seen_at").notNull(),
+    idleExpiresAt: text("idle_expires_at").notNull(),
+    absoluteExpiresAt: text("absolute_expires_at").notNull(),
+    revokedAt: text("revoked_at"),
+    revokedReason: text("revoked_reason"),
+    emergencyActivationId: text("emergency_activation_id"),
+  },
+  (table) => ({
+    userStatusIdx: index("auth_sessions_user_status_idx").on(table.userId, table.status),
+    providerSidIdx: index("auth_sessions_provider_sid_idx").on(table.providerSid),
+  }),
+);
+
+export const securityEvents = sqliteTable(
+  "security_events",
+  {
+    id: text("id").primaryKey(),
+    type: text("type").notNull(),
+    outcome: text("outcome", { enum: SECURITY_EVENT_OUTCOMES })
+      .$type<SecurityEventOutcome>()
+      .notNull(),
+    userId: text("user_id").references(() => users.id, { onDelete: "set null" }),
+    sessionId: text("session_id"),
+    correlationId: text("correlation_id"),
+    sourceZone: text("source_zone"),
+    detail: text("detail").notNull().default(""),
+    metadata: text("metadata").notNull().default('{"version":1,"data":{}}'),
+    createdAt: text("created_at").notNull(),
+  },
+  (table) => ({
+    createdIdx: index("security_events_created_idx").on(table.createdAt),
+    userCreatedIdx: index("security_events_user_created_idx").on(table.userId, table.createdAt),
   }),
 );
 

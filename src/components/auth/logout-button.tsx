@@ -2,6 +2,7 @@
 
 import { useTransition } from "react";
 import { signOut } from "next-auth/react";
+import { markIntentionalSignOut } from "@/lib/signed-out-marker";
 
 export function LogoutButton() {
   const [isPending, startTransition] = useTransition();
@@ -12,6 +13,7 @@ export function LogoutButton() {
       disabled={isPending}
       onClick={() => {
         startTransition(async () => {
+          markIntentionalSignOut();
           await signOut({
             callbackUrl: "/?reason=logged-out",
             redirect: true,

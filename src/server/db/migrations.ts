@@ -7,11 +7,12 @@ type Migration = {
   up: (sqlite: Database.Database) => void;
 };
 
-export const LATEST_SCHEMA_VERSION = 2;
+export const LATEST_SCHEMA_VERSION = 3;
 
 const migrations: Migration[] = [
   { version: 1, name: "baseline-appliance", up: createBaselineSchema },
   { version: 2, name: "governed-casefile", up: addGovernedCasefileSchema },
+  { version: 3, name: "auth-session-registry", up: addAuthSessionRegistrySchema },
 ];
 
 const LEGACY_AUDIT_METADATA_JSON = serializeAuditMetadata(LEGACY_AUDIT_METADATA);
@@ -570,6 +571,94 @@ function addGovernedCasefileSchema(sqlite: Database.Database) {
       ON admin_action_sessions(admin_user_id, recording_id)
       WHERE ended_at IS NULL;
     `);
+  }
+}
+
+function addAuthSessionRegistrySchema(sqlite: Database.Database) {
+  ensureColumn(sqlite, "users", "auth_version", "auth_version INTEGER NOT NULL DEFAULT 1");
+
+  sqlite.exec(`
+    CREATE TABLE IF NOT EXISTS auth_sessions (
+      id TEXT PRIMARY KEY NOT NULL,
+      user_id TEXT NOT NULL REFERENCES users(id) ON DELETE RESTRICT,
+      auth_source TEXT NOT NULL CHECK (auth_source IN ('local', 'authentik', 'break_glass')),
+      auth_version INTEGER NOT NULL,
+      provider_sid TEXT,
+      status TEXT NOT NULL CHECK (status IN ('active', 'revoked', 'expired')),
+      created_at TEXT NOT NULL,
+      last_seen_at TEXT NOT NULL,
+      idle_expires_at TEXT NOT NULL,
+      absolute_expires_at TEXT NOT NULL,
+      revoked_at TEXT,
+      revoked_reason TEXT,
+      emergency_activation_id TEXT
+    );
+
+    CREATE TABLE IF NOT EXISTS security_events (
+      id TEXT PRIMARY KEY NOT NULL,
+      type TEXT NOT NULL,
+      outcome TEXT NOT NULL CHECK (outcome IN ('success', 'denied', 'error')),
+      user_id TEXT REFERENCES users(id) ON DELETE SET NULL,
+      session_id TEXT,
+      correlation_id TEXT,
+      source_zone TEXT,
+      detail TEXT NOT NULL DEFAULT '',
+      metadata TEXT NOT NULL DEFAULT '{"version":1,"data":{}}',
+      created_at TEXT NOT NULL
+    );
+  `);
+
+  if (!hasIndex(sqlite, "auth_sessions_user_status_idx")) {
+    sqlite.exec(`
+      CREATE INDEX auth_sessions_user_status_idx
+      ON auth_sessions(user_id, status);
+    `);
+  }
+
+  if (!hasIndex(sqlite, "auth_sessions_provider_sid_idx")) {
+    sqlite.exec(`
+      CREATE INDEX auth_sessions_provider_sid_idx
+      ON auth_sessions(provider_sid);
+    `);
+  }
+
+  if (!hasIndex(sqlite, "security_events_created_idx")) {
+    sqlite.exec(`
+      CREATE INDEX security_events_created_idx
+      ON security_events(created_at);
+    `);
+  }
+
+  if (!hasIndex(sqlite, "security_events_user_created_idx")) {
+    sqlite.exec(`
+      CREATE INDEX security_events_user_created_idx
+      ON security_events(user_id, created_at);
+    `);
+  }
+
+  // When upgrading an appliance that already has users, every pre-existing
+  // Auth.js cookie has no auth_sessions row and will be rejected. Record the
+  // deployment-level event once instead of enumerating cookie holders.
+  const userCount = (
+    sqlite.prepare("SELECT COUNT(*) AS count FROM users").get() as { count: number }
+  ).count;
+  if (userCount > 0) {
+    sqlite
+      .prepare(
+        `
+          INSERT INTO security_events (
+            id, type, outcome, user_id, session_id, correlation_id, source_zone,
+            detail, metadata, created_at
+          ) VALUES (?, ?, ?, NULL, NULL, NULL, NULL, ?, '{"version":1,"data":{}}', ?)
+        `,
+      )
+      .run(
+        `security-migration-${crypto.randomUUID()}`,
+        "auth.legacy_sessions_invalidated",
+        "success",
+        "Session registry introduced; all pre-existing cookie sessions are retired and users must sign in again.",
+        nowIso(),
+      );
   }
 }
 

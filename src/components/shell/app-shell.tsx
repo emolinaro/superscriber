@@ -1,8 +1,13 @@
 "use client";
 
+import { useEffect } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { SuperscriberLogo } from "@/components/brand/superscriber-logo";
+import {
+  clearIntentionalSignOut,
+  hasIntentionalSignOut,
+} from "@/lib/signed-out-marker";
 import type { Principal, UserRole } from "@/domain/models";
 import { AccountMenu } from "./account-menu";
 
@@ -28,6 +33,52 @@ function isCurrentPath(pathname: string, href: string) {
   return pathname === href || pathname.startsWith(`${href}/`);
 }
 
+const SESSION_POLL_INTERVAL_MS = 5_000;
+
+/**
+ * Plan section 7.3: an open UI must converge within five seconds after its
+ * session is revoked or expires. Transient network failures keep watching;
+ * only a definitive inactive answer redirects.
+ */
+function useSessionGuard() {
+  useEffect(() => {
+    let cancelled = false;
+    // A mounted shell means a fresh authenticated render in this tab: clear
+    // any stale intentional-sign-out marker before the first poll.
+    clearIntentionalSignOut();
+
+    const checkSession = async () => {
+      if (hasIntentionalSignOut()) {
+        // The user clicked Sign out; their own navigation wins.
+        return;
+      }
+
+      try {
+        const response = await fetch("/api/auth/session-state", { cache: "no-store" });
+        if (!response.ok) {
+          return;
+        }
+
+        const body = (await response.json()) as { active?: boolean };
+        if (!cancelled && body.active === false) {
+          const returnTo = encodeURIComponent(
+            `${window.location.pathname}${window.location.search}`,
+          );
+          window.location.assign(`/?reason=session-expired&returnTo=${returnTo}`);
+        }
+      } catch {
+        // Keep watching; the next interval retries.
+      }
+    };
+
+    const interval = window.setInterval(checkSession, SESSION_POLL_INTERVAL_MS);
+    return () => {
+      cancelled = true;
+      window.clearInterval(interval);
+    };
+  }, []);
+}
+
 export function AppShell({
   principal,
   children,
@@ -36,6 +87,7 @@ export function AppShell({
   children: React.ReactNode;
 }) {
   const pathname = usePathname() ?? "/workspace";
+  useSessionGuard();
 
   return (
     <div className="app-shell">

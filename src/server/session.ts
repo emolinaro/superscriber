@@ -46,8 +46,11 @@ export function resolveAuthorizedReturnTo(principal: Principal, returnTo?: strin
 }
 
 export async function getActiveSession(): Promise<ActiveSession | null> {
+  // getServerSession runs the Auth.js callbacks, which execute the session
+  // registry checks in plan section 7.2: cookie decode, registry validation in
+  // the jwt callback, and live user resolution in the session callback.
   const session = await getServerSession(authOptions);
-  if (!session?.user?.id || !session.user.role) {
+  if (!session?.user?.id || !session.user.role || !session.authSessionId) {
     return null;
   }
 
@@ -70,7 +73,13 @@ export async function getActiveRole(): Promise<UserRole | null> {
   return (await getActivePrincipal())?.role ?? null;
 }
 
-export async function requireActivePrincipal(returnTo?: string) {
+/**
+ * Single protected-request resolver (plan section 7.2). Any failure -
+ * missing session, revoked or expired registry row, auth-version mismatch,
+ * suspended user, or a registry outage - converges on the same
+ * session-expired response. It never emits protected data or error internals.
+ */
+export async function requireAuthorizedPrincipal(returnTo?: string) {
   const principal = await getActivePrincipal();
   if (!principal) {
     redirect(
@@ -81,6 +90,10 @@ export async function requireActivePrincipal(returnTo?: string) {
   return principal;
 }
 
+export async function requireActivePrincipal(returnTo?: string) {
+  return requireAuthorizedPrincipal(returnTo);
+}
+
 export async function requireActiveRole() {
-  return (await requireActivePrincipal()).role;
+  return (await requireAuthorizedPrincipal()).role;
 }

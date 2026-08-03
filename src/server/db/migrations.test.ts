@@ -97,7 +97,48 @@ describe("migrations", () => {
     expect(sqlite.prepare("select version from schema_migrations order by version").all()).toEqual([
       { version: 1 },
       { version: 2 },
+      { version: 3 },
     ]);
+  });
+
+  it("upgrades a populated v2 database without touching existing user ids", () => {
+    const sqlite = new Database(":memory:");
+
+    runMigrations(sqlite, 2);
+    seedCurrentSchemaFixture(sqlite);
+
+    runMigrations(sqlite);
+
+    expect(
+      sqlite.prepare("select id, auth_version as authVersion from users order by id").all(),
+    ).toEqual([
+      { id: "user-approver", authVersion: 1 },
+      { id: "user-reviewer", authVersion: 1 },
+    ]);
+
+    // The deployment-level legacy-session retirement event is recorded once.
+    const events = sqlite
+      .prepare("select type, outcome from security_events")
+      .all() as Array<{ type: string; outcome: string }>;
+    expect(events).toEqual([
+      { type: "auth.legacy_sessions_invalidated", outcome: "success" },
+    ]);
+
+    // Re-running the migration must not duplicate the event.
+    runMigrations(sqlite);
+    expect(sqlite.prepare("select count(*) as count from security_events").get()).toEqual({
+      count: 1,
+    });
+  });
+
+  it("does not record a legacy-session event for a fresh empty database", () => {
+    const sqlite = new Database(":memory:");
+
+    runMigrations(sqlite);
+
+    expect(sqlite.prepare("select count(*) as count from security_events").get()).toEqual({
+      count: 0,
+    });
   });
 
   it("preserves legacy rows and normalizes approved assignments and reopened pointers", () => {

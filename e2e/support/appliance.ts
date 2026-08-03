@@ -331,6 +331,53 @@ conn.close()
   });
 }
 
+export function revokeAuthSessionsForEmail(email: string) {
+  const revokedAt = new Date().toISOString();
+  const sql = `update auth_sessions set status = 'revoked', revoked_at = ?, revoked_reason = 'e2e_revocation' where status = 'active' and user_id = (select id from users where email = ?)`;
+
+  if (e2eContainerName()) {
+    execContainerPython(
+      `import sqlite3, sys
+db_path, revoked_at, email = sys.argv[1:4]
+conn = sqlite3.connect(db_path)
+conn.execute(
+    "update auth_sessions set status = 'revoked', revoked_at = ?, revoked_reason = 'e2e_revocation' where status = 'active' and user_id = (select id from users where email = ?)",
+    (revoked_at, email),
+)
+conn.commit()
+conn.close()
+`,
+      [CONTAINER_DB_PATH, revokedAt, email],
+    );
+    return;
+  }
+
+  withRuntimeDb((db) => {
+    db.prepare(sql).run(revokedAt, email);
+  });
+}
+
+export function authSessionRowsForEmail(email: string) {
+  const sql = `select auth_sessions.id, auth_sessions.status, auth_sessions.auth_source as authSource, auth_sessions.revoked_reason as revokedReason from auth_sessions join users on users.id = auth_sessions.user_id where users.email = ? order by auth_sessions.created_at`;
+  if (e2eContainerName()) {
+    return queryContainerDb<{
+      id: string;
+      status: string;
+      authSource: string;
+      revokedReason: string | null;
+    }>(sql, [email]);
+  }
+  return withRuntimeDb(
+    (db) =>
+      db.prepare(sql).all(email) as Array<{
+        id: string;
+        status: string;
+        authSource: string;
+        revokedReason: string | null;
+      }>,
+  );
+}
+
 export function auditRows(recordingId: string) {
   const sql = `select type, detail, effective_role as effectiveRole, admin_action_session_id as adminActionSessionId, created_at as createdAt from audit_events where recording_id = ? order by created_at desc`;
   if (e2eContainerName()) {
@@ -485,6 +532,10 @@ export async function login(page: Page, user: LocalUser): Promise<void> {
 }
 
 export async function logout(page: Page) {
+  // Leave the guarded shell before clearing cookies so the session-state
+  // poller cannot race this synthetic sign-out. (The real Sign out button
+  // marks the tab instead; see signed-out-marker.ts.)
+  await page.goto("/api/auth/session-state");
   await page.context().clearCookies();
   await page.goto("/?reason=logged-out");
   await expect(page).toHaveURL(/\/?\?reason=logged-out/);
