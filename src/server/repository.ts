@@ -1,3 +1,7 @@
+export { listAdministration } from "@/server/administration/service";
+export { getCasefile } from "@/server/casefile/read-model";
+export { listWorkInbox } from "@/server/work-inbox/service";
+
 import { basename } from "node:path";
 import { statSync, existsSync } from "node:fs";
 import {
@@ -11,7 +15,7 @@ import {
   Workspace,
   WorkspaceBucket,
 } from "@/domain/models";
-import { bucketRecording, saveDraftRevision, submitRevision, approveRevision, reopenApprovedRevision } from "@/domain/workflow";
+import { bucketRecording } from "@/domain/workflow";
 import { describePolicyProfile, evaluatePolicy } from "@/domain/policy";
 import type { ApprovedTranscriptExportFormat } from "@/lib/approved-transcript-export";
 import {
@@ -215,70 +219,6 @@ export function noteRecordingDispatchFailure(params: {
   });
 }
 
-export function saveRecordingDraft(params: {
-  recordingId: string;
-  role: UserRole;
-  expectedCurrentRevisionId: string;
-  segments: TranscriptRevision["segments"];
-  summary: string;
-}) {
-  return withState((state) =>
-    saveDraftRevision({
-      state,
-      recordingId: params.recordingId,
-      role: params.role,
-      expectedCurrentRevisionId: params.expectedCurrentRevisionId,
-      segments: params.segments,
-      summary: params.summary,
-    }),
-  );
-}
-
-export function submitRecording(params: {
-  recordingId: string;
-  role: UserRole;
-  expectedCurrentRevisionId: string;
-}) {
-  return withState((state) =>
-    submitRevision({
-      state,
-      recordingId: params.recordingId,
-      role: params.role,
-      expectedCurrentRevisionId: params.expectedCurrentRevisionId,
-    }),
-  );
-}
-
-export function approveRecordingRevision(params: {
-  recordingId: string;
-  role: UserRole;
-  expectedPendingRevisionId: string;
-}) {
-  return withState((state) =>
-    approveRevision({
-      state,
-      recordingId: params.recordingId,
-      role: params.role,
-      expectedPendingRevisionId: params.expectedPendingRevisionId,
-    }),
-  );
-}
-
-export function reopenRecordingRevision(params: {
-  recordingId: string;
-  role: UserRole;
-  expectedApprovedRevisionId: string;
-}) {
-  return withState((state) =>
-    reopenApprovedRevision({
-      state,
-      recordingId: params.recordingId,
-      role: params.role,
-      expectedApprovedRevisionId: params.expectedApprovedRevisionId,
-    }),
-  );
-}
-
 export function resolveMedia(recordingId: string, role: UserRole) {
   const detail = getRecordingDetail(recordingId, role);
   if (!detail) {
@@ -376,5 +316,9 @@ export async function resolveApprovedTranscriptExportForPrincipal(
     };
   }
 
-  return resolveApprovedTranscriptExport(recordingId, principal.role, format);
+  return resolveApprovedTranscriptExport(
+    recordingId,
+    principal.role === "admin" ? "approver" : principal.role,
+    format,
+  );
 }

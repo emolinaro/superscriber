@@ -60,9 +60,10 @@ describe("approved transcript export registry", () => {
       buildApprovedTranscriptExportUrl(
         "https://example.com/workspaces/demo/transcripts/123/export?download=1",
         "json",
+        "mode-1",
       ),
     ).toBe(
-      "https://example.com/workspaces/demo/transcripts/123/export?download=1&format=json",
+      "https://example.com/workspaces/demo/transcripts/123/export?download=1&format=json&actionModeId=mode-1",
     );
 
     expect(

@@ -1,0 +1,174 @@
+@media (min-width: 1100px) {
+  .recording-table {
+    display: table;
+  }
+
+  .recording-list,
+  .administration-card-list {
+    display: none;
+  }
+}
+
+@media (min-width: 960px) and (max-width: 1099px) {
+  .recording-table,
+  .administration-table-wrap {
+    display: block;
+  }
+
+  .recording-list,
+  .administration-card-list {
+    display: none;
+  }
+
+  .recording-table th,
+  .recording-table td,
+  .administration-table th,
+  .administration-table td {
+    padding: var(--space-3);
+  }
+}
+
+@media (min-width: 768px) and (max-width: 959px) {
+  .recording-table,
+  .administration-table-wrap {
+    display: none;
+  }
+
+  .recording-list,
+  .administration-card-list {
+    display: grid;
+  }
+
+  .export-backdrop {
+    align-items: end;
+  }
+
+  .export-dialog {
+    width: min(100vw, 42rem);
+    max-width: none;
+    border-radius: 16px 16px 0 0;
+  }
+}
+
+@media (max-width: 959px) {
+  .app-shell__header-content {
+    grid-template-columns: 1fr;
+    justify-items: start;
+    padding: var(--space-3) 0;
+  }
+
+  .app-shell__nav-list {
+    justify-content: flex-start;
+  }
+
+  .auth-surface,
+  .work-filters,
+  .work-loading__filters,
+  .administration-search,
+  .administration-filters,
+  .work-next-action,
+  .work-filters-header {
+    grid-template-columns: 1fr;
+  }
+
+  .work-next-action,
+  .recording-card__header,
+  .administration-section__header {
+    justify-content: stretch;
+  }
+}
+
+@media (max-width: 767px), (max-height: 767px) and (pointer: coarse) {
+  .app-shell__main {
+    padding-top: var(--space-6);
+  }
+
+  .surface-intro,
+  .error-summary,
+  .empty-state,
+  .page-skeleton,
+  .modal-surface,
+  .auth-readiness,
+  .work-filters-surface,
+  .work-next-action,
+  .work-ledger,
+  .ingest-status-card,
+  .ingest-transfer-card,
+  .administration-phone-notice,
+  .administration-status,
+  .governance-tablet-drawer__surface {
+    padding: var(--space-4);
+  }
+
+  .casefile-page {
+    margin-top: calc(var(--space-6) * -1);
+  }
+
+  .media-transport {
+    top: 112px;
+  }
+
+  .transcript-segment {
+    scroll-margin-top: 148px;
+  }
+
+  .case-header__facts,
+  .casefile-status-only__grid,
+  .media-transport__actions,
+  .casefile-action-bar,
+  .action-mode-entry-row,
+  .export-option-list {
+    grid-template-columns: 1fr;
+  }
+
+  .casefile-action-bar,
+  .media-transport__actions {
+    display: grid;
+  }
+}
+
+@media (min-width: 390px) and (max-width: 767px) {
+  .recording-card,
+  .administration-card,
+  .case-header__title,
+  .recording-card__title,
+  .recording-ledger__title {
+    overflow-wrap: anywhere;
+  }
+}
+
+@media (max-width: 389px) {
+  .work-tabs__list {
+    display: grid;
+    grid-template-columns: 1fr;
+  }
+
+  .work-tabs__link,
+  .recording-action,
+  .ingest-actions .button,
+  .ingest-capture__actions .button,
+  .administration-nav__link,
+  .administration-subnav__link,
+  .button-row .button {
+    width: 100%;
+  }
+
+  .recording-card,
+  .recording-list__item,
+  .ingest-source-option,
+  .ingest-shell,
+  .casefile-page,
+  .casefile-layout,
+  .casefile-main,
+  .transcript-document,
+  .transcript-segment,
+  .governance-tablet-drawer__surface,
+  .administration-drawer {
+    min-width: 0;
+  }
+
+  .ingest-capture__actions,
+  .ingest-actions {
+    width: 100%;
+  }
+}

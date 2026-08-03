@@ -1,6 +1,11 @@
-import { NextResponse } from "next/server";
 import { revalidatePath } from "next/cache";
-import { createResumableUploadSession } from "@/server/ingest/service";
+import { NextResponse } from "next/server";
+import {
+  authExpiredIngestFailure,
+  createResumableUploadSession,
+  describeIngestFailure,
+  IngestError,
+} from "@/server/ingest/service";
 import { getActivePrincipal } from "@/server/session";
 
 function parseString(value: unknown) {
@@ -18,29 +23,38 @@ export async function POST(request: Request) {
   try {
     const principal = await getActivePrincipal();
     if (!principal) {
-      return new NextResponse("Unauthorized", { status: 401 });
+      const failure = authExpiredIngestFailure();
+      return NextResponse.json(failure.body, { status: failure.status });
     }
     if (principal.role !== "uploader" && principal.role !== "admin") {
-      return NextResponse.json(
-        { ok: false, error: "Only uploader and admin accounts can create ingest sessions." },
-        { status: 403 },
+      const failure = describeIngestFailure(
+        new IngestError(
+          "ACCESS_DENIED",
+          "Only uploader and admin accounts can create ingest sessions.",
+        ),
       );
+      return NextResponse.json(failure.body, { status: failure.status });
     }
 
-    const body = (await request.json()) as Record<string, unknown>;
+    let body: Record<string, unknown>;
+    try {
+      body = (await request.json()) as Record<string, unknown>;
+    } catch {
+      throw new IngestError("VALIDATION_ERROR", "Request body must be valid JSON.");
+    }
+
     const fileSize = parseNumber(body.fileSize);
     if (!fileSize || fileSize <= 0) {
-      return NextResponse.json(
-        { ok: false, error: "A positive file size is required." },
-        { status: 400 },
-      );
+      throw new IngestError("VALIDATION_ERROR", "A positive file size is required.", {
+        fileSize: "A positive file size is required.",
+      });
     }
 
     const status = createResumableUploadSession({
+      principal,
       title: parseString(body.title),
       languageHint: parseString(body.languageHint) || "english",
       source: parseString(body.source) === "record" ? "record" : "upload",
-      role: principal.role,
       fileName: parseString(body.fileName),
       mimeType: parseString(body.mimeType) || null,
       fileSize,
@@ -50,13 +64,7 @@ export async function POST(request: Request) {
 
     return NextResponse.json({ ok: true, status });
   } catch (error) {
-    return NextResponse.json(
-      {
-        ok: false,
-        error:
-          error instanceof Error ? error.message : "The ingest session could not be created.",
-      },
-      { status: 400 },
-    );
+    const failure = describeIngestFailure(error);
+    return NextResponse.json(failure.body, { status: failure.status });
   }
 }

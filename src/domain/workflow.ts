@@ -1,15 +1,16 @@
 import {
-  ApprovalRecord,
   AppState,
   AuditEvent,
   IngestionSession,
+  Principal,
   Recording,
   TranscriptJob,
   TranscriptRevision,
   UserRole,
   WorkspaceBucket,
 } from "@/domain/models";
-import { evaluatePolicy } from "@/domain/policy";
+import { actorContextForPrincipal, type ActorContext } from "@/server/casefile/audit";
+import { EMPTY_AUDIT_METADATA } from "@/server/db/mappers";
 
 function nowIso() {
   return new Date().toISOString();
@@ -63,17 +64,34 @@ export function bucketRecording(recording: Recording): WorkspaceBucket {
 
 function addAuditEvent(
   state: AppState,
-  event: Omit<AuditEvent, "id" | "createdAt">,
+  event: Pick<AuditEvent, "workspaceId" | "recordingId" | "type" | "detail"> & {
+    actor?: ActorContext;
+    actorRole?: AuditEvent["actorRole"];
+  },
 ) {
+  const actor =
+    event.actor ?? {
+      actorRole: event.actorRole ?? "system",
+      actorUserId: null,
+      actorDisplayName: null,
+      effectiveRole: event.actorRole ?? "system",
+      adminActionSessionId: null,
+    };
+
   state.auditEvents.unshift({
-    ...event,
+    workspaceId: event.workspaceId,
+    recordingId: event.recordingId,
+    actorRole: actor.actorRole,
+    actorUserId: actor.actorUserId,
+    actorDisplayName: actor.actorDisplayName,
+    effectiveRole: actor.effectiveRole,
+    adminActionSessionId: actor.adminActionSessionId,
+    type: event.type,
+    detail: event.detail,
     id: createId("audit"),
+    metadata: EMPTY_AUDIT_METADATA,
     createdAt: nowIso(),
   });
-}
-
-function cloneSegments(segments: TranscriptRevision["segments"]) {
-  return segments.map((segment) => ({ ...segment }));
 }
 
 function createIngestionSession(
@@ -85,6 +103,7 @@ function createIngestionSession(
     verificationSummary?: string;
     bytesReceived?: number | null;
     startedAt?: string | null;
+    createdByUserId?: string | null;
   },
 ): IngestionSession {
   const timestamp = nowIso();
@@ -95,6 +114,7 @@ function createIngestionSession(
     source: recording.source,
     state: nextState,
     adapter: adapterId,
+    createdByUserId: options?.createdByUserId ?? null,
     createdAt: timestamp,
     updatedAt: timestamp,
     startedAt: options?.startedAt ?? timestamp,
@@ -150,7 +170,9 @@ export function createSystemDraftRevision(params: {
     state: "draft",
     basedOnRevisionId: null,
     createdByRole: "system",
+    createdByUserId: null,
     createdAt: nowIso(),
+    submittedByUserId: null,
     submittedAt: null,
     approvedAt: null,
     summary: params.summary,
@@ -190,6 +212,7 @@ export function createRecordingEntry(params: {
     originalFileName: params.originalFileName,
     languageHint: params.languageHint,
     uploadedByRole: params.role,
+    uploadedByUserId: null,
     ingestionSessionId: null,
     transcriptJobId: null,
     integrityState: "verifying",
@@ -250,7 +273,7 @@ export function createUploadSessionEntry(params: {
   mimeType: string | null;
   originalFileName: string | null;
   languageHint: string;
-  role: UserRole;
+  principal: Principal;
   bytesExpected: number;
   adapterId?: string;
 }) {
@@ -266,7 +289,8 @@ export function createUploadSessionEntry(params: {
     mediaPath: null,
     originalFileName: params.originalFileName,
     languageHint: params.languageHint,
-    uploadedByRole: params.role,
+    uploadedByRole: params.principal.role,
+    uploadedByUserId: params.principal.userId,
     ingestionSessionId: null,
     transcriptJobId: null,
     integrityState: "uploading",
@@ -286,6 +310,7 @@ export function createUploadSessionEntry(params: {
     verificationSummary:
       "Upload session started. Continue from the last committed byte if the transfer is interrupted.",
     bytesReceived: 0,
+    createdByUserId: params.principal.userId,
   });
   const transcriptJob = createTranscriptJob(recording, adapterId);
   recording.ingestionSessionId = ingestionSession.id;
@@ -297,7 +322,7 @@ export function createUploadSessionEntry(params: {
   addAuditEvent(params.state, {
     workspaceId: recording.workspaceId,
     recordingId: recording.id,
-    actorRole: params.role,
+    actor: actorContextForPrincipal(params.principal),
     type: "recording.created",
     detail: `${params.source === "record" ? "Browser recording" : "Upload"} session started.`,
   });
@@ -423,328 +448,4 @@ export function finalizeUploadSession(params: {
   });
 
   return { session, recording, job };
-}
-
-export function saveDraftRevision(params: {
-  state: AppState;
-  recordingId: string;
-  role: UserRole;
-  expectedCurrentRevisionId: string;
-  segments: TranscriptRevision["segments"];
-  summary: string;
-}) {
-  const recording = params.state.recordings.find(
-    (entry) => entry.id === params.recordingId,
-  );
-
-  if (!recording) {
-    throw new Error("Recording not found.");
-  }
-
-  const workspace = params.state.workspaces.find(
-    (entry) => entry.id === recording.workspaceId,
-  );
-
-  if (!workspace) {
-    throw new Error("Workspace not found.");
-  }
-
-  const decision = evaluatePolicy(workspace.policyProfileId, params.role);
-  if (!decision.canEditDraft) {
-    addAuditEvent(params.state, {
-      workspaceId: workspace.id,
-      recordingId: recording.id,
-      actorRole: params.role,
-      type: "policy.denied",
-      detail: "Draft edit denied by regulated-mode policy.",
-    });
-    throw new Error("Your role cannot edit draft transcripts.");
-  }
-
-  if (recording.currentRevisionId !== params.expectedCurrentRevisionId) {
-    throw new Error("A newer draft revision exists. Reload this recording and apply your changes again.");
-  }
-
-  const priorRevision = params.state.revisions.find(
-    (entry) => entry.id === recording.currentRevisionId,
-  );
-  if (!priorRevision) {
-    throw new Error("Current revision not found.");
-  }
-
-  if (params.segments.length === 0 && priorRevision.segments.length > 0) {
-    throw new Error(
-      "The loaded draft is missing transcript segments. Reload this recording before saving changes.",
-    );
-  }
-
-  if (
-    priorRevision.state === "approved" &&
-    recording.approvedRevisionId === priorRevision.id &&
-    !decision.canReopenApprovedTranscript
-  ) {
-    addAuditEvent(params.state, {
-      workspaceId: workspace.id,
-      recordingId: recording.id,
-      actorRole: params.role,
-      type: "policy.denied",
-      detail: "Approved transcript edit denied without reopen permission.",
-    });
-    throw new Error("This transcript must be reopened by an approver before it can be edited again.");
-  }
-
-  const version = nextRevisionVersion(params.state, recording.id);
-
-  const revision: TranscriptRevision = {
-    id: createId("rev"),
-    recordingId: recording.id,
-    version,
-    state: "draft",
-    basedOnRevisionId: priorRevision.id,
-    createdByRole: params.role,
-    createdAt: nowIso(),
-    submittedAt: null,
-    approvedAt: null,
-    summary: params.summary.trim() || "Updated transcript draft.",
-    segments: params.segments,
-  };
-
-  params.state.revisions.push(revision);
-  recording.currentRevisionId = revision.id;
-  recording.pendingRevisionId = null;
-  recording.updatedAt = nowIso();
-
-  addAuditEvent(params.state, {
-    workspaceId: workspace.id,
-    recordingId: recording.id,
-    actorRole: params.role,
-    type: "revision.saved",
-    detail: `Draft revision ${version} saved.`,
-  });
-
-  return revision;
-}
-
-export function submitRevision(params: {
-  state: AppState;
-  recordingId: string;
-  role: UserRole;
-  expectedCurrentRevisionId: string;
-}) {
-  const recording = params.state.recordings.find(
-    (entry) => entry.id === params.recordingId,
-  );
-  if (!recording || !recording.currentRevisionId) {
-    throw new Error("No draft is available for submission.");
-  }
-
-  const workspace = params.state.workspaces.find(
-    (entry) => entry.id === recording.workspaceId,
-  );
-  if (!workspace) {
-    throw new Error("Workspace not found.");
-  }
-
-  const decision = evaluatePolicy(workspace.policyProfileId, params.role);
-  if (!decision.canSubmitForApproval) {
-    addAuditEvent(params.state, {
-      workspaceId: workspace.id,
-      recordingId: recording.id,
-      actorRole: params.role,
-      type: "policy.denied",
-      detail: "Approval submission denied by policy.",
-    });
-    throw new Error("Your role cannot submit transcripts for approval.");
-  }
-
-  if (recording.currentRevisionId !== params.expectedCurrentRevisionId) {
-    throw new Error("A newer draft revision exists. Reload this recording before submitting it.");
-  }
-
-  const revision = params.state.revisions.find(
-    (entry) => entry.id === recording.currentRevisionId,
-  );
-  if (!revision) {
-    throw new Error("Draft revision not found.");
-  }
-
-  if (revision.state !== "draft") {
-    throw new Error("Only draft revisions can be submitted for approval.");
-  }
-
-  revision.state = "pending_approval";
-  revision.submittedAt = nowIso();
-  recording.pendingRevisionId = revision.id;
-  recording.updatedAt = nowIso();
-
-  const approval: ApprovalRecord = {
-    id: createId("approval"),
-    recordingId: recording.id,
-    revisionId: revision.id,
-    state: "pending",
-    actorRole: params.role,
-    createdAt: nowIso(),
-    note: null,
-  };
-
-  params.state.approvals.push(approval);
-  addAuditEvent(params.state, {
-    workspaceId: workspace.id,
-    recordingId: recording.id,
-    actorRole: params.role,
-    type: "revision.submitted",
-    detail: `Revision ${revision.version} submitted for approval.`,
-  });
-}
-
-export function approveRevision(params: {
-  state: AppState;
-  recordingId: string;
-  role: UserRole;
-  expectedPendingRevisionId: string;
-}) {
-  const recording = params.state.recordings.find(
-    (entry) => entry.id === params.recordingId,
-  );
-  if (!recording || !recording.pendingRevisionId) {
-    throw new Error("Nothing is waiting for approval.");
-  }
-
-  const workspace = params.state.workspaces.find(
-    (entry) => entry.id === recording.workspaceId,
-  );
-  if (!workspace) {
-    throw new Error("Workspace not found.");
-  }
-
-  const decision = evaluatePolicy(workspace.policyProfileId, params.role);
-  if (!decision.canApprove) {
-    addAuditEvent(params.state, {
-      workspaceId: workspace.id,
-      recordingId: recording.id,
-      actorRole: params.role,
-      type: "policy.denied",
-      detail: "Approval denied by policy.",
-    });
-    throw new Error("Your role cannot approve transcripts.");
-  }
-
-  if (recording.pendingRevisionId !== params.expectedPendingRevisionId) {
-    throw new Error("A different revision is now pending approval. Reload this recording before approving it.");
-  }
-
-  const revision = params.state.revisions.find(
-    (entry) => entry.id === recording.pendingRevisionId,
-  );
-
-  if (!revision) {
-    throw new Error("Pending revision not found.");
-  }
-
-  revision.state = "approved";
-  revision.approvedAt = nowIso();
-  recording.approvedRevisionId = revision.id;
-  recording.pendingRevisionId = null;
-  recording.currentRevisionId = revision.id;
-  recording.updatedAt = nowIso();
-
-  params.state.approvals.push({
-    id: createId("approval"),
-    recordingId: recording.id,
-    revisionId: revision.id,
-    state: "approved",
-    actorRole: params.role,
-    createdAt: nowIso(),
-    note: "Approved in regulated-mode review flow.",
-  });
-
-  addAuditEvent(params.state, {
-    workspaceId: workspace.id,
-    recordingId: recording.id,
-    actorRole: params.role,
-    type: "approval.approved",
-    detail: `Revision ${revision.version} approved.`,
-  });
-}
-
-export function reopenApprovedRevision(params: {
-  state: AppState;
-  recordingId: string;
-  role: UserRole;
-  expectedApprovedRevisionId: string;
-}) {
-  const recording = params.state.recordings.find(
-    (entry) => entry.id === params.recordingId,
-  );
-
-  if (!recording || !recording.approvedRevisionId) {
-    throw new Error("No approved revision is available to reopen.");
-  }
-
-  const workspace = params.state.workspaces.find(
-    (entry) => entry.id === recording.workspaceId,
-  );
-  if (!workspace) {
-    throw new Error("Workspace not found.");
-  }
-
-  const decision = evaluatePolicy(workspace.policyProfileId, params.role);
-  if (!decision.canReopenApprovedTranscript) {
-    addAuditEvent(params.state, {
-      workspaceId: workspace.id,
-      recordingId: recording.id,
-      actorRole: params.role,
-      type: "policy.denied",
-      detail: "Reopen denied by policy.",
-    });
-    throw new Error("Your role cannot reopen approved transcripts.");
-  }
-
-  if (recording.approvedRevisionId !== params.expectedApprovedRevisionId) {
-    throw new Error("A newer approved revision exists. Reload this recording before reopening it.");
-  }
-
-  const approvedRevision = params.state.revisions.find(
-    (entry) => entry.id === recording.approvedRevisionId,
-  );
-  if (!approvedRevision) {
-    throw new Error("Approved revision not found.");
-  }
-
-  const draft: TranscriptRevision = {
-    id: createId("rev"),
-    recordingId: recording.id,
-    version: nextRevisionVersion(params.state, recording.id),
-    state: "draft",
-    basedOnRevisionId: approvedRevision.id,
-    createdByRole: params.role,
-    createdAt: nowIso(),
-    submittedAt: null,
-    approvedAt: null,
-    summary: `Reopened from approved revision ${approvedRevision.version}.`,
-    segments: cloneSegments(approvedRevision.segments),
-  };
-
-  params.state.revisions.push(draft);
-  recording.currentRevisionId = draft.id;
-  recording.pendingRevisionId = null;
-  recording.updatedAt = nowIso();
-
-  params.state.approvals.push({
-    id: createId("approval"),
-    recordingId: recording.id,
-    revisionId: approvedRevision.id,
-    state: "reopened",
-    actorRole: params.role,
-    createdAt: nowIso(),
-    note: "Approved revision reopened for a new draft cycle.",
-  });
-
-  addAuditEvent(params.state, {
-    workspaceId: workspace.id,
-    recordingId: recording.id,
-    actorRole: params.role,
-    type: "approval.reopened",
-    detail: `Approved revision ${approvedRevision.version} reopened as draft ${draft.version}.`,
-  });
 }

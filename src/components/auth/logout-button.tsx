@@ -8,12 +8,13 @@ export function LogoutButton() {
 
   return (
     <button
-      className="button button-quiet"
+      className="button button-quiet interactive-target"
       disabled={isPending}
       onClick={() => {
         startTransition(async () => {
           await signOut({
             callbackUrl: "/?reason=logged-out",
+            redirect: true,
           });
         });
       }}

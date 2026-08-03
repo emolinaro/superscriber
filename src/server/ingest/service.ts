@@ -3,7 +3,6 @@ import {
   existsSync,
   mkdirSync,
   openSync,
-  readFileSync,
   renameSync,
   statSync,
   unlinkSync,
@@ -18,12 +17,82 @@ import {
   finalizeUploadSession,
   noteUploadProgress,
 } from "@/domain/workflow";
-import { type Recording, type RecordingSource, type UserRole } from "@/domain/models";
+import { type IngestionSession, type Principal, type Recording, type RecordingSource } from "@/domain/models";
+import type { ErrorCode } from "@/lib/command-result";
 import { dispatchRecordingToConfiguredEngine } from "@/server/orchestration/dispatch";
 import { getConfiguredAdapterId } from "@/server/orchestration/config";
 import { MEDIA_DIR, readState, withState } from "@/server/store";
 
 const UPLOAD_EXPIRY_MS = 1000 * 60 * 60 * 24;
+const TITLE_ERROR_MESSAGE = "Enter a title between 1 and 120 characters.";
+const AUTH_EXPIRED_ERROR_MESSAGE = "Session expired. Sign in again to continue.";
+const INTERNAL_ERROR_MESSAGE = "Something went wrong. Try again.";
+
+export class IngestError extends Error {
+  constructor(
+    readonly code: ErrorCode,
+    message: string,
+    readonly fieldErrors?: Record<string, string>,
+  ) {
+    super(message);
+    this.name = "IngestError";
+    Object.setPrototypeOf(this, new.target.prototype);
+  }
+}
+
+export function describeIngestFailure(error: unknown) {
+  if (error instanceof IngestError) {
+    return {
+      status: statusForErrorCode(error.code),
+      body: {
+        ok: false as const,
+        code: error.code,
+        error: error.message,
+        ...(error.fieldErrors ? { fieldErrors: error.fieldErrors } : {}),
+      },
+    };
+  }
+
+  return {
+    status: 500,
+    body: {
+      ok: false as const,
+      code: "INTERNAL_ERROR" as const,
+      error: INTERNAL_ERROR_MESSAGE,
+    },
+  };
+}
+
+export function authExpiredIngestFailure() {
+  return {
+    status: 401,
+    body: {
+      ok: false as const,
+      code: "AUTH_EXPIRED" as const,
+      error: AUTH_EXPIRED_ERROR_MESSAGE,
+    },
+  };
+}
+
+function statusForErrorCode(code: ErrorCode) {
+  if (code === "AUTH_EXPIRED") {
+    return 401;
+  }
+  if (code === "ACCESS_DENIED") {
+    return 403;
+  }
+  if (code === "NOT_FOUND") {
+    return 404;
+  }
+  if (code === "VALIDATION_ERROR") {
+    return 400;
+  }
+  if (code === "STATE_CHANGED") {
+    return 409;
+  }
+
+  return 500;
+}
 
 function nowMs() {
   return Date.now();
@@ -92,27 +161,21 @@ function cleanupExpiredUploadsInState(state: ReturnType<typeof readState>) {
   }
 }
 
-function findUploadState(
-  state: ReturnType<typeof readState>,
-  sessionId: string,
-) {
+function findUploadState(state: ReturnType<typeof readState>, sessionId: string) {
   const session = state.ingestionSessions.find((entry) => entry.id === sessionId);
   if (!session) {
-    throw new Error("Upload session not found.");
+    throw new IngestError("NOT_FOUND", "Upload session not found.");
   }
 
   const recording = state.recordings.find((entry) => entry.id === session.recordingId);
   if (!recording) {
-    throw new Error("Recording not found.");
+    throw new IngestError("NOT_FOUND", "Upload session not found.");
   }
 
   return { session, recording };
 }
 
-function buildSessionStatus(
-  state: ReturnType<typeof readState>,
-  sessionId: string,
-) {
+function buildSessionStatus(state: ReturnType<typeof readState>, sessionId: string) {
   const { session, recording } = findUploadState(state, sessionId);
   const tempPath = uploadTempPath(session.id);
   const tempExists = existsSync(tempPath);
@@ -150,15 +213,57 @@ function buildSessionStatus(
   };
 }
 
+function assertUploaderOrAdmin(principal: Principal) {
+  if (principal.role === "uploader" || principal.role === "admin") {
+    return;
+  }
+
+  throw new IngestError(
+    "ACCESS_DENIED",
+    "Only uploader and admin accounts can manage ingest sessions.",
+  );
+}
+
+function validateTitle(title: string) {
+  const trimmedTitle = title.trim();
+  if (trimmedTitle.length < 1 || trimmedTitle.length > 120) {
+    throw new IngestError("VALIDATION_ERROR", TITLE_ERROR_MESSAGE, {
+      title: TITLE_ERROR_MESSAGE,
+    });
+  }
+
+  return trimmedTitle;
+}
+
+function assertSessionAccess(
+  session: IngestionSession,
+  principal: Principal,
+  mode: "inspect" | "mutate",
+) {
+  if (session.createdByUserId === principal.userId) {
+    return;
+  }
+  if (mode === "inspect" && principal.role === "admin") {
+    return;
+  }
+
+  throw new IngestError(
+    "ACCESS_DENIED",
+    "This upload session is not available to your account.",
+  );
+}
+
 export function createResumableUploadSession(params: {
+  principal: Principal;
   title: string;
   languageHint: string;
   source: RecordingSource;
-  role: UserRole;
   fileName: string;
   mimeType: string | null;
   fileSize: number;
 }) {
+  assertUploaderOrAdmin(params.principal);
+  const title = validateTitle(params.title);
   ensureUploadDirs();
 
   const result = withState((state) => {
@@ -167,13 +272,13 @@ export function createResumableUploadSession(params: {
     const created = createUploadSessionEntry({
       state,
       workspaceId: state.workspaces[0]?.id ?? "workspace-regulated",
-      title: params.title.trim() || params.fileName || "Untitled recording",
+      title,
       source: params.source,
       mediaKind: mediaKindForMime(params.mimeType),
       mimeType: params.mimeType,
       originalFileName: params.fileName ? fileSafeName(params.fileName) : null,
       languageHint: params.languageHint || "english",
-      role: params.role,
+      principal: params.principal,
       bytesExpected: params.fileSize,
       adapterId: getConfiguredAdapterId(),
     });
@@ -189,38 +294,52 @@ export function createResumableUploadSession(params: {
   return buildSessionStatus(refreshed, result.sessionId);
 }
 
-export function getResumableUploadSession(sessionId: string) {
+export function getResumableUploadSession(sessionId: string, principal: Principal) {
+  assertUploaderOrAdmin(principal);
+
   return withState((state) => {
     cleanupExpiredUploadsInState(state);
+    const { session } = findUploadState(state, sessionId);
+    assertSessionAccess(session, principal, "inspect");
     return buildSessionStatus(state, sessionId);
   });
 }
 
 export function appendUploadChunk(params: {
+  principal: Principal;
   sessionId: string;
   chunkStart: number;
   bytes: Uint8Array;
 }) {
+  assertUploaderOrAdmin(params.principal);
   ensureUploadDirs();
   const tempPath = uploadTempPath(params.sessionId);
 
   return withState((state) => {
     cleanupExpiredUploadsInState(state);
     const { session } = findUploadState(state, params.sessionId);
+    assertSessionAccess(session, params.principal, "mutate");
 
     if (session.state === "verification_failed") {
-      throw new Error("This upload session needs a restart before more bytes can be accepted.");
+      throw new IngestError(
+        "STATE_CHANGED",
+        "This upload session needs a restart before more bytes can be accepted.",
+      );
     }
 
     const expectedOffset = session.bytesReceived ?? 0;
     if (params.chunkStart !== expectedOffset) {
-      throw new Error(
-        `Chunk offset mismatch. Server expects byte ${expectedOffset}, received ${params.chunkStart}.`,
+      throw new IngestError(
+        "STATE_CHANGED",
+        "Upload is out of sync. Resume from the latest committed byte.",
       );
     }
 
     if (!existsSync(tempPath) && expectedOffset > 0) {
-      throw new Error("This upload session was cleaned up and must be restarted.");
+      throw new IngestError(
+        "STATE_CHANGED",
+        "This upload session was cleaned up and must be restarted.",
+      );
     }
 
     const fd = openSync(tempPath, expectedOffset === 0 ? "w" : "r+");
@@ -241,13 +360,15 @@ export function appendUploadChunk(params: {
   });
 }
 
-export async function finalizeResumableUploadSession(sessionId: string) {
+export async function finalizeResumableUploadSession(sessionId: string, principal: Principal) {
+  assertUploaderOrAdmin(principal);
   ensureUploadDirs();
   const tempPath = uploadTempPath(sessionId);
 
   const finalized = withState((state) => {
     cleanupExpiredUploadsInState(state);
     const { session, recording } = findUploadState(state, sessionId);
+    assertSessionAccess(session, principal, "mutate");
     const expected = session.bytesExpected ?? 0;
     const received = session.bytesReceived ?? 0;
 
@@ -257,7 +378,13 @@ export async function finalizeResumableUploadSession(sessionId: string) {
         sessionId,
         detail: "Temporary upload is missing. Start a new upload session.",
       });
-      throw new Error("Temporary upload is missing. Start a new upload session.");
+      return {
+        ok: false as const,
+        error: new IngestError(
+          "STATE_CHANGED",
+          "Temporary upload is missing. Start a new upload session.",
+        ),
+      };
     }
 
     const stats = statSync(tempPath);
@@ -268,9 +395,13 @@ export async function finalizeResumableUploadSession(sessionId: string) {
         detail:
           "Upload verification failed because the received bytes do not match the expected size. Restart the upload.",
       });
-      throw new Error(
-        "Upload verification failed because the received bytes do not match the expected size.",
-      );
+      return {
+        ok: false as const,
+        error: new IngestError(
+          "STATE_CHANGED",
+          "Upload verification failed because the received bytes do not match the expected size. Restart the upload.",
+        ),
+      };
     }
 
     const finalPath = nextMediaPath(recording.id, recording.originalFileName);
@@ -283,10 +414,15 @@ export async function finalizeResumableUploadSession(sessionId: string) {
     });
 
     return {
+      ok: true as const,
       recordingId: recording.id,
       mediaPath: finalPath,
     };
   });
+
+  if (!finalized.ok) {
+    throw finalized.error;
+  }
 
   let warning: string | null = null;
   try {
@@ -301,7 +437,7 @@ export async function finalizeResumableUploadSession(sessionId: string) {
         : "Upload stored, but backend dispatch failed.";
   }
 
-  const status = getResumableUploadSession(sessionId);
+  const status = getResumableUploadSession(sessionId, principal);
   return {
     ...status,
     warning,

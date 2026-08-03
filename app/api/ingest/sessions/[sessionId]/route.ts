@@ -1,5 +1,10 @@
 import { NextResponse } from "next/server";
-import { getResumableUploadSession } from "@/server/ingest/service";
+import {
+  authExpiredIngestFailure,
+  describeIngestFailure,
+  getResumableUploadSession,
+  IngestError,
+} from "@/server/ingest/service";
 import { getActivePrincipal } from "@/server/session";
 
 export const runtime = "nodejs";
@@ -13,23 +18,25 @@ export async function GET(
 ) {
   const principal = await getActivePrincipal();
   if (!principal) {
-    return new NextResponse("Unauthorized", { status: 401 });
+    const failure = authExpiredIngestFailure();
+    return NextResponse.json(failure.body, { status: failure.status });
   }
   if (principal.role !== "uploader" && principal.role !== "admin") {
-    return new NextResponse("Forbidden", { status: 403 });
+    const failure = describeIngestFailure(
+      new IngestError(
+        "ACCESS_DENIED",
+        "Only uploader and admin accounts can inspect ingest sessions.",
+      ),
+    );
+    return NextResponse.json(failure.body, { status: failure.status });
   }
 
   try {
     const { sessionId } = await context.params;
-    const status = getResumableUploadSession(sessionId);
+    const status = getResumableUploadSession(sessionId, principal);
     return NextResponse.json({ ok: true, status });
   } catch (error) {
-    return NextResponse.json(
-      {
-        ok: false,
-        error: error instanceof Error ? error.message : "Upload session lookup failed.",
-      },
-      { status: 404 },
-    );
+    const failure = describeIngestFailure(error);
+    return NextResponse.json(failure.body, { status: failure.status });
   }
 }

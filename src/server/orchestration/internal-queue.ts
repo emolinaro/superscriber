@@ -1,5 +1,6 @@
 import { AppState, TranscriptJob, TranscriptSegment } from "@/domain/models";
 import { createSystemDraftRevision } from "@/domain/workflow";
+import { EMPTY_AUDIT_METADATA } from "@/server/db/mappers";
 import { getAppDbBundle, type AppDatabaseBundle } from "@/server/db/client";
 import { normalizeState } from "@/server/orchestration/service";
 import { readState, withState } from "@/server/store";
@@ -145,8 +146,13 @@ function addAuditEvent(
     workspaceId: params.workspaceId,
     recordingId: params.recordingId,
     actorRole: "system",
+    actorUserId: null,
+    actorDisplayName: null,
+    effectiveRole: "system",
+    adminActionSessionId: null,
     type: params.type,
     detail: params.detail,
+    metadata: EMPTY_AUDIT_METADATA,
     createdAt: nowIso(),
   });
 }

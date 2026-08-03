@@ -7,20 +7,28 @@ export function evaluatePolicy(
   const base: PolicyDecision = {
     canViewMedia: role === "reviewer" || role === "approver" || role === "admin",
     canDownloadRawMedia: false,
-    canEditDraft: role === "reviewer" || role === "admin",
-    canSubmitForApproval: role === "reviewer" || role === "admin",
-    canApprove: role === "approver" || role === "admin",
-    canDownloadApprovedTranscript: role === "approver" || role === "admin",
-    canReopenApprovedTranscript: role === "approver" || role === "admin",
+    canEditDraft: role === "reviewer",
+    canSubmitForApproval: role === "reviewer",
+    canApprove: role === "approver",
+    canDownloadApprovedTranscript: role === "approver",
+    canReopenApprovedTranscript: role === "approver",
   };
 
   if (profileId === "reviewable-approved-export") {
     return {
       ...base,
-      canDownloadApprovedTranscript:
-        role === "reviewer" ||
-        role === "approver" ||
-        role === "admin",
+      canDownloadApprovedTranscript: role === "reviewer" || role === "approver",
+    };
+  }
+
+  if (role === "admin") {
+    return {
+      ...base,
+      canEditDraft: false,
+      canSubmitForApproval: false,
+      canApprove: false,
+      canDownloadApprovedTranscript: false,
+      canReopenApprovedTranscript: false,
     };
   }
 
@@ -32,5 +40,5 @@ export function describePolicyProfile(profileId: PolicyProfileId) {
     return "Approved transcripts may be exported by reviewers and approvers. Raw media never leaves the server.";
   }
 
-  return "Strict regulated mode. Raw media stays server-side. Approved transcripts require approver or admin export rights.";
+  return "Strict regulated mode. Raw media stays server-side. Approved transcripts require approver export rights.";
 }

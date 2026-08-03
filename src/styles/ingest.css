@@ -1,0 +1,151 @@
+.ingest-shell {
+  width: min(100%, var(--work-max));
+}
+
+.surface-intro--ingest {
+  display: grid;
+  gap: var(--space-4);
+}
+
+.ingest-flow,
+.ingest-form,
+.ingest-loading-card,
+.ingest-loading-grid,
+.ingest-source-choice__options {
+  display: grid;
+}
+
+.ingest-flow,
+.ingest-form {
+  gap: var(--space-5);
+}
+
+.ingest-flow--compact,
+.ingest-flow--compact .ingest-form {
+  gap: var(--space-4);
+}
+
+.ingest-section {
+  display: grid;
+  gap: var(--space-3);
+  min-width: 0;
+}
+
+.ingest-section__legend,
+.ingest-section__title {
+  margin: 0;
+}
+
+.ingest-section__title {
+  font-size: var(--type-20);
+  font-family: var(--font-display);
+}
+
+.ingest-source-choice__options {
+  gap: var(--space-3);
+}
+
+.ingest-source-option {
+  width: 100%;
+  min-width: 0;
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-3);
+  padding: var(--space-3);
+  border: 1px solid var(--color-line);
+  border-radius: var(--radius-surface);
+  background: rgba(255, 255, 255, 0.78);
+}
+
+.ingest-source-option input {
+  margin-top: 0.2rem;
+  flex: 0 0 auto;
+}
+
+.ingest-source-option span {
+  display: grid;
+  gap: var(--space-1);
+}
+
+.ingest-source-option small {
+  color: var(--color-muted);
+}
+
+.ingest-capture,
+.ingest-capture__preview,
+.ingest-transfer-card,
+.ingest-resume-card,
+.ingest-status-card {
+  min-width: 0;
+}
+
+.ingest-capture__actions {
+  flex-wrap: wrap;
+}
+
+.ingest-transfer-card,
+.ingest-status-card {
+  display: grid;
+  gap: var(--space-3);
+  padding: var(--space-4);
+  border-radius: var(--radius-surface);
+  border: 1px solid var(--color-line);
+  background: rgba(255, 255, 255, 0.74);
+}
+
+.ingest-transfer-card progress {
+  width: 100%;
+  height: 0.9rem;
+}
+
+.ingest-actions {
+  align-items: center;
+}
+
+.ingest-actions .badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.ingest-loading-card {
+  gap: var(--space-4);
+}
+
+.ingest-loading-grid {
+  gap: var(--space-3);
+}
+
+.ingest-loading-block {
+  border-radius: var(--radius-control);
+  background: rgba(89, 103, 98, 0.16);
+}
+
+.ingest-loading-block--eyebrow {
+  width: 7rem;
+  height: 0.9rem;
+}
+
+.ingest-loading-block--title {
+  width: min(24rem, 80%);
+  height: 2rem;
+}
+
+.ingest-loading-block--copy {
+  width: min(36rem, 100%);
+  height: 1rem;
+}
+
+.ingest-loading-block--field {
+  width: 100%;
+  height: 3.25rem;
+}
+
+.ingest-loading-block--field-large {
+  min-height: 10rem;
+}
+
+.ingest-loading-block--button {
+  width: min(14rem, 100%);
+  height: 3rem;
+}

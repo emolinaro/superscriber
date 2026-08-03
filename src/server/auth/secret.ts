@@ -2,7 +2,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { randomBytes } from "node:crypto";
 
-const SECRET_FILE = join(process.cwd(), "data", "auth.secret");
+const SECRET_FILE = join(/*turbopackIgnore: true*/ process.cwd(), "data", "auth.secret");
 
 export function resolveAuthSecret() {
   const fromEnv = process.env.AUTH_SECRET ?? process.env.NEXTAUTH_SECRET;
@@ -14,7 +14,7 @@ export function resolveAuthSecret() {
     return readFileSync(SECRET_FILE, "utf8").trim();
   }
 
-  mkdirSync(join(process.cwd(), "data"), { recursive: true });
+  mkdirSync(join(/*turbopackIgnore: true*/ process.cwd(), "data"), { recursive: true });
   const generated = randomBytes(48).toString("hex");
   writeFileSync(SECRET_FILE, generated, { encoding: "utf8", mode: 0o600 });
   return generated;

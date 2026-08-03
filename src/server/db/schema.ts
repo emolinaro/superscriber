@@ -1,11 +1,15 @@
-import { integer, index, sqliteTable, text, uniqueIndex } from "drizzle-orm/sqlite-core";
+import { index, integer, sqliteTable, text, uniqueIndex } from "drizzle-orm/sqlite-core";
 import {
   APPROVAL_STATES,
+  ASSIGNMENT_STATUSES,
   INTEGRITY_STATES,
   JOB_STATES,
   POLICY_PROFILES,
   REVISION_STATES,
   USER_ROLES,
+  type AdminActionSession,
+  type ApprovalRecord,
+  type AssignmentRole,
   type ApprovalState,
   type AuditEvent,
   type DiarizationStatus,
@@ -21,6 +25,12 @@ import {
 export const appStateMeta = sqliteTable("app_state_meta", {
   id: integer("id").primaryKey(),
   stateVersion: integer("state_version").notNull(),
+});
+
+export const schemaMigrations = sqliteTable("schema_migrations", {
+  version: integer("version").primaryKey(),
+  name: text("name").notNull(),
+  appliedAt: text("applied_at").notNull(),
 });
 
 export const policyProfiles = sqliteTable("policy_profiles", {
@@ -45,6 +55,25 @@ export const workspaces = sqliteTable(
   }),
 );
 
+export const users = sqliteTable(
+  "users",
+  {
+    id: text("id").primaryKey(),
+    email: text("email").notNull(),
+    displayName: text("display_name").notNull(),
+    passwordHash: text("password_hash").notNull(),
+    role: text("role", { enum: USER_ROLES }).$type<UserRole>().notNull(),
+    isActive: integer("is_active", { mode: "boolean" }).notNull().default(true),
+    createdAt: text("created_at").notNull(),
+    updatedAt: text("updated_at").notNull(),
+  },
+  (table) => ({
+    emailUnique: uniqueIndex("users_email_unique").on(table.email),
+    roleIdx: index("users_role_idx").on(table.role),
+    activeIdx: index("users_active_idx").on(table.isActive),
+  }),
+);
+
 export const recordings = sqliteTable(
   "recordings",
   {
@@ -60,6 +89,9 @@ export const recordings = sqliteTable(
     uploadedByRole: text("uploaded_by_role", { enum: USER_ROLES })
       .$type<UserRole>()
       .notNull(),
+    uploadedByUserId: text("uploaded_by_user_id").references(() => users.id, {
+      onDelete: "set null",
+    }),
     ingestionSessionId: text("ingestion_session_id"),
     transcriptJobId: text("transcript_job_id"),
     integrityState: text("integrity_state", { enum: INTEGRITY_STATES })
@@ -94,6 +126,9 @@ export const ingestionSessions = sqliteTable(
     source: text("source").$type<RecordingSource>().notNull(),
     state: text("state", { enum: INTEGRITY_STATES }).$type<IntegrityState>().notNull(),
     adapter: text("adapter").notNull(),
+    createdByUserId: text("created_by_user_id").references(() => users.id, {
+      onDelete: "set null",
+    }),
     createdAt: text("created_at").notNull(),
     updatedAt: text("updated_at").notNull(),
     startedAt: text("started_at"),
@@ -148,7 +183,13 @@ export const revisions = sqliteTable(
     state: text("state", { enum: REVISION_STATES }).$type<TranscriptRevisionState>().notNull(),
     basedOnRevisionId: text("based_on_revision_id"),
     createdByRole: text("created_by_role").$type<UserRole | "system">().notNull(),
+    createdByUserId: text("created_by_user_id").references(() => users.id, {
+      onDelete: "set null",
+    }),
     createdAt: text("created_at").notNull(),
+    submittedByUserId: text("submitted_by_user_id").references(() => users.id, {
+      onDelete: "set null",
+    }),
     submittedAt: text("submitted_at"),
     approvedAt: text("approved_at"),
     summary: text("summary").notNull(),
@@ -171,6 +212,12 @@ export const approvals = sqliteTable(
     revisionId: text("revision_id").notNull(),
     state: text("state", { enum: APPROVAL_STATES }).$type<ApprovalState>().notNull(),
     actorRole: text("actor_role", { enum: USER_ROLES }).$type<UserRole>().notNull(),
+    actorUserId: text("actor_user_id").references(() => users.id, {
+      onDelete: "set null",
+    }),
+    actorDisplayName: text("actor_display_name"),
+    effectiveRole: text("effective_role").$type<ApprovalRecord["effectiveRole"]>(),
+    adminActionSessionId: text("admin_action_session_id"),
     createdAt: text("created_at").notNull(),
     note: text("note"),
   },
@@ -189,8 +236,15 @@ export const auditEvents = sqliteTable(
     workspaceId: text("workspace_id").notNull(),
     recordingId: text("recording_id"),
     actorRole: text("actor_role").$type<UserRole | "system">().notNull(),
+    actorUserId: text("actor_user_id").references(() => users.id, {
+      onDelete: "set null",
+    }),
+    actorDisplayName: text("actor_display_name"),
+    effectiveRole: text("effective_role").$type<AuditEvent["effectiveRole"]>(),
+    adminActionSessionId: text("admin_action_session_id"),
     type: text("type").$type<AuditEvent["type"]>().notNull(),
     detail: text("detail").notNull(),
+    metadata: text("metadata").notNull(),
     createdAt: text("created_at").notNull(),
   },
   (table) => ({
@@ -205,25 +259,6 @@ export const auditEvents = sqliteTable(
   }),
 );
 
-export const users = sqliteTable(
-  "users",
-  {
-    id: text("id").primaryKey(),
-    email: text("email").notNull(),
-    displayName: text("display_name").notNull(),
-    passwordHash: text("password_hash").notNull(),
-    role: text("role", { enum: USER_ROLES }).$type<UserRole>().notNull(),
-    isActive: integer("is_active", { mode: "boolean" }).notNull().default(true),
-    createdAt: text("created_at").notNull(),
-    updatedAt: text("updated_at").notNull(),
-  },
-  (table) => ({
-    emailUnique: uniqueIndex("users_email_unique").on(table.email),
-    roleIdx: index("users_role_idx").on(table.role),
-    activeIdx: index("users_active_idx").on(table.isActive),
-  }),
-);
-
 export const recordingAssignments = sqliteTable(
   "recording_assignments",
   {
@@ -235,28 +270,55 @@ export const recordingAssignments = sqliteTable(
     assignedByUserId: text("assigned_by_user_id").references(() => users.id, {
       onDelete: "set null",
     }),
+    assignmentRole: text("assignment_role").$type<AssignmentRole>().notNull(),
+    status: text("status", { enum: ASSIGNMENT_STATUSES }).notNull(),
     isActive: integer("is_active", { mode: "boolean" }).notNull().default(true),
     createdAt: text("created_at").notNull(),
     updatedAt: text("updated_at").notNull(),
+    endedAt: text("ended_at"),
+    endReason: text("end_reason"),
+    completedRevisionId: text("completed_revision_id").references(() => revisions.id, {
+      onDelete: "set null",
+    }),
+    removedByUserId: text("removed_by_user_id").references(() => users.id, {
+      onDelete: "set null",
+    }),
   },
   (table) => ({
-    recordingActiveIdx: index("recording_assignments_recording_active_idx").on(
+    recordingStatusIdx: index("recording_assignments_recording_status_idx").on(
       table.recordingId,
-      table.isActive,
+      table.status,
     ),
-    userActiveIdx: index("recording_assignments_user_active_idx").on(
+    userStatusIdx: index("recording_assignments_user_status_idx").on(
       table.userId,
-      table.isActive,
+      table.status,
     ),
-    recordingUserUnique: uniqueIndex("recording_assignments_recording_user_unique").on(
-      table.recordingId,
-      table.userId,
-    ),
+  }),
+);
+
+export const adminActionSessions = sqliteTable(
+  "admin_action_sessions",
+  {
+    id: text("id").primaryKey(),
+    adminUserId: text("admin_user_id")
+      .notNull()
+      .references(() => users.id),
+    recordingId: text("recording_id").notNull(),
+    effectiveRole: text("effective_role").$type<AdminActionSession["effectiveRole"]>().notNull(),
+    purpose: text("purpose").notNull(),
+    startedAt: text("started_at").notNull(),
+    expiresAt: text("expires_at").notNull(),
+    endedAt: text("ended_at"),
+    endReason: text("end_reason").$type<AdminActionSession["endReason"]>(),
+  },
+  (table) => ({
+    recordingIdx: index("admin_action_sessions_recording_idx").on(table.recordingId),
   }),
 );
 
 export type UserRow = typeof users.$inferSelect;
 export type AppStateMetaRow = typeof appStateMeta.$inferSelect;
+export type SchemaMigrationRow = typeof schemaMigrations.$inferSelect;
 export type RecordingAssignmentRow = typeof recordingAssignments.$inferSelect;
 export type PolicyProfileRow = typeof policyProfiles.$inferSelect;
 export type WorkspaceRow = typeof workspaces.$inferSelect;
@@ -266,3 +328,4 @@ export type TranscriptJobRow = typeof transcriptJobs.$inferSelect;
 export type RevisionRow = typeof revisions.$inferSelect;
 export type ApprovalRow = typeof approvals.$inferSelect;
 export type AuditEventRow = typeof auditEvents.$inferSelect;
+export type AdminActionSessionRow = typeof adminActionSessions.$inferSelect;

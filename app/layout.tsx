@@ -1,3 +1,6 @@
+import "@fontsource-variable/public-sans";
+import "@fontsource-variable/newsreader";
+import "@fontsource/ibm-plex-mono/500.css";
 import type { Metadata } from "next";
 import "./globals.css";
 
@@ -14,7 +17,9 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="en">
-      <body>{children}</body>
+      <body>
+        <div id="app-root">{children}</div>
+      </body>
     </html>
   );
 }
