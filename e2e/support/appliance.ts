@@ -1,3 +1,4 @@
+import { execFileSync } from "node:child_process";
 import { mkdtempSync, readdirSync, rmSync, statSync, unlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
@@ -185,63 +186,147 @@ function withRuntimeDb<T>(run: (db: Database.Database) => T) {
   }
 }
 
+// Host-side writes to the container's bind-mounted live database are unreliable
+// in both supported environments: on Linux CI the files stay owned by the
+// in-image user so the runner uid cannot write them, and on macOS the VM file
+// sharing cannot propagate host WAL commits to the app's held connection.
+// When the container e2e runner is active (it exports
+// SUPERSCRIBER_E2E_CONTAINER_NAME) the write helpers therefore run inside the
+// container, on the app's own kernel and user. Reads stay host-side.
+const CONTAINER_DB_PATH =
+  process.env.SUPERSCRIBER_E2E_CONTAINER_DB_PATH?.trim() || "/app/data/superscriber.db";
+
+function e2eContainerName() {
+  return process.env.SUPERSCRIBER_E2E_CONTAINER_NAME?.trim() || "";
+}
+
+function execContainerPython(script: string, args: string[]) {
+  return execFileSync(
+    "docker",
+    ["exec", "--user", "node", e2eContainerName(), "python3", "-c", script, ...args],
+    { encoding: "utf8", maxBuffer: 32 * 1024 * 1024 },
+  );
+}
+
+const CONTAINER_QUERY_SCRIPT = `import json, sqlite3, sys
+db_path, sql = sys.argv[1], sys.argv[2]
+conn = sqlite3.connect(db_path)
+conn.row_factory = sqlite3.Row
+rows = [dict(row) for row in conn.execute(sql, sys.argv[3:])]
+conn.close()
+print(json.dumps(rows))
+`;
+
+function queryContainerDb<Row>(sql: string, params: string[]): Row[] {
+  const output = execContainerPython(CONTAINER_QUERY_SCRIPT, [CONTAINER_DB_PATH, sql, ...params]);
+  return JSON.parse(output) as Row[];
+}
+
 export function expireUploadSession(sessionId: string) {
+  const staleIso = new Date(Date.now() - 1000 * 60 * 60 * 25).toISOString();
+  const verificationSummary =
+    "Temporary upload expired and was cleaned up. Start a new upload session to continue.";
+
+  if (e2eContainerName()) {
+    execContainerPython(
+      `import os, sqlite3, sys
+db_path, session_id, stale_iso, summary = sys.argv[1:5]
+conn = sqlite3.connect(db_path)
+conn.execute(
+    "update ingestion_sessions set state = ?, updated_at = ?, verification_summary = ? where id = ?",
+    ("interrupted", stale_iso, summary, session_id),
+)
+conn.commit()
+conn.close()
+upload = os.path.join(os.path.dirname(db_path), "uploads", session_id + ".upload")
+if os.path.exists(upload):
+    os.unlink(upload)
+`,
+      [CONTAINER_DB_PATH, sessionId, staleIso, verificationSummary],
+    );
+    return;
+  }
+
   const runtime = resolveRuntimeRoot();
   const uploadPath = join(runtime.uploadDir, `${sessionId}.upload`);
 
   withRuntimeDb((db) => {
-    const staleIso = new Date(Date.now() - 1000 * 60 * 60 * 25).toISOString();
     db.prepare(
       `update ingestion_sessions set state = ?, updated_at = ?, verification_summary = ? where id = ?`,
-    ).run(
-      "interrupted",
-      staleIso,
-      "Temporary upload expired and was cleaned up. Start a new upload session to continue.",
-      sessionId,
-    );
+    ).run("interrupted", staleIso, verificationSummary, sessionId);
   });
 
   unlinkSync(uploadPath);
 }
 
 export function expireActionMode(actionModeId: string) {
+  const staleIso = new Date(Date.now() - 60_000).toISOString();
+
+  if (e2eContainerName()) {
+    execContainerPython(
+      `import sqlite3, sys
+db_path, action_mode_id, stale_iso = sys.argv[1:4]
+conn = sqlite3.connect(db_path)
+conn.execute("update admin_action_sessions set expires_at = ? where id = ?", (stale_iso, action_mode_id))
+conn.commit()
+conn.close()
+`,
+      [CONTAINER_DB_PATH, actionModeId, staleIso],
+    );
+    return;
+  }
+
   withRuntimeDb((db) => {
     db.prepare(`update admin_action_sessions set expires_at = ? where id = ?`).run(
-      new Date(Date.now() - 60_000).toISOString(),
+      staleIso,
       actionModeId,
     );
   });
 }
 
 export function auditRows(recordingId: string) {
-  return withRuntimeDb((db) =>
-    db
-      .prepare(
-        `select type, detail, effective_role as effectiveRole, admin_action_session_id as adminActionSessionId, created_at as createdAt from audit_events where recording_id = ? order by created_at desc`,
-      )
-      .all(recordingId) as Array<{
+  const sql = `select type, detail, effective_role as effectiveRole, admin_action_session_id as adminActionSessionId, created_at as createdAt from audit_events where recording_id = ? order by created_at desc`;
+  if (e2eContainerName()) {
+    return queryContainerDb<{
       type: string;
       detail: string;
       effectiveRole: string | null;
       adminActionSessionId: string | null;
       createdAt: string;
-    }>,
+    }>(sql, [recordingId]);
+  }
+  return withRuntimeDb(
+    (db) =>
+      db.prepare(sql).all(recordingId) as Array<{
+        type: string;
+        detail: string;
+        effectiveRole: string | null;
+        adminActionSessionId: string | null;
+        createdAt: string;
+      }>,
   );
 }
 
 export function assignmentRows(recordingId: string) {
-  return withRuntimeDb((db) =>
-    db
-      .prepare(
-        `select id, user_id as userId, assignment_role as assignmentRole, status, completed_revision_id as completedRevisionId from recording_assignments where recording_id = ? order by created_at desc`,
-      )
-      .all(recordingId) as Array<{
+  const sql = `select id, user_id as userId, assignment_role as assignmentRole, status, completed_revision_id as completedRevisionId from recording_assignments where recording_id = ? order by created_at desc`;
+  if (e2eContainerName()) {
+    return queryContainerDb<{
       id: string;
       userId: string;
       assignmentRole: string;
       status: string;
       completedRevisionId: string | null;
-    }>,
+    }>(sql, [recordingId]);
+  }
+  return withRuntimeDb(
+    (db) =>
+      db.prepare(sql).all(recordingId) as Array<{
+        id: string;
+        userId: string;
+        assignmentRole: string;
+        status: string;
+        completedRevisionId: string | null;
+      }>,
   );
 }
 

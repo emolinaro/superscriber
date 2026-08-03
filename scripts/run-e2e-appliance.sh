@@ -27,6 +27,13 @@ PRELOAD_MODEL="${SUPERSCRIBER_E2E_PRELOAD_MODEL:-0}"
 # assertions engine-aware instead of hard-coding one engine's values.
 export SUPERSCRIBER_E2E_ENGINE="stub"
 
+# Point the suite's DB write helpers at the container so they execute inside
+# it, on the app's own kernel and user. Host-side writes to the bind-mounted
+# database lose the permission battle on Linux CI (container-owned files) and
+# are invisible to the app's held WAL connection over macOS VM file sharing.
+export SUPERSCRIBER_E2E_CONTAINER_NAME="${CONTAINER_NAME}"
+export SUPERSCRIBER_E2E_CONTAINER_DB_PATH="${SUPERSCRIBER_E2E_CONTAINER_DB_PATH:-/app/data/superscriber.db}"
+
 cleanup_container() {
   docker rm -f "${CONTAINER_NAME}" >/dev/null 2>&1 || true
 }
@@ -34,7 +41,13 @@ cleanup_container() {
 cleanup_run() {
   cleanup_container
   if [[ "${DATA_DIR_CREATED}" -eq 1 ]]; then
-    rm -rf "${DATA_DIR}"
+    # The container owns the files it creates in the data dir, so on Linux CI
+    # runners the host uid cannot delete them. Remove the dir through a
+    # throwaway root container, falling back to a host rm (enough on macOS).
+    docker run --rm --entrypoint bash \
+      --volume "${TMP_ROOT}:/e2e-tmp" \
+      "${IMAGE}" \
+      -c "rm -rf /e2e-tmp/$(basename "${DATA_DIR}")" 2>/dev/null || rm -rf "${DATA_DIR}" || true
   fi
 }
 
