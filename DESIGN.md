@@ -43,7 +43,7 @@ Progress is never collapsed into one uncontrolled status string. The UI derives 
 
 Historical revision terminal states are `superseded`, `withdrawn`, and `changes_requested`; `approved` stays on an approved revision even after a reopen, and the recording's `approvedRevisionId` decides whether it is the active approved record.
 
-Derived stages, evaluated in order: `Needs ingest attention`, `Verifying`, `Transcribing`, `Pending approval`, `Approved`, `Changes requested`, `Reopened`, and `Draft review`. A withdrawn submission returns to `Draft review` with a visible `Withdrawn submission` origin notice.
+Derived stages, evaluated in order: `Needs ingest attention`, `Verifying`, `Transcribing`, `Pending approval`, `Approved`, `Changes requested`, `Reopened`, and `Draft review`. A withdrawn submission returns to `Draft review`.
 
 ### Revision and decision commands
 
@@ -99,7 +99,7 @@ Phone safety mode applies below 768 CSS px width, or when the primary pointer is
 
 ### Shared error and conflict behavior
 
-Errors use stable codes with procedural messages: `AUTH_EXPIRED` (in-page recovery when unsaved content exists, otherwise login with a sanitized return route), `ACCESS_DENIED`, `NOT_FOUND`, `VALIDATION_ERROR`, `POLICY_DENIED`, `ACTION_MODE_REQUIRED`, `ACTION_MODE_EXPIRED`, `SELF_APPROVAL_FORBIDDEN`, `STALE_REVISION`, `STATE_CHANGED`, `INGEST_RESTART_REQUIRED`, and `SERVER_ERROR`. Draft-save conflicts preserve local text in memory, name the loaded and current revision IDs, offer open-latest-in-a-new-tab comparison, and require explicit confirmation before discarding. Decision conflicts close the dialog and announce the winning transition. Unknown errors never expose stack traces, paths, adapter names, or raw exception text.
+Errors use stable codes with procedural messages: `AUTH_EXPIRED` (in-page recovery when unsaved content exists, otherwise login with a sanitized return route), `ACCESS_DENIED`, `NOT_FOUND`, `VALIDATION_ERROR`, `ACTION_MODE_REQUIRED`, `ACTION_MODE_EXPIRED`, `ACTION_MODE_FORBIDDEN`, `ACTION_MODE_ENDED`, `SELF_APPROVAL_FORBIDDEN`, `STALE_REVISION`, `STATE_CHANGED`, and `INTERNAL_ERROR`. Draft-save conflicts preserve local text in memory, name the loaded and current revision IDs, offer open-latest-in-a-new-tab comparison, and require explicit confirmation before discarding. Decision conflicts close the dialog and announce the winning transition. Unknown errors never expose stack traces, paths, adapter names, or raw exception text.
 
 ## Product Posture
 
