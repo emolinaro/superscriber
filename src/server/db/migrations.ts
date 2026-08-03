@@ -5,14 +5,21 @@ type Migration = {
   version: number;
   name: string;
   up: (sqlite: Database.Database) => void;
+  /**
+   * SQLite table rebuilds (drop + rename) require PRAGMA foreign_keys = OFF,
+   * which is a no-op inside a transaction. The runner toggles it around the
+   * migration transaction and verifies foreign_key_check afterwards.
+   */
+  rebuildsTables?: boolean;
 };
 
-export const LATEST_SCHEMA_VERSION = 3;
+export const LATEST_SCHEMA_VERSION = 4;
 
 const migrations: Migration[] = [
   { version: 1, name: "baseline-appliance", up: createBaselineSchema },
   { version: 2, name: "governed-casefile", up: addGovernedCasefileSchema },
   { version: 3, name: "auth-session-registry", up: addAuthSessionRegistrySchema },
+  { version: 4, name: "identity-links", up: addIdentityLinksSchema, rebuildsTables: true },
 ];
 
 const LEGACY_AUDIT_METADATA_JSON = serializeAuditMetadata(LEGACY_AUDIT_METADATA);
@@ -662,6 +669,77 @@ function addAuthSessionRegistrySchema(sqlite: Database.Database) {
   }
 }
 
+function addIdentityLinksSchema(sqlite: Database.Database) {
+  // Plan section 4.1: users.password_hash becomes nullable for OIDC-only
+  // shadow users via a tested table rebuild. Existing hashes are preserved.
+  sqlite.exec(`
+    CREATE TABLE users_new (
+      id TEXT PRIMARY KEY NOT NULL,
+      email TEXT NOT NULL,
+      display_name TEXT NOT NULL,
+      password_hash TEXT,
+      role TEXT NOT NULL,
+      is_active INTEGER NOT NULL DEFAULT 1,
+      auth_version INTEGER NOT NULL DEFAULT 1,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    );
+
+    INSERT INTO users_new (
+      id, email, display_name, password_hash, role, is_active, auth_version,
+      created_at, updated_at
+    )
+      SELECT id, email, display_name, password_hash, role, is_active, auth_version,
+        created_at, updated_at
+      FROM users;
+
+    DROP TABLE users;
+
+    ALTER TABLE users_new RENAME TO users;
+
+    CREATE UNIQUE INDEX IF NOT EXISTS users_email_unique ON users(email);
+    CREATE INDEX IF NOT EXISTS users_role_idx ON users(role);
+    CREATE INDEX IF NOT EXISTS users_active_idx ON users(is_active);
+
+    CREATE TABLE IF NOT EXISTS external_identities (
+      id TEXT PRIMARY KEY NOT NULL,
+      user_id TEXT NOT NULL REFERENCES users(id) ON DELETE RESTRICT,
+      issuer TEXT NOT NULL,
+      subject TEXT NOT NULL,
+      status TEXT NOT NULL CHECK (status IN ('active', 'retired')),
+      linked_at TEXT NOT NULL,
+      linked_by_user_id TEXT REFERENCES users(id) ON DELETE SET NULL,
+      retired_at TEXT,
+      retired_by_user_id TEXT REFERENCES users(id) ON DELETE SET NULL,
+      change_reason TEXT NOT NULL,
+      last_login_at TEXT,
+      last_role_map_version INTEGER
+    );
+  `);
+
+  if (!hasIndex(sqlite, "external_identity_pair_reserved")) {
+    sqlite.exec(`
+      CREATE UNIQUE INDEX external_identity_pair_reserved
+      ON external_identities(issuer, subject);
+    `);
+  }
+
+  if (!hasIndex(sqlite, "external_identity_active_user_issuer")) {
+    sqlite.exec(`
+      CREATE UNIQUE INDEX external_identity_active_user_issuer
+      ON external_identities(user_id, issuer)
+      WHERE status = 'active';
+    `);
+  }
+
+  ensureColumn(
+    sqlite,
+    "auth_sessions",
+    "external_identity_id",
+    "external_identity_id TEXT REFERENCES external_identities(id) ON DELETE RESTRICT",
+  );
+}
+
 export function runMigrations(
   sqlite: Database.Database,
   targetVersion = LATEST_SCHEMA_VERSION,
@@ -680,14 +758,31 @@ export function runMigrations(
     }
 
     try {
-      sqlite.transaction(() => {
-        migration.up(sqlite);
-        sqlite
-          .prepare(
-            "INSERT INTO schema_migrations(version, name, applied_at) VALUES (?, ?, ?)",
-          )
-          .run(migration.version, migration.name, nowIso());
-      })();
+      if (migration.rebuildsTables) {
+        sqlite.pragma("foreign_keys = OFF");
+      }
+      try {
+        sqlite.transaction(() => {
+          migration.up(sqlite);
+          sqlite
+            .prepare(
+              "INSERT INTO schema_migrations(version, name, applied_at) VALUES (?, ?, ?)",
+            )
+            .run(migration.version, migration.name, nowIso());
+        })();
+      } finally {
+        if (migration.rebuildsTables) {
+          sqlite.pragma("foreign_keys = ON");
+        }
+      }
+      if (migration.rebuildsTables) {
+        const violations = sqlite.pragma("foreign_key_check") as unknown[];
+        if (violations.length > 0) {
+          throw new Error(
+            `foreign_key_check reported ${violations.length} violation(s) after migration ${migration.version}.`,
+          );
+        }
+      }
     } catch (error) {
       console.error(error);
       throw new Error(`Database migration ${migration.version} failed.`);

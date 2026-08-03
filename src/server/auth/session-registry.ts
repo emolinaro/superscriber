@@ -79,6 +79,7 @@ export function createAuthSession(
     userId: string;
     authSource: AuthSource;
     providerSid?: string | null;
+    externalIdentityId?: string | null;
     emergencyActivationId?: string | null;
     now?: Date;
   },
@@ -101,6 +102,7 @@ export function createAuthSession(
     authSource: params.authSource,
     authVersion: user.authVersion,
     providerSid: params.providerSid ?? null,
+    externalIdentityId: params.externalIdentityId ?? null,
     status: "active",
     createdAt: now.toISOString(),
     lastSeenAt: now.toISOString(),

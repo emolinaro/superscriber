@@ -176,7 +176,8 @@ export async function verifyLocalCredentials(
     .where(eq(users.email, normalizeEmail(credentials.email)))
     .get();
 
-  if (!row || !row.isActive) {
+  // OIDC-only shadow users carry no local secret; credentials cannot match.
+  if (!row || !row.isActive || !row.passwordHash) {
     return null;
   }
 

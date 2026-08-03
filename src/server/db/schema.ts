@@ -1,3 +1,4 @@
+import { sql } from "drizzle-orm";
 import { index, integer, sqliteTable, text, uniqueIndex } from "drizzle-orm/sqlite-core";
 import {
   APPROVAL_STATES,
@@ -61,7 +62,8 @@ export const users = sqliteTable(
     id: text("id").primaryKey(),
     email: text("email").notNull(),
     displayName: text("display_name").notNull(),
-    passwordHash: text("password_hash").notNull(),
+    // Nullable since schema v4: OIDC-only shadow users carry no local secret.
+    passwordHash: text("password_hash"),
     role: text("role", { enum: USER_ROLES }).$type<UserRole>().notNull(),
     isActive: integer("is_active", { mode: "boolean" }).notNull().default(true),
     authVersion: integer("auth_version").notNull().default(1),
@@ -94,6 +96,10 @@ export const authSessions = sqliteTable(
     authSource: text("auth_source", { enum: AUTH_SOURCES }).$type<AuthSource>().notNull(),
     authVersion: integer("auth_version").notNull(),
     providerSid: text("provider_sid"),
+    externalIdentityId: text("external_identity_id").references(
+      () => externalIdentities.id,
+      { onDelete: "restrict" },
+    ),
     status: text("status", { enum: AUTH_SESSION_STATUSES })
       .$type<AuthSessionStatus>()
       .notNull(),
@@ -108,6 +114,44 @@ export const authSessions = sqliteTable(
   (table) => ({
     userStatusIdx: index("auth_sessions_user_status_idx").on(table.userId, table.status),
     providerSidIdx: index("auth_sessions_provider_sid_idx").on(table.providerSid),
+  }),
+);
+
+export const EXTERNAL_IDENTITY_STATUSES = ["active", "retired"] as const;
+export type ExternalIdentityStatus = (typeof EXTERNAL_IDENTITY_STATUSES)[number];
+
+export const externalIdentities = sqliteTable(
+  "external_identities",
+  {
+    id: text("id").primaryKey(),
+    userId: text("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "restrict" }),
+    issuer: text("issuer").notNull(),
+    subject: text("subject").notNull(),
+    status: text("status", { enum: EXTERNAL_IDENTITY_STATUSES })
+      .$type<ExternalIdentityStatus>()
+      .notNull(),
+    linkedAt: text("linked_at").notNull(),
+    linkedByUserId: text("linked_by_user_id").references(() => users.id, {
+      onDelete: "set null",
+    }),
+    retiredAt: text("retired_at"),
+    retiredByUserId: text("retired_by_user_id").references(() => users.id, {
+      onDelete: "set null",
+    }),
+    changeReason: text("change_reason").notNull(),
+    lastLoginAt: text("last_login_at"),
+    lastRoleMapVersion: integer("last_role_map_version"),
+  },
+  (table) => ({
+    pairReservedUnique: uniqueIndex("external_identity_pair_reserved").on(
+      table.issuer,
+      table.subject,
+    ),
+    activeUserIssuerUnique: uniqueIndex("external_identity_active_user_issuer")
+      .on(table.userId, table.issuer)
+      .where(sql`status = 'active'`),
   }),
 );
 
