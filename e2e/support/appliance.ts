@@ -222,6 +222,53 @@ function queryContainerDb<Row>(sql: string, params: string[]): Row[] {
   return JSON.parse(output) as Row[];
 }
 
+// The container harness runs the internal Python worker with a 1s poll and the
+// stub transcript fallback, so a freshly uploaded recording leaves its
+// processing window (queued/running state, which the admin dialog reports as
+// "Waiting") within a couple of seconds. Assertions that must observe that
+// window race the worker; pausing it with SIGSTOP freezes transcript progress
+// without touching any app-visible state, and SIGCONT resumes it. No-op outside
+// the container harness, where no worker is started on the suite's behalf.
+const WORKER_SIGNAL_SCRIPT = `import os, signal, sys
+action = sys.argv[1]
+target = signal.SIGSTOP if action == "STOP" else signal.SIGCONT
+self_pid = os.getpid()
+matched = []
+for name in os.listdir("/proc"):
+    if not name.isdigit():
+        continue
+    pid = int(name)
+    if pid == self_pid:
+        continue
+    try:
+        with open("/proc/%s/cmdline" % pid, "rb") as fh:
+            argv = [part for part in fh.read().split(bytes([0])) if part]
+    except OSError:
+        continue
+    if argv and argv[-1].decode("utf-8", "ignore").endswith("worker/main.py"):
+        os.kill(pid, target)
+        matched.append(pid)
+if action == "STOP" and not matched:
+    raise SystemExit("internal worker process not found; cannot pause it")
+print("worker", action, "pids:", matched)
+`;
+
+function signalInternalWorker(action: "STOP" | "CONT") {
+  if (!e2eContainerName()) {
+    return;
+  }
+
+  execContainerPython(WORKER_SIGNAL_SCRIPT, [action]);
+}
+
+export function pauseInternalWorker() {
+  signalInternalWorker("STOP");
+}
+
+export function resumeInternalWorker() {
+  signalInternalWorker("CONT");
+}
+
 export function expireUploadSession(sessionId: string) {
   const staleIso = new Date(Date.now() - 1000 * 60 * 60 * 25).toISOString();
   const verificationSummary =
