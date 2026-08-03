@@ -64,7 +64,7 @@ Submit, withdraw, request changes, approve, and reopen never mutate transcript t
 Each assignment activation is an append-only row: recording, user, role snapshot, assigning admin identity, assigned time, status, end time, ending reason, and completion revision when completed by approval. At most one active assignment exists per recording, user, and role; reassigning after completion appends a new row.
 
 - Submission, withdrawal, and request changes leave assignments active.
-- Approval completes all active reviewer and approver assignments with ending reason `approved_revision`.
+- Approval completes all active reviewer and approver assignments in the same transaction, recording the approved revision as each assignment's completion revision.
 - Manual admin removal sets status `removed` with ending reason `removed_by_admin`, revoking the user's casefile access from that assignment while history remains.
 - A completed assignment grants read-only access to its recorded approved snapshot, not to any later reopened cycle. A completed approver assignment for the currently active approved revision retains reopen and policy-gated export authority.
 
@@ -212,7 +212,7 @@ A recording owner with uploader-only access receives a status casefile: ingest p
 
 ### Administration
 
-Administration has secondary navigation for Accounts, Assignments, and Policy; the selected section is the page's `h1` and only its task is shown. Accounts supports search plus a create-account drawer. Assignments defaults to Active with a History tab showing ending reasons and completion revisions; `Assign work` explains whether an assignment is actionable now or waiting for a compatible state. Policy is read-only: the active profile and the permission matrix, including the note that phone safety mode removes governed mutations and export. Existing account role changes, deactivation, and password management are deliberately not rendered.
+Administration has secondary navigation for Accounts, Assignments, and Policy; the selected section is the page's `h1` and only its task is shown. Accounts supports search plus a create-account drawer. Assignments defaults to Active with a History tab showing outcomes and completion revisions; `Assign work` explains whether an assignment is actionable now or waiting for a compatible state. Policy is read-only: the active profile and the permission matrix, including the note that phone safety mode removes governed mutations and export. Existing account role changes, deactivation, and password management are deliberately not rendered.
 
 ## Interaction And Copy Rules
 
