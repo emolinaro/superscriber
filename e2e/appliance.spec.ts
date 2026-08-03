@@ -9,6 +9,8 @@ import {
   login,
   logout,
   outsiderUser,
+  pauseInternalWorker,
+  resumeInternalWorker,
   reviewerUser,
   setUploadFile,
   uploadFixture,
@@ -265,15 +267,24 @@ test.describe.serial("mock appliance auth, ingest, and administration", () => {
     await expect(page.getByRole("cell", { name: approverUser.email })).toBeVisible();
     await expect(page.getByRole("cell", { name: uploaderUser.email })).toBeVisible();
 
-    const waitingRecordingId = await uploadFixture(page, { title: "Waiting compatibility record" });
-    await page.goto("/administration?section=assignments");
-    await page.getByRole("button", { name: "Assign work" }).click();
-    const assignDialog = page.getByRole("dialog", { name: "Assign governed work" });
-    await expect(assignDialog).toBeVisible();
-    await assignDialog.getByLabel("Recording search").fill("Waiting compatibility record");
-    await assignDialog.getByLabel("Assigned user search").fill(reviewerUser.displayName);
-    await expect(assignDialog.getByText("Current state: Waiting")).toBeVisible();
-    await assignDialog.getByRole("button", { name: "Cancel" }).click();
+    // The internal worker would claim and finish this fixture's transcript job
+    // within seconds, racing the dialog's "Current state: Waiting" assertion.
+    // Hold it stopped until the dialog observation is done.
+    pauseInternalWorker();
+    let waitingRecordingId = "";
+    try {
+      waitingRecordingId = await uploadFixture(page, { title: "Waiting compatibility record" });
+      await page.goto("/administration?section=assignments");
+      await page.getByRole("button", { name: "Assign work" }).click();
+      const assignDialog = page.getByRole("dialog", { name: "Assign governed work" });
+      await expect(assignDialog).toBeVisible();
+      await assignDialog.getByLabel("Recording search").fill("Waiting compatibility record");
+      await assignDialog.getByLabel("Assigned user search").fill(reviewerUser.displayName);
+      await expect(assignDialog.getByText("Current state: Waiting")).toBeVisible();
+      await assignDialog.getByRole("button", { name: "Cancel" }).click();
+    } finally {
+      resumeInternalWorker();
+    }
 
     await page.goto("/administration?section=assignments");
     await expect(page.getByRole("heading", { name: "Assignments" })).toBeVisible();
