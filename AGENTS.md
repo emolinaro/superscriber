@@ -1,3 +1,10 @@
+## Project At A Glance
+
+- Current release on main: v0.3.0.0 (governed casefile). Version source: `VERSION`; release notes: `CHANGELOG.md`.
+- Product overview, commands, and runtime: `README.md`. Design record and behavioral contract: `DESIGN.md`.
+- Domain workflow rules: `src/domain/workflow.ts`. Governed commands, capabilities, action mode, and access grants: `src/server/casefile/`. Authenticated routes: `app/(authenticated)/`.
+- Full validation gate: `npm run typecheck`, `npm test`, `npm run build`, `npm run worker:check`, `npm run e2e`, `npm run e2e:container`.
+
 ## GBrain Configuration (configured by /setup-gbrain)
 - Engine: pglite
 - Config file: ~/.gbrain/config.json (mode 0600)

@@ -4,20 +4,24 @@
 
 # Superscriber
 
-Superscriber is a self-contained governed transcription appliance for sensitive audio and video.
+Superscriber is a self-contained governed transcription appliance for sensitive audio and video. The current release is v0.3.0.0 (see [CHANGELOG.md](./CHANGELOG.md)).
 
-The current app models a regulated workflow:
+The app models a regulated workflow:
 
 `record or upload -> verify -> transcribe -> review in browser -> approve server-side`
 
-It now runs as a single-institution deployment with local accounts, SQLite persistence, mounted media storage, and an internal Python worker by default.
+It runs as a single-institution deployment with local accounts, SQLite persistence, mounted media storage, and an internal Python worker by default. The authenticated product is organized as a governed casefile: a role-aware work inbox leads into a transcript-first record whose state, assignment, actions, provenance, and audit history stay in agreement.
 
 ## What It Includes
 
 - Bootstrap admin setup plus local accounts for `uploader`, `reviewer`, `approver`, and `admin`
-- Unified resumable ingest flow for upload and recording
-- Assignment-aware worklists and governed review/approval surfaces, with reviewer and approver desks unlocked only by explicit admin assignment
-- Policy-gated approved transcript export in `DOCX`, `TXT`, `SRT`, `VTT`, `CSV`, `TSV`, and `JSON`
+- Role-aware work inbox ledgers (tabbed per role) and a transcript-first casefile for review
+- Governed decision commands - save draft, submit, withdraw submission, request changes, approve, reopen - with the submitter barred from deciding their own revision
+- Admin read-only oversight by default, plus an explicit, record-bound, audited reviewer/approver action mode for casefile work
+- Append-only assignment history, with approval completing all active assignments atomically
+- Unified resumable ingest (1 MiB chunks) for upload and browser audio recording
+- Audited, policy-gated approved transcript export in `DOCX`, `TXT`, `SRT`, `VTT`, `CSV`, `TSV`, and `JSON`
+- Phone safety mode: status, inbox, read-only casefile, and supported ingest on phones; governed actions require a tablet or desktop
 - SQLite-backed workflow persistence with mounted media storage
 - Internal Python worker with GPU-preferred transcription when compatible hardware is available
 - Alternate orchestration modes for `mock` and `webhook`
@@ -156,9 +160,9 @@ The default build prefetches the configured model into the image. Runtime downlo
 ## Project Structure
 
 - [`app/`](./app/) — Next.js app routes and APIs
-- [`src/components/`](./src/components/) — UI components
+- [`src/components/`](./src/components/) — UI components grouped by surface (auth, work inbox, ingest, casefile, administration, shell)
 - [`src/domain/`](./src/domain/) — domain models and workflow rules
-- [`src/server/`](./src/server/) — auth, persistence, orchestration, ingest, and repository logic
+- [`src/server/`](./src/server/) — auth, access, persistence, ingest, orchestration, casefile, and work-inbox logic
 - [`data/`](./data/) — local SQLite data, secrets, temp uploads, and media files
 - [`worker/`](./worker/) — internal Python transcription worker
 - [`scripts/`](./scripts/) — container/runtime helpers
@@ -166,9 +170,8 @@ The default build prefetches the configured model into the image. Runtime downlo
 ## Project Docs
 
 - [`CHANGELOG.md`](./CHANGELOG.md) — release history and shipped behavior notes
-- [`DESIGN.md`](./DESIGN.md) — visual and interaction source of truth for the governed workspace
+- [`DESIGN.md`](./DESIGN.md) — design record and behavioral contract for the governed casefile workspace
 - [`TODOS.md`](./TODOS.md) — deferred follow-on work after the current appliance release
-- [`AGENTS.md`](./AGENTS.md) — local automation metadata for deploy and workspace tooling
 
 ## Orchestration Modes
 
@@ -208,8 +211,8 @@ Run:
 npm test
 ```
 
-Current tests cover workflow rules, auth/access services, resumable ingest, the internal queue lifecycle, and orchestration behavior.
-They also cover reviewer assignment gating plus approved transcript export formatting, routing, and browser download behavior.
+Current tests cover the governed casefile command surface (save, submit, withdraw, request changes, approve, reopen, export), capabilities and access grants, assignment semantics and admin action mode, work-inbox read models, auth and bootstrap, resumable ingest, the internal queue lifecycle, and orchestration behavior.
+The browser suites cover governed-casefile flows end to end, responsive and phone-safety behavior, mobile review regressions, and axe accessibility checks across auth, work inbox, casefile, export, and administration surfaces.
 
 For the browser path against the real single-image appliance:
 
