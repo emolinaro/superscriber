@@ -102,43 +102,73 @@ export function createSilentWavFixture(name: string, durationMs = 1_500) {
   return createFixtureFile(name, buildSilentWavBuffer({ durationMs }));
 }
 
-function listRoots(parent: string, prefix: string, buildDbPath: (rootDir: string) => string) {
-  try {
-    return readdirSync(parent)
-      .filter((entry) => entry.startsWith(prefix))
-      .map((entry) => join(parent, entry))
-      .map((rootDir) => ({
-        rootDir,
-        dbPath: buildDbPath(rootDir),
-      }))
-      .filter(({ dbPath }) => {
-        try {
-          return statSync(dbPath).isFile();
-        } catch {
-          return false;
-        }
-      })
-      .map(({ rootDir, dbPath }) => ({
-        rootDir,
-        dbPath,
-        uploadDir: join(rootDir, "uploads"),
-        updatedAtMs: statSync(dbPath).mtimeMs,
-      }));
-  } catch {
-    return [] as Array<RuntimeRoot & { updatedAtMs: number }>;
+function describeFsError(error: unknown): string {
+  const errno = error as NodeJS.ErrnoException | undefined;
+  if (errno?.code) {
+    return `${errno.code}: ${errno.message}`;
   }
+  return String(error);
+}
+
+type RootScan = {
+  roots: Array<RuntimeRoot & { updatedAtMs: number }>;
+  errors: string[];
+};
+
+function listRoots(parent: string, prefix: string, buildDbPath: (rootDir: string) => string): RootScan {
+  const errors: string[] = [];
+  let entries: string[];
+  try {
+    entries = readdirSync(parent);
+  } catch (error) {
+    return { roots: [], errors: [`${parent}: ${describeFsError(error)}`] };
+  }
+
+  const roots: RootScan["roots"] = [];
+  for (const entry of entries) {
+    if (!entry.startsWith(prefix)) {
+      continue;
+    }
+    const rootDir = join(parent, entry);
+    const dbPath = buildDbPath(rootDir);
+    let stats;
+    try {
+      stats = statSync(dbPath);
+    } catch (error) {
+      // Surface unreadable candidates (for example EACCES from a container-owned
+      // data dir on Linux CI) instead of silently dropping them.
+      errors.push(`${dbPath}: ${describeFsError(error)}`);
+      continue;
+    }
+    if (!stats.isFile()) {
+      continue;
+    }
+    roots.push({
+      rootDir,
+      dbPath,
+      uploadDir: join(rootDir, "uploads"),
+      updatedAtMs: stats.mtimeMs,
+    });
+  }
+
+  return { roots, errors };
 }
 
 function resolveRuntimeRoot(): RuntimeRoot {
   const repoTmp = join(process.cwd(), ".tmp");
-  const candidates = [
-    ...listRoots(tmpdir(), "superscriber-governed.", (rootDir) => join(rootDir, "app.db")),
-    ...listRoots(repoTmp, "e2e-data.", (rootDir) => join(rootDir, "superscriber.db")),
-  ].sort((left, right) => right.updatedAtMs - left.updatedAtMs);
+  const scans = [
+    listRoots(tmpdir(), "superscriber-governed.", (rootDir) => join(rootDir, "app.db")),
+    listRoots(repoTmp, "e2e-data.", (rootDir) => join(rootDir, "superscriber.db")),
+  ];
+  const candidates = scans
+    .flatMap((scan) => scan.roots)
+    .sort((left, right) => right.updatedAtMs - left.updatedAtMs);
 
   const latest = candidates[0];
   if (!latest) {
-    throw new Error("No fresh Superscriber runtime root was found.");
+    const errors = scans.flatMap((scan) => scan.errors);
+    const detail = errors.length > 0 ? ` Candidate databases could not be read: ${errors.join("; ")}` : "";
+    throw new Error(`No fresh Superscriber runtime root was found.${detail}`);
   }
 
   return latest;

@@ -15,6 +15,17 @@ const PHONE_VIEWPORTS = [
   { width: 844, height: 390 },
 ];
 
+// Confidence values depend on the transcription engine: the mock engine and a
+// real Whisper model render 93/90/86, while the internal-engine container flow
+// pins a deliberately missing model and falls back to the Python stub, which
+// renders a fixed 72. scripts/run-e2e-appliance.sh exports
+// SUPERSCRIBER_E2E_ENGINE=stub so this assertion stays engine-aware rather
+// than blindly accepting any value.
+const CONFIDENCE_PATTERN =
+  process.env.SUPERSCRIBER_E2E_ENGINE === "stub"
+    ? /Confidence 72%/
+    : /Confidence 9[03]%|Confidence 86%/;
+
 test.describe.serial("phone safety governed casefile regression", () => {
   test("keeps phone-sized work read-only while preserving supported auth, media, status, and upload surfaces", async ({
     browser,
@@ -36,7 +47,7 @@ test.describe.serial("phone safety governed casefile regression", () => {
       await expect(phonePage.getByRole("heading", { name: "Phone safety governed record" })).toBeVisible();
       await expect(phonePage.getByText("Draft review").first()).toBeVisible();
       await expect(phonePage.getByRole("group", { name: "Recording playback" })).toBeVisible();
-      await expect(phonePage.getByText(/Confidence 9[03]%|Confidence 86%/).first()).toBeVisible();
+      await expect(phonePage.getByText(CONFIDENCE_PATTERN).first()).toBeVisible();
       await expect(phonePage.getByRole("button", { name: /Save draft|Submit for approval|Withdraw revision|Request changes|Approve and complete work|Reopen as draft|Export approved transcript|Enter .* action mode/ })).toHaveCount(0);
       await expect(phonePage.getByRole("textbox")).toHaveCount(0);
       await expect(phonePage.getByRole("button", { name: "Jump back 10 seconds" })).toBeVisible();
