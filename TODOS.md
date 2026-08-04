@@ -1,19 +1,5 @@
 # TODOS
 
-## Infrastructure
-
-### Add institutional SSO alongside local-account appliance mode
-
-**What:** Add OIDC-based institutional SSO as an alternative auth provider, while keeping the local-account appliance mode as the self-contained default.
-
-**Why:** Many regulated institutions will eventually require their own identity provider, MFA, and account lifecycle management even though the shipped appliance uses local accounts.
-
-**Context:** Local accounts remain the deliberate appliance default. The next auth step is dual-mode identity, not replacing the access layer later.
-
-**Effort:** M
-**Priority:** P2
-**Depends on:** Nothing structural; the local user/session model and governed access layer are in place on main
-
 ## Review
 
 ### Replace full-segment-array saves with patch-based transcript edits
@@ -29,6 +15,8 @@
 **Depends on:** Nothing structural; the casefile revision service and command surface are in place on main
 
 ## Completed
+
+- 2026-08-04: Added institutional SSO alongside local accounts: Authentik OIDC in dual and authentik-primary modes, exact identity linking, revocable server-side sessions, break-glass emergency access, and operator runbooks under docs/operators/.
 
 - 2026-08-02: Shipped the governed casefile redesign (v0.3.0.0): role-aware work inbox, transcript-first casefile, withdrawal/request-changes/approve/reopen commands, append-only assignment history, audited admin action mode, and audited approved export.
 - 2026-08-02: Added automated accessibility regression coverage (axe) across auth, work inbox, casefile, export, and administration surfaces, plus responsive and phone-safety suites.

@@ -175,6 +175,7 @@ Primary navigation is exact: uploader gets Work and Ingest; reviewer and approve
   3. hand off to normal login
 - Daily login is a separate steady-state screen
 - A concurrent bootstrap that loses the race converts to login with a completion notice; it never creates a second admin
+- Deployments may enable institutional sign-in through Authentik OIDC (`dual` or `authentik-primary` modes): the steady-state login then adds an institutional sign-in button, and in `authentik-primary` local credentials are reserved for the single break-glass admin, reachable only from the management network boundary. Operator configuration lives in [`docs/operators/`](./docs/operators/); mail is disabled by design
 
 ### Work Inbox
 
@@ -230,7 +231,7 @@ Administration has secondary navigation for Accounts, Assignments, and Policy; t
 | State | User Sees | Primary Action |
 |---|---|---|
 | First run | Setup gate with environment/trust framing and first-admin form | Create admin |
-| Normal login | Simple sign-in surface with local account fields and policy context | Sign in |
+| Normal login | Simple sign-in surface with local account fields and policy context; OIDC-enabled deployments add an institutional sign-in option | Sign in |
 | Wrong password | Inline error on the form, no ambiguous failure language | Retry sign-in |
 | Session expired | Clear interruption message with return-to-login handoff; in-place reauthentication when unsaved work exists | Sign in again |
 | Logged out | Quiet confirmation that the session ended safely | Return to login |
@@ -322,7 +323,6 @@ These requirements apply to the auth, work inbox, ingest, casefile, export, and 
 
 - Full phone editing parity for long transcript correction
 - Patch-based segment editing protocol (saves submit the complete current segment array)
-- Institutional SSO as an auth mode
 - Timing-edit tools for transcript alignment
 - Bulk workflow decisions or bulk assignment changes
 - Policy authoring or policy-profile switching in the UI
