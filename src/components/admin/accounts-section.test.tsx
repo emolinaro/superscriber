@@ -47,6 +47,7 @@ function createModel(
     ],
     breakGlass: {
       designation: null,
+      viewerIsCustodian: false,
       enrolledKeyCount: 0,
       recoveryCodeCount: 0,
       adminCandidates: [],

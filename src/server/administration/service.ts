@@ -53,6 +53,7 @@ export type BreakGlassPanelModel = {
     displayName: string;
     updatedAt: string;
   } | null;
+  viewerIsCustodian: boolean;
   enrolledKeyCount: number;
   recoveryCodeCount: number;
   adminCandidates: Array<{ id: string; displayName: string }>;
@@ -544,6 +545,9 @@ export function listAdministration(
         .get()
     : null;
   const breakGlass: BreakGlassPanelModel = {
+    viewerIsCustodian: designationRow
+      ? designationRow.breakGlassUserId === principal.userId
+      : false,
     designation:
       designationRow && designee
         ? {

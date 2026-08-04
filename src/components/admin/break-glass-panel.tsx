@@ -156,7 +156,13 @@ export function BreakGlassPanel({ model }: { model: BreakGlassPanelModel }) {
           </div>
         ) : null}
 
-        {model.designation ? (
+        {model.designation && !model.viewerIsCustodian ? (
+          <p className="field-note" data-testid="break-glass-custody-note">
+            Custody operations require the designated custodian's own session.
+          </p>
+        ) : null}
+
+        {model.designation && model.viewerIsCustodian ? (
           <div className="form-grid">
             <div className="field">
               <label className="field-label" htmlFor="bg-key-label">

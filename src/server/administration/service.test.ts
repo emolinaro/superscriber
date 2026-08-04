@@ -3,7 +3,13 @@ import type { Principal, TranscriptRevision } from "@/domain/models";
 import { createLocalUser, toPrincipal } from "@/server/auth/service";
 import { listAdministration } from "@/server/administration/service";
 import { openAppDatabase, type AppDatabase } from "@/server/db/client";
-import { recordingAssignments, recordings, revisions, workspaces } from "@/server/db/schema";
+import {
+  authControl,
+  recordingAssignments,
+  recordings,
+  revisions,
+  workspaces,
+} from "@/server/db/schema";
 
 const FIXED_NOW = "2026-08-01T12:00:00.000Z";
 
@@ -201,6 +207,58 @@ describe("listAdministration", () => {
           createdAtLabel: "01 Aug 2026, 12:00 UTC",
         }),
       ]);
+    } finally {
+      bundle.sqlite.close();
+    }
+  });
+
+  it("flags viewerIsCustodian only when the caller is the designated custodian", async () => {
+    const bundle = openAppDatabase(":memory:");
+    insertWorkspace(bundle);
+
+    try {
+      const custodian = await createPrincipal(bundle.db, {
+        displayName: "Custodian Admin",
+        email: "custodian@example.com",
+        role: "admin",
+      });
+      const other = await createPrincipal(bundle.db, {
+        displayName: "Other Admin",
+        email: "other@example.com",
+        role: "admin",
+      });
+
+      bundle.db.insert(authControl).values({
+        id: 1,
+        breakGlassUserId: custodian.userId,
+        updatedAt: FIXED_NOW,
+        updatedByUserId: custodian.userId,
+        changeReason: "Initial custodian setup.",
+      }).run();
+
+      const custodianView = listAdministration(
+        custodian,
+        { section: "accounts" },
+        bundle.db,
+      );
+      if (custodianView.section !== "accounts") {
+        throw new Error("Expected accounts section.");
+      }
+      expect(custodianView.breakGlass.viewerIsCustodian).toBe(true);
+      expect(custodianView.breakGlass.designation).toEqual(
+        expect.objectContaining({ userId: custodian.userId, displayName: "Custodian Admin" }),
+      );
+      expect(custodianView.breakGlass.enrolledKeyCount).toBe(0);
+      expect(custodianView.breakGlass.recoveryCodeCount).toBe(0);
+
+      const otherView = listAdministration(other, { section: "accounts" }, bundle.db);
+      if (otherView.section !== "accounts") {
+        throw new Error("Expected accounts section.");
+      }
+      expect(otherView.breakGlass.viewerIsCustodian).toBe(false);
+      expect(otherView.breakGlass.designation).toEqual(
+        expect.objectContaining({ userId: custodian.userId }),
+      );
     } finally {
       bundle.sqlite.close();
     }
