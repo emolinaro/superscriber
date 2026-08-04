@@ -9,7 +9,9 @@ events, sessions, and all governed content survive every transition.
 2. Verify readiness: Authentication reports dual mode.
 3. Existing OIDC sessions remain valid; local credentials resume for all local
    users with passwords.
-4. Break-glass restrictions relax (credentials no longer designee-only); this
+4. Break-glass restrictions relax: local credentials resume generally (in
+   `authentik-primary`, plain-password sign-in is disabled for everyone and
+   the break-glass account enters only through the emergency ceremony). This
    is intended during an incident and must be recorded in the incident file.
 
 ## dual -> local

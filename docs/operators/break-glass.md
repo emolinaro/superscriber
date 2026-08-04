@@ -42,10 +42,13 @@ There is never a second concurrent break-glass account.
 
 ## Enrolling keys and recovery codes
 
-Signed-in admins enroll up to four hardware security keys for the designated
-account from Administration > Accounts > Emergency access (two custodians,
-separate keys, separate sessions). The same panel issues recovery codes once;
-store them sealed under dual custody. The panel and the Authentication
+The designated custodian - in their own signed-in session - enrolls up to
+four hardware security keys for the account from Administration > Accounts >
+Emergency access (two custodians, separate keys, separate sessions). Other
+admins see designation status and counts only: custody controls are hidden
+and the server rejects enrollment or code actions from any session but the
+custodian's. The same panel issues recovery codes once; store them sealed
+under dual custody. The panel and the Authentication
 readiness check both report enrolled key and unused code counts.
 
 ## Rotation cadence

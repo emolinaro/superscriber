@@ -175,7 +175,7 @@ Primary navigation is exact: uploader gets Work and Ingest; reviewer and approve
   3. hand off to normal login
 - Daily login is a separate steady-state screen
 - A concurrent bootstrap that loses the race converts to login with a completion notice; it never creates a second admin
-- Deployments may enable institutional sign-in through Authentik OIDC (`dual` or `authentik-primary` modes): the steady-state login then adds an institutional sign-in button, and in `authentik-primary` local credentials are reserved for the single break-glass admin, reachable only from the management network boundary. Operator configuration lives in [`docs/operators/`](./docs/operators/); mail is disabled by design
+- Deployments may enable institutional sign-in through Authentik OIDC (`dual` or `authentik-primary` modes): the steady-state login then adds an institutional sign-in button, and in `authentik-primary` plain-password sign-in is disabled for everyone - the single break-glass admin enters only through the emergency ceremony (management network boundary, password plus WebAuthn or recovery code; see [`docs/operators/break-glass.md`](./docs/operators/break-glass.md)). Operator configuration lives in [`docs/operators/`](./docs/operators/); mail is disabled by design
 
 ### Work Inbox
 

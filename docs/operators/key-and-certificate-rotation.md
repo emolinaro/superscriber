@@ -4,8 +4,8 @@
 
 Superscriber validates ID tokens and back-channel logout tokens only against
 the JWKS discovered from the exact configured issuer. The JWKS cache honors
-normal cache behavior and refreshes exactly once per request on an unknown
-`kid`, then fails closed.
+normal cache behavior and refreshes exactly once per validation on an
+unknown `kid`, then fails closed.
 
 Rotation procedure:
 
