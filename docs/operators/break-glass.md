@@ -20,10 +20,33 @@ submission.
 
 ## Designation and transfer
 
-Designation is part of deployment provisioning. Transfer to a different
-existing admin is atomic: the old account's local password path is disabled and
-its sessions revoked before the pointer moves. There is never a second
-concurrent break-glass account.
+First designation (zero to one) via an operator with database access:
+
+```bash
+SUPERSCRIBER_DB_PATH=/path/to/superscriber.db \
+  npm run break-glass:designate -- --user <admin-user-id> --reason "initial custodian"
+```
+
+While signed in as admin, the Administration > Accounts > Emergency access
+panel also offers first designation.
+
+Transfer to a different existing admin is atomic - the old account's local
+password path is disabled and its sessions revoked before the pointer moves:
+
+```bash
+SUPERSCRIBER_DB_PATH=/path/to/superscriber.db \
+  npm run break-glass:transfer -- --user <admin-user-id> --reason "custodian change"
+```
+
+There is never a second concurrent break-glass account.
+
+## Enrolling keys and recovery codes
+
+Signed-in admins enroll up to four hardware security keys for the designated
+account from Administration > Accounts > Emergency access (two custodians,
+separate keys, separate sessions). The same panel issues recovery codes once;
+store them sealed under dual custody. The panel and the Authentication
+readiness check both report enrolled key and unused code counts.
 
 ## Rotation cadence
 

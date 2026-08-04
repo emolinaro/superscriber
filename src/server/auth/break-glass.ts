@@ -1,17 +1,18 @@
 import { createHmac, randomBytes } from "node:crypto";
 import { compare, hash } from "bcryptjs";
-import { eq } from "drizzle-orm";
+import { and, eq, isNull } from "drizzle-orm";
 import { recordSecurityEvent } from "@/server/auth/security-events";
+import { resolveAuthSecret } from "@/server/auth/secret";
 import {
   createAuthSession,
   retireUserSessions,
   type AuthSessionRecord,
 } from "@/server/auth/session-registry";
-import { resolveAuthSecret } from "@/server/auth/secret";
 import { getAppDb, type AppDatabase } from "@/server/db/client";
 import {
   authControl,
   authSessions,
+  breakGlassRecoveryCodes,
   emergencyActivations,
   users,
 } from "@/server/db/schema";
@@ -242,6 +243,118 @@ export async function rotateBreakGlassPassword(
     },
     db,
   );
+}
+
+function hashRecoveryCode(code: string) {
+  return createHmac("sha256", resolveAuthSecret()).update(code).digest("hex");
+}
+
+function generateRecoveryCode() {
+  const alphabet = "23456789ABCDEFGHJKLMNPQRSTUVWXYZ";
+  const bytes = randomBytes(12);
+  const raw = Array.from(bytes, (value) => alphabet[value % alphabet.length]).join("");
+  return `${raw.slice(0, 4)}-${raw.slice(4, 8)}-${raw.slice(8, 12)}`;
+}
+
+export const RECOVERY_CODE_COUNT = 10;
+
+/**
+ * Recovery custody (8.3): codes are shown to the operator exactly once; only
+ * HMAC hashes persist. Generating rotates the full previous set.
+ */
+export function generateBreakGlassRecoveryCodes(
+  params: { userId: string; actorUserId?: string | null; now?: Date },
+  db: AppDatabase = getAppDb(),
+): { codes: string[] } {
+  const designation = getBreakGlassDesignation(db);
+  if (!designation || designation.breakGlassUserId !== params.userId) {
+    throw new Error("Recovery codes apply only to the designated break-glass user.");
+  }
+
+  const now = (params.now ?? new Date()).toISOString();
+  const codes = Array.from({ length: RECOVERY_CODE_COUNT }, () => generateRecoveryCode());
+
+  db.transaction((tx) => {
+    tx.update(breakGlassRecoveryCodes)
+      .set({ rotatedAt: now })
+      .where(
+        and(
+          eq(breakGlassRecoveryCodes.breakGlassUserId, params.userId),
+          isNull(breakGlassRecoveryCodes.usedAt),
+          isNull(breakGlassRecoveryCodes.rotatedAt),
+        ),
+      )
+      .run();
+
+    for (const code of codes) {
+      tx.insert(breakGlassRecoveryCodes)
+        .values({
+          id: crypto.randomUUID(),
+          breakGlassUserId: params.userId,
+          codeHash: hashRecoveryCode(code),
+          createdAt: now,
+          usedAt: null,
+          rotatedAt: null,
+        })
+        .run();
+    }
+  });
+
+  safeRecord(
+    {
+      type: "breakglass.recovery_generated",
+      outcome: "success",
+      userId: params.userId,
+      detail: "Break-glass recovery code set rotated.",
+      metadata: { count: codes.length, actorUserId: params.actorUserId ?? null },
+      now: params.now,
+    },
+    db,
+  );
+
+  return { codes };
+}
+
+/**
+ * Single-use recovery code redemption. The row is claimed atomically so a
+ * code can never be used twice, even concurrently.
+ */
+export function useBreakGlassRecoveryCode(
+  params: { userId: string; code: string; now?: Date },
+  db: AppDatabase = getAppDb(),
+): boolean {
+  const normalized = params.code.trim().toUpperCase();
+  const now = (params.now ?? new Date()).toISOString();
+
+  const result = db
+    .update(breakGlassRecoveryCodes)
+    .set({ usedAt: now })
+    .where(
+      and(
+        eq(breakGlassRecoveryCodes.breakGlassUserId, params.userId),
+        eq(breakGlassRecoveryCodes.codeHash, hashRecoveryCode(normalized)),
+        isNull(breakGlassRecoveryCodes.usedAt),
+        isNull(breakGlassRecoveryCodes.rotatedAt),
+      ),
+    )
+    .run();
+
+  if (result.changes === 0) {
+    return false;
+  }
+
+  safeRecord(
+    {
+      type: "breakglass.recovery_used",
+      outcome: "success",
+      userId: params.userId,
+      detail: "Break-glass recovery code redeemed; rotate the remaining set.",
+      now: params.now,
+    },
+    db,
+  );
+
+  return true;
 }
 
 export type EmergencyActivation = typeof emergencyActivations.$inferSelect;

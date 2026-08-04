@@ -9,7 +9,7 @@ TMP_ROOT="${REPO_ROOT}/.tmp"
 IMAGE="${SUPERSCRIBER_E2E_IMAGE:-superscriber:e2e}"
 CONTAINER_NAME="${SUPERSCRIBER_E2E_CONTAINER_NAME:-superscriber-e2e}"
 PORT="${SUPERSCRIBER_E2E_PORT:-3105}"
-APP_URL="${PLAYWRIGHT_BASE_URL:-http://127.0.0.1:${PORT}}"
+APP_URL="${PLAYWRIGHT_BASE_URL:-http://localhost:${PORT}}"
 mkdir -p "${TMP_ROOT}"
 DATA_DIR_CREATED=0
 if [[ -n "${SUPERSCRIBER_E2E_DATA_DIR:-}" ]]; then
@@ -110,6 +110,12 @@ start_container() {
   # Mounted OIDC material for the container's dual-auth configuration.
   mkdir -p "${OIDC_DIR}"
   printf 'fake-oidc-client-secret\n' > "${OIDC_DIR}/client-secret"
+  cat > "${OIDC_DIR}/management-networks.json" <<JSON
+{
+  "managementNetworks": ["10.10.0.0/16"],
+  "trustedProxies": ["10.10.0.2"]
+}
+JSON
   cat > "${OIDC_DIR}/role-map.json" <<JSON
 {
   "version": 1,
@@ -142,6 +148,7 @@ JSON
     --env SUPERSCRIBER_OIDC_CLIENT_ID="superscriber" \
     --env SUPERSCRIBER_OIDC_CLIENT_SECRET_FILE="/run/oidc/client-secret" \
     --env SUPERSCRIBER_OIDC_ROLE_MAP_FILE="/run/oidc/role-map.json" \
+    --env SUPERSCRIBER_MANAGEMENT_NETWORKS_FILE="/run/oidc/management-networks.json" \
     --env SUPERSCRIBER_TRANSCRIBE_MODEL="missing-e2e-model" \
     --env SUPERSCRIBER_TRANSCRIBE_OFFLINE=1 \
     --env SUPERSCRIBER_TRANSCRIBE_ALLOW_STUB_FALLBACK=1 \

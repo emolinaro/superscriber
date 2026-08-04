@@ -564,7 +564,7 @@ export async function login(page: Page, user: LocalUser): Promise<void> {
       csrfToken: csrfBody.csrfToken,
       email: user.email,
       password: user.password,
-      callbackUrl: `${process.env.PLAYWRIGHT_BASE_URL || "http://127.0.0.1:3105"}/workspace`,
+      callbackUrl: `${process.env.PLAYWRIGHT_BASE_URL || "http://localhost:3105"}/workspace`,
       json: "true",
     },
   });

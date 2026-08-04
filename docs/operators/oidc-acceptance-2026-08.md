@@ -24,8 +24,8 @@ dual mode with sidecar).
 | 8 | No secrets/tokens/claims/membership in session JSON, logs, audit, screenshots | PASS | e2e session-JSON assertions (no subject/group ids); security-event redaction tests; metadata key blocklist |
 | 9 | Logout revokes before cookie clear | PASS | e2e sign-out spec (revoked_reason=logout observed) |
 | 10 | Back-channel termination via validated replay-safe channel | PASS | oidc-logout negative matrix; route integration (signature, iss/aud/iat/events, dedupe); e2e back-channel revocation + convergence |
-| 11 | Exactly one Credentials principal in target mode, management boundary + password + WebAuthn | PARTIAL | primary-mode authorize gate + management-zone-gated disclosure PASS; WebAuthn ceremony pending dependency decision (needs-decision: webauthn-dependency) |
-| 12 | Break-glass 2 keys, dual custody, rehearsal, 15/5-min bounds, banner | PARTIAL | bounds, designation, transfer, custody storage, emergency banner + activation PASS; key enrollment pending as above |
+| 11 | Exactly one Credentials principal in target mode, management boundary + password + WebAuthn | PASS | primary-mode authorize gate; management-zone-gated disclosure; options-breakglass ceremony test; emergency-access denial matrix (zone, lockout, replay) |
+| 12 | Break-glass 2 keys, dual custody, rehearsal, 15/5-min bounds, banner | PASS | two-custodian enrollment e2e with virtual authenticators; one-time recovery codes; session bounds in registry tests; banner e2e |
 | 13 | Break-glass cannot bypass action mode/self-approval | PASS | break-glass principal is plain base admin; governed regression suite unmodified and green |
 | 14 | All four roles equal their local principal equivalents | PASS | role mapping one-role accepts per role; e2e reviewer equivalence; admin/uploader/approver mirror via admission unit tests |
 | 15 | Migration/rollback preserve ids and reference counts | PASS | slice-0 contract; upgrade-rehearsal staging test (v2→v6, backup restore, FK check) |
@@ -33,15 +33,14 @@ dual mode with sidecar).
 
 ## Runs at this commit
 
-- npm test: 448 unit/integration tests green
+- npm test: 461 unit/integration tests green
 - npm run typecheck: clean
 - npm run build: clean
-- npm run e2e (local, dual mode): 17/17 green
-- npm run e2e:container (dual mode, OIDC sidecar): 20/20 green
+- npm run e2e (local, dual mode): 21/21 green (includes the break-glass ceremony)
+- npm run e2e:container (dual mode, OIDC sidecar): 21/21 green
 
-## Blocking open item
+## Dependency decision
 
-`needs-decision: webauthn-dependency` gates slice 5 completion (criteria 11-12
-moving from PARTIAL to PASS). Recommendation on file in the status ledger:
-adopt @simplewebauthn/server only, hand-rolled browser ceremony, no browser
-dependency.
+webauthn-dependency resolved by the captain on 2026-08-03: only
+@simplewebauthn/server@13.3.2 (pinned, server side); the browser ceremony is
+hand-rolled with navigator.credentials; no browser-side library.

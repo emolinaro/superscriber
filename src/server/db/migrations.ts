@@ -13,7 +13,7 @@ type Migration = {
   rebuildsTables?: boolean;
 };
 
-export const LATEST_SCHEMA_VERSION = 6;
+export const LATEST_SCHEMA_VERSION = 7;
 
 const migrations: Migration[] = [
   { version: 1, name: "baseline-appliance", up: createBaselineSchema },
@@ -22,6 +22,7 @@ const migrations: Migration[] = [
   { version: 4, name: "identity-links", up: addIdentityLinksSchema, rebuildsTables: true },
   { version: 5, name: "oidc-backchannel-replays", up: addOidcBackchannelReplaySchema },
   { version: 6, name: "break-glass-controls", up: addBreakGlassControlsSchema },
+  { version: 7, name: "break-glass-ceremonies", up: addBreakGlassCeremoniesSchema },
 ];
 
 const LEGACY_AUDIT_METADATA_JSON = serializeAuditMetadata(LEGACY_AUDIT_METADATA);
@@ -855,6 +856,29 @@ function addBreakGlassControlsSchema(sqlite: Database.Database) {
     sqlite.exec(`
       CREATE INDEX webauthn_credentials_user_idx
       ON webauthn_credentials(user_id);
+    `);
+  }
+}
+
+function addBreakGlassCeremoniesSchema(sqlite: Database.Database) {
+  // One-time emergency ceremony tokens, database-backed so the server-action
+  // runtime and the Auth.js callback route share one store.
+  sqlite.exec(`
+    CREATE TABLE IF NOT EXISTS break_glass_ceremonies (
+      id TEXT PRIMARY KEY NOT NULL,
+      user_id TEXT NOT NULL REFERENCES users(id) ON DELETE RESTRICT,
+      reason TEXT NOT NULL,
+      source_zone TEXT NOT NULL,
+      via TEXT NOT NULL CHECK (via IN ('webauthn', 'recovery')),
+      expires_at TEXT NOT NULL,
+      consumed_at TEXT
+    );
+  `);
+
+  if (!hasIndex(sqlite, "break_glass_ceremonies_user_idx")) {
+    sqlite.exec(`
+      CREATE INDEX break_glass_ceremonies_user_idx
+      ON break_glass_ceremonies(user_id);
     `);
   }
 }

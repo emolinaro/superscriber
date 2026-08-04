@@ -106,6 +106,22 @@ function readForwardedFor(headers: HeaderSource): string | null {
 
 export type SourceZone = "management" | "public";
 
+/**
+ * Evaluates the current request's source zone from its headers against the
+ * mounted policy file. Any failure fails closed to public.
+ */
+export function evaluateRequestZone(headers: HeaderSource): SourceZone {
+  const policyPath = process.env.SUPERSCRIBER_MANAGEMENT_NETWORKS_FILE?.trim();
+  if (!policyPath) {
+    return "public";
+  }
+  try {
+    return evaluateSourceZone(headers, loadManagementNetworkPolicy(policyPath)).zone;
+  } catch {
+    return "public";
+  }
+}
+
 export function evaluateSourceZone(
   headers: HeaderSource,
   policy: ManagementNetworkPolicy,

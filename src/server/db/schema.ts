@@ -199,6 +199,24 @@ export const breakGlassRecoveryCodes = sqliteTable("break_glass_recovery_codes",
   rotatedAt: text("rotated_at"),
 });
 
+export const breakGlassCeremonies = sqliteTable(
+  "break_glass_ceremonies",
+  {
+    id: text("id").primaryKey(),
+    userId: text("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "restrict" }),
+    reason: text("reason").notNull(),
+    sourceZone: text("source_zone").notNull(),
+    via: text("via", { enum: ["webauthn", "recovery"] }).notNull(),
+    expiresAt: text("expires_at").notNull(),
+    consumedAt: text("consumed_at"),
+  },
+  (table) => ({
+    userIdx: index("break_glass_ceremonies_user_idx").on(table.userId),
+  }),
+);
+
 export const webauthnCredentials = sqliteTable(
   "webauthn_credentials",
   {

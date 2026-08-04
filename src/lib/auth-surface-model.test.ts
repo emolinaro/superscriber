@@ -10,11 +10,16 @@ describe("auth surface model", () => {
     });
   });
 
-  it("dual mode shows institutional sign-in next to the local form, no disclosure", () => {
-    expect(resolveAuthSurfaceModel({ mode: "dual", zone: "management" })).toEqual({
+  it("dual mode shows institutional sign-in next to the local form; disclosure only on management", () => {
+    expect(resolveAuthSurfaceModel({ mode: "dual", zone: "public" })).toEqual({
       showLocalCredentialsForm: true,
       showOidcSignIn: true,
       showBreakGlassDisclosure: false,
+    });
+    expect(resolveAuthSurfaceModel({ mode: "dual", zone: "management" })).toEqual({
+      showLocalCredentialsForm: true,
+      showOidcSignIn: true,
+      showBreakGlassDisclosure: true,
     });
   });
 

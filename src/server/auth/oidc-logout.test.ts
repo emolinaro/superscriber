@@ -103,7 +103,13 @@ describe("logout token validation", () => {
       typ: "JWT",
       kid: key.kid,
     });
-    const tampered = token.replace(/.$/, token.endsWith("A") ? "B" : "A");
+    // Flip a character in the middle of the signature segment: guaranteed to
+    // change the decoded bytes (the trailing-character edit can decode
+    // identically because of base64 padding bits).
+    const parts = token.split(".");
+    const mid = Math.floor(parts[2].length / 2);
+    const flipped = parts[2][mid] === "A" ? "B" : "A";
+    const tampered = `${parts[0]}.${parts[1]}.${parts[2].slice(0, mid)}${flipped}${parts[2].slice(mid + 1)}`;
     expect((await validate(tampered)).ok).toBe(false);
 
     const noneToken = `${base64url(JSON.stringify({ alg: "none", kid: key.kid }))}.${base64url(JSON.stringify(logoutClaims()))}.`;

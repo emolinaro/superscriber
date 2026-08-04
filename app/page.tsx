@@ -1,6 +1,7 @@
 import { cookies, headers } from "next/headers";
 import { redirect } from "next/navigation";
 import { AuthSurface } from "@/components/auth/auth-surface";
+import { EmergencyAccess } from "@/components/auth/emergency-access";
 import { BootstrapSetupForm } from "@/components/auth/bootstrap-setup-form";
 import { LoginForm } from "@/components/auth/login-form";
 import { OidcSignInButton } from "@/components/auth/oidc-sign-in-button";
@@ -87,7 +88,7 @@ export default async function LandingPage({
   // unreadable one) the zone fails closed to public.
   let zone: SourceZone = "public";
   const policyPath = process.env.SUPERSCRIBER_MANAGEMENT_NETWORKS_FILE?.trim();
-  if (policyPath && authMode === "authentik-primary") {
+  if (policyPath && authMode !== "local") {
     try {
       zone = evaluateSourceZone(await headers(), loadManagementNetworkPolicy(policyPath)).zone;
     } catch {
@@ -155,16 +156,7 @@ export default async function LandingPage({
             {surface.showLocalCredentialsForm ? (
               <LoginForm initialEmail={bootstrapEmail} returnTo={requestedReturnTo} />
             ) : null}
-            {surface.showBreakGlassDisclosure ? (
-              <details className="break-glass-disclosure" data-testid="break-glass-disclosure">
-                <summary>Emergency local administrator</summary>
-                <p className="field-note">
-                  Emergency sign-in requires the designated custodian account and a registered
-                  hardware security key. Contact the deployment custodians to activate the
-                  break-glass path.
-                </p>
-              </details>
-            ) : null}
+            {surface.showBreakGlassDisclosure ? <EmergencyAccess /> : null}
           </>
         ) : readiness ? (
           <BootstrapSetupForm readiness={readiness} />

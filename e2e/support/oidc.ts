@@ -98,7 +98,7 @@ export async function oidcSignIn(page: Page) {
   const response = await page.request.post("/api/auth/signin/authentik?json=true", {
     form: {
       csrfToken,
-      callbackUrl: `${process.env.PLAYWRIGHT_BASE_URL || "http://127.0.0.1:3105"}/?returnTo=/workspace`,
+      callbackUrl: `${process.env.PLAYWRIGHT_BASE_URL || "http://localhost:3105"}/?returnTo=/workspace`,
       json: "true",
     },
   });

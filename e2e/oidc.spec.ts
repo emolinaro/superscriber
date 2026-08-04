@@ -77,7 +77,7 @@ test.describe.serial("authentik oidc dual login", () => {
 
     await oidcSignIn(page);
 
-    await expect(page).toHaveURL(/127\.0\.0\.1:3105\/\?.*error=/);
+    await expect(page).toHaveURL(/(127\.0\.0\.1|localhost):3105\/\?.*error=/);
     await expect(page.getByRole("heading", { name: "Sign in" })).toBeVisible();
     await expect(
       page.locator("p.banner").getByText("Access is not provisioned for this account"),
@@ -98,7 +98,7 @@ test.describe.serial("authentik oidc dual login", () => {
 
     await oidcSignIn(page);
 
-    await expect(page).toHaveURL(/127\.0\.0\.1:3105\/\?.*error=/);
+    await expect(page).toHaveURL(/(127\.0\.0\.1|localhost):3105\/\?.*error=/);
     await expect(
       page.locator("p.banner").getByText("Access is not provisioned for this account"),
     ).toBeVisible();
@@ -112,7 +112,7 @@ test.describe.serial("authentik oidc dual login", () => {
 
     await oidcSignIn(page);
 
-    await expect(page).toHaveURL(/127\.0\.0\.1:3105\/\?.*error=/);
+    await expect(page).toHaveURL(/(127\.0\.0\.1|localhost):3105\/\?.*error=/);
     await expect(
       page.locator("p.banner").getByText("Access is not provisioned for this account"),
     ).toBeVisible();

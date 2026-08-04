@@ -16,6 +16,9 @@ declare module "next-auth" {
     // Optional: OIDC-mapped users carry no trustworthy role; authority is
     // resolved by admission. Credentials authorize() always sets it.
     role?: UserRole;
+    // Internal hand-off between authorize() and jwt() for completed
+    // emergency MFA ceremonies; never persisted in cookies.
+    breakGlassCeremonyId?: string;
   }
 }
 
@@ -25,5 +28,6 @@ declare module "next-auth/jwt" {
     userId?: string;
     authSessionId?: string;
     authSource?: AuthSource;
+    emergencyActivationId?: string;
   }
 }

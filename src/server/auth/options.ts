@@ -2,10 +2,17 @@ import type { NextAuthOptions } from "next-auth";
 import CredentialsProvider from "next-auth/providers/credentials";
 import { loadAuthConfig } from "@/server/auth/auth-config";
 import { buildAuthentikProvider } from "@/server/auth/authentik-provider";
-import { getBreakGlassDesignation } from "@/server/auth/break-glass";
+import {
+  getBreakGlassDesignation,
+  openEmergencyActivation,
+} from "@/server/auth/break-glass";
+import {
+  consumeBreakGlassCeremony,
+  peekBreakGlassCeremony,
+} from "@/server/auth/webauthn";
 import { resolveOidcAdmission } from "@/server/auth/oidc-admission";
 import { resolveAuthSecret } from "@/server/auth/secret";
-import { verifyLocalCredentials } from "@/server/auth/service";
+import { getUserById, verifyLocalCredentials } from "@/server/auth/service";
 import {
   createAuthSession,
   TOKEN_SCHEMA_VERSION,
@@ -36,6 +43,40 @@ function resolveProviders(): NextAuthOptions["providers"] {
         },
       },
       async authorize(rawCredentials) {
+        const rawCeremony =
+          rawCredentials && typeof rawCredentials === "object"
+            ? (rawCredentials as Record<string, unknown>).breakGlassCeremony
+            : null;
+        const ceremonyId = typeof rawCeremony === "string" ? rawCeremony : null;
+
+        if (ceremonyId) {
+          // One-time ceremony token issued after a completed emergency MFA
+          // flow (password plus WebAuthn, or password plus recovery code).
+          // The token is consumed at token-mint time in the jwt callback.
+          const config = loadAuthConfig();
+          if (config.mode === "local") {
+            return null;
+          }
+
+          const ceremony = peekBreakGlassCeremony(ceremonyId);
+          if (!ceremony) {
+            return null;
+          }
+
+          const user = await getUserById(ceremony.userId);
+          if (!user || !user.isActive || user.role !== "admin") {
+            return null;
+          }
+
+          return {
+            id: user.id,
+            email: user.email,
+            name: user.displayName,
+            role: user.role,
+            breakGlassCeremonyId: ceremonyId,
+          };
+        }
+
         const parsed = loginCredentialsSchema.safeParse(rawCredentials);
         if (!parsed.success) {
           return null;
@@ -113,6 +154,34 @@ export const authOptions: NextAuthOptions = {
       }
     },
     async jwt({ token, user, account, profile }) {
+      if (user && account?.provider !== "authentik" && (user as { breakGlassCeremonyId?: string }).breakGlassCeremonyId) {
+        // Emergency-mint path: consume the ceremony token, open the audited
+        // emergency activation, and mint the short-lived break-glass session.
+        try {
+          const ceremonyId = (user as { breakGlassCeremonyId: string }).breakGlassCeremonyId;
+          const ceremony = consumeBreakGlassCeremony(ceremonyId);
+          if (!ceremony) {
+            return {};
+          }
+
+          const { activation, session } = openEmergencyActivation({
+            userId: ceremony.userId,
+            reason: ceremony.reason,
+            sourceZone: ceremony.sourceZone,
+          });
+
+          token.tokenVersion = TOKEN_SCHEMA_VERSION;
+          token.userId = ceremony.userId;
+          token.authSessionId = session.id;
+          token.authSource = "break_glass";
+          token.emergencyActivationId = activation.id;
+          delete token.role;
+          return token;
+        } catch {
+          return {};
+        }
+      }
+
       if (user && account?.provider === "authentik") {
         // Second admission check at token-mint time (plan 6.3): no
         // callback-order or mutation assumption can issue an unsafe token.

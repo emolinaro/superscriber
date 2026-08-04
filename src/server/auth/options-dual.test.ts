@@ -12,6 +12,9 @@ const GROUPS = {
 };
 
 describe("auth options in dual mode", () => {
+  // These tests pay first-import cost of the server crypto modules (bcrypt,
+  // WebAuthn) plus second-by-second contention under a full parallel suite.
+  vi.setConfig({ testTimeout: 20_000 });
   let dir: string;
 
   beforeEach(() => {

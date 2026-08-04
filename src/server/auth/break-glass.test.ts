@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
   designateBreakGlassUser,
   getBreakGlassDesignation,
@@ -28,6 +28,7 @@ async function setup() {
 }
 
 describe("break-glass designation", () => {
+  vi.setConfig({ testTimeout: 20_000 });  // bcrypt + ceremony crypto under full-suite parallel load
   it("designates exactly one active admin and records it via the singleton", async () => {
     const { db } = await setup();
 
