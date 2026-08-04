@@ -143,7 +143,7 @@ describe("auth options in dual mode", () => {
     });
   });
 
-  it("authentik-primary credentials accept only the designated break-glass account", async () => {
+  it("authentik-primary denies plain password credentials for everyone, including the designee", async () => {
     const dbPath = join(dir, "primary.db");
     stubEnv(dbPath, "authentik-primary");
 
@@ -194,9 +194,11 @@ describe("auth options in dual mode", () => {
       await authorize({ email: "normal@example.com", password: "Superscriber!123" }),
     ).toBeNull();
 
+    // The designated break-glass account also cannot enter with a plain
+    // password: the emergency ceremony is the only local path in target mode.
     expect(
       await authorize({ email: "bg@example.com", password: "Superscriber!123" }),
-    ).toMatchObject({ id: admin.id, role: "admin" });
+    ).toBeNull();
   });
 
   it("jwt denies an identity whose admission fails at mint time", async () => {

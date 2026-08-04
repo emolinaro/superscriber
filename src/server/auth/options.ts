@@ -2,10 +2,7 @@ import type { NextAuthOptions } from "next-auth";
 import CredentialsProvider from "next-auth/providers/credentials";
 import { loadAuthConfig } from "@/server/auth/auth-config";
 import { buildAuthentikProvider } from "@/server/auth/authentik-provider";
-import {
-  getBreakGlassDesignation,
-  openEmergencyActivation,
-} from "@/server/auth/break-glass";
+import { openEmergencyActivation } from "@/server/auth/break-glass";
 import {
   consumeBreakGlassCeremony,
   peekBreakGlassCeremony,
@@ -89,11 +86,12 @@ function resolveProviders(): NextAuthOptions["providers"] {
 
         const config = loadAuthConfig();
         if (config.mode === "authentik-primary") {
-          // Credentials accept only the designated break-glass account (3.1).
-          const designation = getBreakGlassDesignation();
-          if (!designation || designation.breakGlassUserId !== user.id) {
-            return null;
-          }
+          // Plan 3.1/8.2: in authentik-primary, plain password credentials
+          // admit nobody - not even the designee. The designated break-glass
+          // account enters only through the emergency ceremony (password +
+          // WebAuthn or recovery code, incident reason, management boundary),
+          // which mints via the breakGlassCeremony branch above.
+          return null;
         }
 
         return {
