@@ -51,14 +51,11 @@ export async function POST(request: Request) {
     );
   }
 
+  const targeting = result.claims.sid
+    ? { issuer: result.claims.iss, sid: result.claims.sid }
+    : { issuer: result.claims.iss, sub: result.claims.sub! };
+  const revoked = revokeProviderSessions(targeting).revoked;
   const fresh = claimLogoutReplaySlot(result.claims.iss, result.claims.jti);
-  let revoked = 0;
-  if (fresh) {
-    const targeting = result.claims.sid
-      ? { issuer: result.claims.iss, sid: result.claims.sid }
-      : { issuer: result.claims.iss, sub: result.claims.sub! };
-    revoked = revokeProviderSessions(targeting).revoked;
-  }
 
   recordBackchannelLogoutEvent({
     outcome: "success",

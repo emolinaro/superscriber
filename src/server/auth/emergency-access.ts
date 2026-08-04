@@ -1,5 +1,7 @@
 import { loadAuthConfig } from "@/server/auth/auth-config";
 import {
+  EMERGENCY_REASON_MAX,
+  EMERGENCY_REASON_MIN,
   getBreakGlassDesignation,
   useBreakGlassRecoveryCode,
   verifyBreakGlassPassword,
@@ -85,8 +87,8 @@ export async function beginEmergencyAccess(
   }
 
   if (
-    input.reason.length < 10 ||
-    input.reason.length > 500
+    input.reason.length < EMERGENCY_REASON_MIN ||
+    input.reason.length > EMERGENCY_REASON_MAX
   ) {
     return deny("invalid_reason", userId, zone, db);
   }
@@ -138,6 +140,13 @@ export async function beginEmergencyRecovery(
   const userId = designation.breakGlassUserId;
   if (isEmergencyAttemptLocked(userId, input.now)) {
     return deny("temporarily_locked", userId, zone, db);
+  }
+
+  if (
+    input.reason.length < EMERGENCY_REASON_MIN ||
+    input.reason.length > EMERGENCY_REASON_MAX
+  ) {
+    return deny("invalid_reason", userId, zone, db);
   }
 
   const passwordOk = await verifyBreakGlassPassword({ userId, password: input.password }, db);

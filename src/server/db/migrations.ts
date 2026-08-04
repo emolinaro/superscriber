@@ -907,6 +907,14 @@ export function runMigrations(
       try {
         sqlite.transaction(() => {
           migration.up(sqlite);
+          if (migration.rebuildsTables) {
+            const violations = sqlite.pragma("foreign_key_check") as unknown[];
+            if (violations.length > 0) {
+              throw new Error(
+                `foreign_key_check reported ${violations.length} violation(s) during migration ${migration.version}.`,
+              );
+            }
+          }
           sqlite
             .prepare(
               "INSERT INTO schema_migrations(version, name, applied_at) VALUES (?, ?, ?)",
@@ -916,14 +924,6 @@ export function runMigrations(
       } finally {
         if (migration.rebuildsTables) {
           sqlite.pragma("foreign_keys = ON");
-        }
-      }
-      if (migration.rebuildsTables) {
-        const violations = sqlite.pragma("foreign_key_check") as unknown[];
-        if (violations.length > 0) {
-          throw new Error(
-            `foreign_key_check reported ${violations.length} violation(s) after migration ${migration.version}.`,
-          );
         }
       }
     } catch (error) {
