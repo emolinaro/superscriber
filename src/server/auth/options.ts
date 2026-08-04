@@ -1,5 +1,8 @@
 import type { NextAuthOptions } from "next-auth";
 import CredentialsProvider from "next-auth/providers/credentials";
+import { loadAuthConfig } from "@/server/auth/auth-config";
+import { buildAuthentikProvider } from "@/server/auth/authentik-provider";
+import { resolveOidcAdmission } from "@/server/auth/oidc-admission";
 import { resolveAuthSecret } from "@/server/auth/secret";
 import { verifyLocalCredentials } from "@/server/auth/service";
 import {
@@ -17,17 +20,8 @@ import type { AuthSource } from "@/server/db/schema";
  * local database on every session read (plan sections 2.1 and 7.2), so stale
  * cookies cannot retain authority.
  */
-export const authOptions: NextAuthOptions = {
-  secret: resolveAuthSecret(),
-  session: {
-    strategy: "jwt",
-    // Matches the registry's normal absolute session bound.
-    maxAge: 8 * 60 * 60,
-  },
-  pages: {
-    signIn: "/",
-  },
-  providers: [
+function resolveProviders(): NextAuthOptions["providers"] {
+  const providers: NextAuthOptions["providers"] = [
     CredentialsProvider({
       name: "Local account",
       credentials: {
@@ -59,12 +53,92 @@ export const authOptions: NextAuthOptions = {
         };
       },
     }),
-  ],
+  ];
+
+  const config = loadAuthConfig();
+  if (config.mode !== "local") {
+    providers.push(buildAuthentikProvider(config));
+  }
+
+  return providers;
+}
+
+export const authOptions: NextAuthOptions = {
+  secret: resolveAuthSecret(),
+  session: {
+    strategy: "jwt",
+    // Matches the registry's normal absolute session bound.
+    maxAge: 8 * 60 * 60,
+  },
+  pages: {
+    signIn: "/",
+    // OAuth denials and failures land on the same auth surface; the page maps
+    // every error code to one generic message.
+    error: "/",
+  },
+  providers: resolveProviders(),
   callbacks: {
-    async jwt({ token, user }) {
+    async signIn({ account, profile }) {
+      // Credentials users are already validated by authorize(). OIDC claims
+      // go through the admission resolver (first of two checks; the jwt
+      // callback repeats it at mint time).
+      if (account?.provider !== "authentik") {
+        return true;
+      }
+
+      try {
+        const config = loadAuthConfig();
+        if (config.mode === "local") {
+          return false;
+        }
+
+        const admission = resolveOidcAdmission({
+          claims: (profile ?? {}) as Record<string, unknown>,
+          config,
+          recordEvent: false,
+        });
+        return admission.ok;
+      } catch {
+        return false;
+      }
+    },
+    async jwt({ token, user, account, profile }) {
+      if (user && account?.provider === "authentik") {
+        // Second admission check at token-mint time (plan 6.3): no
+        // callback-order or mutation assumption can issue an unsafe token.
+        try {
+          const config = loadAuthConfig();
+          if (config.mode === "local") {
+            return {};
+          }
+
+          const claims = (profile ?? {}) as Record<string, unknown>;
+          const admission = resolveOidcAdmission({ claims, config });
+          if (!admission.ok) {
+            return {};
+          }
+
+          const created = createAuthSession({
+            userId: admission.userId,
+            authSource: "authentik",
+            providerSid: admission.providerSid,
+            externalIdentityId: admission.identityId,
+          });
+
+          token.tokenVersion = TOKEN_SCHEMA_VERSION;
+          token.userId = admission.userId;
+          token.authSessionId = created.id;
+          token.authSource = "authentik";
+          delete token.role;
+          return token;
+        } catch {
+          return {};
+        }
+      }
+
       if (user) {
-        // Fresh sign-in: mint the durable registry row and keep only its
-        // pointer in the cookie token.
+        // Fresh credentials sign-in: mint the durable registry row and keep
+        // only its pointer in the cookie token.
         try {
           const authSource =
             (user as { authSource?: AuthSource }).authSource ?? "local";

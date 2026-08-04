@@ -175,7 +175,7 @@ function resolveRuntimeRoot(): RuntimeRoot {
   return latest;
 }
 
-function withRuntimeDb<T>(run: (db: Database.Database) => T) {
+export function withRuntimeDb<T>(run: (db: Database.Database) => T) {
   const runtime = resolveRuntimeRoot();
   const db = new Database(runtime.dbPath, { readonly: false });
 
@@ -446,14 +446,22 @@ export async function chooseOptionByText(select: Locator, text: string) {
 
 async function accountVisible(page: Page, user: LocalUser) {
   await page.goto("/administration?section=accounts");
-  const search = page.getByLabel("Search accounts");
-  await search.fill("");
-  await expect(search).toHaveValue("");
 
-  return (
-    (await page.getByRole("cell", { name: user.email }).isVisible().catch(() => false)) ||
-    (await page.getByText(user.email).isVisible().catch(() => false))
-  );
+  // Wait-based checks: the accounts table is server-rendered and can stream
+  // in after the load event, so a no-wait isVisible() here races hydration.
+  const cell = page.getByRole("cell", { name: user.email }).first();
+  const visible = await cell
+    .waitFor({ state: "visible", timeout: 7_500 })
+    .then(() => true)
+    .catch(() => false);
+  if (visible) {
+    return true;
+  }
+
+  const search = page.getByLabel("Search accounts");
+  await search.fill(user.email);
+  await expect(cell).toBeVisible({ timeout: 7_500 }).catch(() => undefined);
+  return cell.isVisible().catch(() => false);
 }
 
 async function createLocalAccount(page: Page, user: LocalUser) {
@@ -484,8 +492,13 @@ async function createLocalAccount(page: Page, user: LocalUser) {
       return;
     }
 
-    const error = await failureAlert.textContent();
-    throw new Error(`Failed to create local account ${user.email}: ${error ?? "unknown"}`);
+    const error = await failureAlert
+      .first()
+      .textContent({ timeout: 10_000 })
+      .catch(() => null);
+    throw new Error(
+      `Failed to create local account ${user.email}: ${error ?? "dialog closed without an alert"}`,
+    );
   }
 
   await expect(page.getByRole("cell", { name: user.email })).toBeVisible();

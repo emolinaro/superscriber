@@ -67,7 +67,7 @@ test.describe.serial("phone safety governed casefile regression", () => {
     await expect(phoneAdminPage.getByRole("heading", { name: "Sign in" })).toBeVisible();
     await phoneAdminPage.getByLabel("Email").fill(adminUser.email);
     await phoneAdminPage.getByLabel("Password").fill(adminUser.password);
-    await phoneAdminPage.getByRole("button", { name: "Sign in" }).click();
+    await phoneAdminPage.getByRole("button", { name: "Sign in", exact: true }).click();
     await expect(phoneAdminPage).toHaveURL(/\/workspace$/);
     await phoneAdminPage.goto("/ingest");
     await expect(phoneAdminPage.getByRole("heading", { name: /Source, details, and transfer/ })).toBeVisible();

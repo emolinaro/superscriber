@@ -13,7 +13,9 @@ declare module "next-auth" {
   }
 
   interface User {
-    role: UserRole;
+    // Optional: OIDC-mapped users carry no trustworthy role; authority is
+    // resolved by admission. Credentials authorize() always sets it.
+    role?: UserRole;
   }
 }
 
