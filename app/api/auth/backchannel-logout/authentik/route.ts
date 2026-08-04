@@ -9,6 +9,18 @@ import {
 
 export const dynamic = "force-dynamic";
 
+const validators = new Map<string, ReturnType<typeof createLogoutTokenValidator>>();
+
+function getLogoutTokenValidator(issuer: string, clientId: string) {
+  const key = `${issuer} ${clientId}`;
+  let validator = validators.get(key);
+  if (!validator) {
+    validator = createLogoutTokenValidator({ issuer, clientId });
+    validators.set(key, validator);
+  }
+  return validator;
+}
+
 /**
  * OIDC back-channel logout (plan section 6.4.4). Validates the signed logout
  * token, dedupes (issuer, jti), and revokes matching local provider sessions
@@ -34,10 +46,7 @@ export async function POST(request: Request) {
     );
   }
 
-  const validate = createLogoutTokenValidator({
-    issuer: config.oidc.issuer,
-    clientId: config.oidc.clientId,
-  });
+  const validate = getLogoutTokenValidator(config.oidc.issuer, config.oidc.clientId);
   const result = await validate(token);
   if (!result.ok) {
     recordBackchannelLogoutEvent({

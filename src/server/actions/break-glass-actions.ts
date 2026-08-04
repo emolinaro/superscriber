@@ -99,11 +99,17 @@ export async function designateBreakGlassAdminAction(input: {
 }
 
 export async function beginBreakGlassKeyEnrollmentAction(input: { label: string }) {
-  await requireAdmin();
+  const principal = await requireAdmin();
 
   const designation = getBreakGlassDesignation();
   if (!designation) {
     return { ok: false as const, error: "Designate the break-glass account first." };
+  }
+  if (principal.userId !== designation.breakGlassUserId) {
+    return {
+      ok: false as const,
+      error: "Only the designated break-glass custodian can enroll security keys.",
+    };
   }
 
   const designee = await getUserById(designation.breakGlassUserId);
@@ -132,6 +138,17 @@ export async function completeBreakGlassKeyEnrollmentAction(input: {
 }) {
   const principal = await requireAdmin();
 
+  const designation = getBreakGlassDesignation();
+  if (!designation) {
+    return { ok: false as const, error: "Designate the break-glass account first." };
+  }
+  if (principal.userId !== designation.breakGlassUserId) {
+    return {
+      ok: false as const,
+      error: "Only the designated break-glass custodian can enroll security keys.",
+    };
+  }
+
   try {
     const result = await completeRegistration({
       challengeId: input.challengeId,
@@ -139,17 +156,14 @@ export async function completeBreakGlassKeyEnrollmentAction(input: {
       label: input.label,
     });
 
-    const designation = getBreakGlassDesignation();
-    if (designation) {
-      const { recordSecurityEvent } = await import("@/server/auth/security-events");
-      recordSecurityEvent({
-        type: "breakglass.key_enrolled",
-        outcome: "success",
-        userId: designation.breakGlassUserId,
-        detail: "Break-glass security key enrolled.",
-        metadata: { actorUserId: principal.userId, credentialIdSuffix: result.credentialId.slice(-6) },
-      });
-    }
+    const { recordSecurityEvent } = await import("@/server/auth/security-events");
+    recordSecurityEvent({
+      type: "breakglass.key_enrolled",
+      outcome: "success",
+      userId: designation.breakGlassUserId,
+      detail: "Break-glass security key enrolled.",
+      metadata: { actorUserId: principal.userId, credentialIdSuffix: result.credentialId.slice(-6) },
+    });
 
     return { ok: true as const, credentialId: result.credentialId };
   } catch {
@@ -163,6 +177,12 @@ export async function rotateBreakGlassRecoveryCodesAction() {
   const designation = getBreakGlassDesignation();
   if (!designation) {
     return { ok: false as const, error: "Designate the break-glass account first." };
+  }
+  if (principal.userId !== designation.breakGlassUserId) {
+    return {
+      ok: false as const,
+      error: "Only the designated break-glass custodian can rotate recovery codes.",
+    };
   }
 
   const { codes } = generateBreakGlassRecoveryCodes({

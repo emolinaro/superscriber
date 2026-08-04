@@ -1,4 +1,4 @@
-import { and, eq } from "drizzle-orm";
+import { and, eq, lt } from "drizzle-orm";
 import { createPublicKey, createVerify, type KeyObject } from "node:crypto";
 import { discoveryUrlFromExactIssuer } from "@/server/auth/authentik-provider";
 import { recordSecurityEvent } from "@/server/auth/security-events";
@@ -11,7 +11,7 @@ import { authSessions, externalIdentities, oidcLogoutReplays } from "@/server/db
  * Auth.js v4 has no provider-specific session revocation surface, so this
  * module validates signed logout tokens itself: RS256 signature against the
  * discovered JWKS (cache honors normal behavior and refreshes exactly once
- * per request on an unknown kid), exact issuer, audience, iat window, the
+ * per validation on an unknown kid), exact issuer, audience, iat window, the
  * backchannel events member, and sid or sub targeting. Replays are deduped
  * by (issuer, jti) and revocation is idempotent. Responses never reveal
  * whether an account or session exists.
@@ -20,6 +20,7 @@ import { authSessions, externalIdentities, oidcLogoutReplays } from "@/server/db
 const LOGOUT_EVENT_KEY = "http://schemas.openid.net/event/backchannel-logout";
 const IAT_SKEW_SECONDS = 600;
 const JWKS_CACHE_TTL_MS = 5 * 60 * 1000;
+const REPLAY_PRUNE_AGE_MS = 24 * 60 * 60 * 1000;
 
 type FetchLike = (url: string) => Promise<Pick<Response, "ok" | "json" | "status">>;
 
@@ -299,7 +300,9 @@ export function revokeProviderSessions(
 }
 
 /**
- * Marks an (issuer, jti) pair seen. Returns false on replay.
+ * Marks an (issuer, jti) pair seen. Returns false on replay. Rows older than
+ * the prune window are swept on each claim; they can never validate again
+ * once past the iat skew.
  */
 export function claimLogoutReplaySlot(
   issuer: string,
@@ -307,6 +310,12 @@ export function claimLogoutReplaySlot(
   db: AppDatabase = getAppDb(),
 ): boolean {
   try {
+    db.delete(oidcLogoutReplays)
+      .where(
+        lt(oidcLogoutReplays.seenAt, new Date(Date.now() - REPLAY_PRUNE_AGE_MS).toISOString()),
+      )
+      .run();
+
     db.insert(oidcLogoutReplays)
       .values({
         id: crypto.randomUUID(),
