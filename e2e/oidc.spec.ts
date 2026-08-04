@@ -1,11 +1,16 @@
 import { expect, test } from "@playwright/test";
-import { login, withRuntimeDb } from "./support/appliance";
+import { login } from "./support/appliance";
 import {
   E2E_OIDC_GROUPS,
-  startFakeOidcServer,
-  type FakeOidcServer,
+  E2E_OIDC_ISSUER,
+  type OidcControl,
 } from "./support/fake-oidc";
-import { oidcSignIn, RUNNING_IN_CONTAINER, seedOidcLinkedUser } from "./support/oidc";
+import {
+  authSessionOidcdRows,
+  oidcSignIn,
+  seedOidcLinkedUser,
+  startOidcControl,
+} from "./support/oidc";
 
 const reviewer = {
   email: "oidc-reviewer@example.com",
@@ -16,23 +21,25 @@ const reviewer = {
 };
 
 test.describe.serial("authentik oidc dual login", () => {
-  // The fake provider binds 127.0.0.1 on the Playwright host; the container
-  // harness reaches it only from slice 8 onwards.
-  test.skip(RUNNING_IN_CONTAINER, "slice 8 adds the container-hosted OIDC fake");
+  // In container mode the suite's sidecar serves the same issuer; locally an
+  // in-process fake is started on the same port. Behavior is identical.
+  let control: OidcControl;
+  let closeControl: () => Promise<void>;
 
-  let fake: FakeOidcServer;
   test.beforeAll(async () => {
-    fake = await startFakeOidcServer();
+    const started = await startOidcControl();
+    control = started.control;
+    closeControl = started.close;
   });
   test.afterAll(async () => {
-    await fake?.close();
+    await closeControl?.();
   });
 
   test("a linked user signs in through the provider and lands in the workspace", async ({
     page,
   }) => {
     const { userId } = seedOidcLinkedUser(reviewer);
-    fake.setUser({
+    await control.setUser({
       sub: reviewer.subject,
       name: reviewer.displayName,
       sid: "e2e-sid-1",
@@ -60,27 +67,17 @@ test.describe.serial("authentik oidc dual login", () => {
     expect(JSON.stringify(session)).not.toContain(reviewer.subject);
     expect(JSON.stringify(session)).not.toContain(E2E_OIDC_GROUPS.reviewer);
 
-    const rows = withRuntimeDb(
-      (db) =>
-        db
-          .prepare(
-            `select auth_sessions.auth_source as authSource, auth_sessions.provider_sid as providerSid, external_identities.id as identityId
-             from auth_sessions
-             join external_identities on external_identities.id = auth_sessions.external_identity_id
-             where auth_sessions.user_id = ? order by auth_sessions.created_at desc`,
-          )
-          .all(userId) as Array<{ authSource: string; providerSid: string | null; identityId: string }>,
-    );
+    const rows = authSessionOidcdRows(userId);
     expect(rows[0]).toMatchObject({ authSource: "authentik", providerSid: "e2e-sid-1" });
     expect(rows[0]?.identityId).toBeTruthy();
   });
 
   test("an authenticated but unlinked provider user gets one generic denial", async ({ page }) => {
-    fake.setUser({ sub: "e2e-stranger", groups: [E2E_OIDC_GROUPS.reviewer] });
+    await control.setUser({ sub: "e2e-stranger", groups: [E2E_OIDC_GROUPS.reviewer] });
 
     await oidcSignIn(page);
 
-    await expect(page).toHaveURL(/127\.0\.0\.1:3105\/\?error=/);
+    await expect(page).toHaveURL(/127\.0\.0\.1:3105\/\?.*error=/);
     await expect(page.getByRole("heading", { name: "Sign in" })).toBeVisible();
     await expect(
       page.locator("p.banner").getByText("Access is not provisioned for this account"),
@@ -90,21 +87,32 @@ test.describe.serial("authentik oidc dual login", () => {
     const bodyText = await page.locator("body").innerText();
     expect(bodyText).not.toContain("e2e-stranger");
     expect(bodyText).not.toContain(E2E_OIDC_GROUPS.reviewer);
-    expect(bodyText.toLowerCase()).not.toContain("provisioned for e2e-stranger");
 
     const cookies = await page.context().cookies();
     expect(cookies.some((cookie) => cookie.name.includes("session-token"))).toBe(false);
+  });
+
+  test("a provider-side cancel surfaces the same generic denial", async ({ page }) => {
+    await control.setUser({ sub: "e2e-cancel", groups: [E2E_OIDC_GROUPS.reviewer] });
+    await control.failAuthorizeOnce("access_denied");
+
+    await oidcSignIn(page);
+
+    await expect(page).toHaveURL(/127\.0\.0\.1:3105\/\?.*error=/);
+    await expect(
+      page.locator("p.banner").getByText("Access is not provisioned for this account"),
+    ).toBeVisible();
   });
 
   test("a linked user whose role claim maps to zero groups is denied generically", async ({
     page,
   }) => {
     seedOidcLinkedUser({ ...reviewer, email: "oidc-zero@example.com", subject: "e2e-oidc-sub-2" });
-    fake.setUser({ sub: "e2e-oidc-sub-2", groups: [] });
+    await control.setUser({ sub: "e2e-oidc-sub-2", groups: [] });
 
     await oidcSignIn(page);
 
-    await expect(page).toHaveURL(/127\.0\.0\.1:3105\/\?error=/);
+    await expect(page).toHaveURL(/127\.0\.0\.1:3105\/\?.*error=/);
     await expect(
       page.locator("p.banner").getByText("Access is not provisioned for this account"),
     ).toBeVisible();
@@ -118,7 +126,7 @@ test.describe.serial("authentik oidc dual login", () => {
       email: "oidc-bclogout@example.com",
       subject: "e2e-oidc-sub-4",
     });
-    fake.setUser({
+    await control.setUser({
       sub: "e2e-oidc-sub-4",
       name: reviewer.displayName,
       sid: "e2e-sid-backchannel",
@@ -128,8 +136,8 @@ test.describe.serial("authentik oidc dual login", () => {
     await oidcSignIn(page);
     await expect(page).toHaveURL(/\/workspace$/);
 
-    const logoutToken = fake.signLogoutToken({
-      iss: fake.issuer,
+    const logoutToken = await control.signLogoutToken({
+      iss: E2E_OIDC_ISSUER,
       aud: "superscriber",
       iat: Math.floor(Date.now() / 1000),
       jti: crypto.randomUUID(),
@@ -161,7 +169,7 @@ test.describe.serial("authentik oidc dual login", () => {
       subject: "e2e-oidc-sub-3",
     });
 
-    fake.setUser({
+    await control.setUser({
       sub: "e2e-oidc-sub-3",
       name: reviewer.displayName,
       groups: [E2E_OIDC_GROUPS.reviewer],

@@ -331,6 +331,37 @@ conn.close()
   });
 }
 
+export function queryRuntimeRows<Row>(sql: string, params: string[]): Row[] {
+  if (e2eContainerName()) {
+    return queryContainerDb<Row>(sql, params);
+  }
+  return withRuntimeDb((db) => db.prepare(sql).all(...params) as Row[]);
+}
+
+/**
+ * Executes a write statement against the runtime database in whichever mode
+ * the suite is running (host file or in-container interpreter).
+ */
+export function execRuntimeSql(sql: string, params: string[]) {
+  if (e2eContainerName()) {
+    execContainerPython(
+      `import sqlite3, sys
+db_path, sql = sys.argv[1], sys.argv[2]
+conn = sqlite3.connect(db_path)
+conn.execute(sql, sys.argv[3:])
+conn.commit()
+conn.close()
+`,
+      [CONTAINER_DB_PATH, sql, ...params],
+    );
+    return;
+  }
+
+  withRuntimeDb((db) => {
+    db.prepare(sql).run(...params);
+  });
+}
+
 export function revokeAuthSessionsForEmail(email: string) {
   const revokedAt = new Date().toISOString();
   const sql = `update auth_sessions set status = 'revoked', revoked_at = ?, revoked_reason = 'e2e_revocation' where status = 'active' and user_id = (select id from users where email = ?)`;

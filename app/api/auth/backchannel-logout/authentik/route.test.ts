@@ -5,14 +5,13 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   E2E_OIDC_GROUPS,
   startFakeOidcServer,
-  type FakeOidcServer,
 } from "../../../../../e2e/support/fake-oidc";
 
 const LOGOUT_EVENT = "http://schemas.openid.net/event/backchannel-logout";
 
 describe("back-channel logout route", () => {
   let dir: string;
-  let fake: FakeOidcServer;
+  let fake: Awaited<ReturnType<typeof startFakeOidcServer>>;
 
   beforeEach(async () => {
     dir = mkdtempSync(join(tmpdir(), "superscriber-bc-"));
@@ -57,8 +56,8 @@ describe("back-channel logout route", () => {
     );
   }
 
-  function logoutToken(overrides: Record<string, unknown> = {}) {
-    return fake.signLogoutToken({
+  async function logoutToken(overrides: Record<string, unknown> = {}) {
+    return fake.control.signLogoutToken({
       iss: fake.issuer,
       aud: "superscriber",
       iat: Math.floor(Date.now() / 1000),
@@ -99,7 +98,7 @@ describe("back-channel logout route", () => {
 
   it("returns 404 in local mode (endpoint not live without a provider)", async () => {
     await configure("local");
-    const response = await post({ logout_token: logoutToken() });
+    const response = await post({ logout_token: await logoutToken() });
     expect(response.status).toBe(404);
   });
 
@@ -118,7 +117,7 @@ describe("back-channel logout route", () => {
     await configure("dual");
     const { bundle, session } = await seedOidcSession();
 
-    const token = logoutToken();
+    const token = await logoutToken();
     const first = await post({ logout_token: token });
     expect(first.status).toBe(200);
 
@@ -151,7 +150,7 @@ describe("back-channel logout route", () => {
     const { bundle, session } = await seedOidcSession();
 
     const response = await post({
-      logout_token: logoutToken({ sid: undefined, sub: "sub-bc" }),
+      logout_token: await logoutToken({ sid: undefined, sub: "sub-bc" }),
     });
     expect(response.status).toBe(200);
     expect(
@@ -165,7 +164,7 @@ describe("back-channel logout route", () => {
     await configure("dual");
     await seedOidcSession();
 
-    const token = logoutToken();
+    const token = await logoutToken();
     const tampered = `${token.slice(0, -2)}${token.endsWith("AA") ? "AB" : "AA"}`;
     const response = await post({ logout_token: tampered });
     expect(response.status).toBe(400);

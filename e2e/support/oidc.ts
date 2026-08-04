@@ -1,16 +1,36 @@
 import { hashSync } from "bcryptjs";
 import type { Page } from "@playwright/test";
-import { withRuntimeDb } from "./appliance";
-import { E2E_OIDC_ISSUER } from "./fake-oidc";
+import { execRuntimeSql, queryRuntimeRows } from "./appliance";
+import {
+  E2E_OIDC_ISSUER,
+  oidcControl,
+  startFakeOidcServer,
+  type OidcControl,
+} from "./fake-oidc";
 
-export const OIDC_ENABLED = Boolean(process.env.SUPERSCRIBER_E2E_OIDC?.trim());
 export const RUNNING_IN_CONTAINER = Boolean(process.env.SUPERSCRIBER_E2E_CONTAINER_NAME?.trim());
 
 /**
+ * Resolves the OIDC provider control client for the current hosting mode:
+ * an in-process fake for the local harness, the container netns sidecar
+ * (published at the same well-known host port) otherwise.
+ */
+export async function startOidcControl(): Promise<{
+  control: OidcControl;
+  close(): Promise<void>;
+}> {
+  if (RUNNING_IN_CONTAINER) {
+    return { control: oidcControl(E2E_OIDC_ISSUER), close: async () => {} };
+  }
+
+  const handle = await startFakeOidcServer();
+  return { control: handle.control, close: () => handle.close() };
+}
+
+/**
  * Seeds a local user plus an exact (issuer, subject) identity link directly in
- * the runtime database. Local-only harness: slice 3's fake OIDC provider is
- * hosted by the Playwright process on 127.0.0.1, which a container cannot
- * reach; the container harness lands in slice 8.
+ * the runtime database. Container-safe: writes execute inside the container
+ * when the container harness is active.
  */
 export function seedOidcLinkedUser(input: {
   email: string;
@@ -22,46 +42,42 @@ export function seedOidcLinkedUser(input: {
   const now = new Date().toISOString();
 
   // Idempotent across reruns that share one runtime database.
-  const userId = withRuntimeDb((db) => {
-    const existing = db
-      .prepare(`SELECT id FROM users WHERE email = ?`)
-      .get(input.email) as { id: string } | undefined;
+  const existing = queryRuntimeRows<{ id: string }>(`select id from users where email = ?`, [
+    input.email,
+  ]);
+  const userId = existing[0]?.id ?? crypto.randomUUID();
 
-    const resolvedId = existing?.id ?? crypto.randomUUID();
-    if (!existing) {
-      db.prepare(
-        `INSERT INTO users (id, email, display_name, password_hash, role, is_active, auth_version, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, 1, 1, ?, ?)`,
-      ).run(
-        resolvedId,
+  if (!existing[0]) {
+    execRuntimeSql(
+      `insert into users (id, email, display_name, password_hash, role, is_active, auth_version, created_at, updated_at)
+       values (?, ?, ?, ?, ?, 1, 1, ?, ?)`,
+      [
+        userId,
         input.email,
         input.displayName,
-        input.password ? hashSync(input.password, 12) : null,
+        input.password ? hashSync(input.password, 12) : "",
         input.role,
         now,
         now,
-      );
+      ],
+    );
+    if (!input.password) {
+      // password_hash must be NULL, not empty, for OIDC-only users.
+      execRuntimeSql(`update users set password_hash = null where id = ?`, [userId]);
     }
+  }
 
-    const existingLink = db
-      .prepare(`SELECT id FROM external_identities WHERE issuer = ? AND subject = ?`)
-      .get(E2E_OIDC_ISSUER, input.subject) as { id: string } | undefined;
-    if (!existingLink) {
-      db.prepare(
-        `INSERT INTO external_identities (id, user_id, issuer, subject, status, linked_at, change_reason)
-         VALUES (?, ?, ?, ?, 'active', ?, ?)`,
-      ).run(
-        crypto.randomUUID(),
-        resolvedId,
-        E2E_OIDC_ISSUER,
-        input.subject,
-        now,
-        "E2E seeded link.",
-      );
-    }
-
-    return resolvedId;
-  });
+  const existingLink = queryRuntimeRows<{ id: string }>(
+    `select id from external_identities where issuer = ? and subject = ?`,
+    [E2E_OIDC_ISSUER, input.subject],
+  );
+  if (!existingLink[0]) {
+    execRuntimeSql(
+      `insert into external_identities (id, user_id, issuer, subject, status, linked_at, change_reason)
+       values (?, ?, ?, ?, 'active', ?, ?)`,
+      [crypto.randomUUID(), userId, E2E_OIDC_ISSUER, input.subject, now, "E2E seeded link."],
+    );
+  }
 
   return { userId };
 }
@@ -92,4 +108,19 @@ export async function oidcSignIn(page: Page) {
   }
 
   await page.goto(body.url);
+}
+
+export function authSessionOidcdRows(userId: string) {
+  return queryRuntimeRows<{
+    authSource: string;
+    providerSid: string | null;
+    identityId: string;
+  }>(
+    `select auth_sessions.auth_source as authSource, auth_sessions.provider_sid as providerSid,
+            external_identities.id as identityId
+     from auth_sessions
+     join external_identities on external_identities.id = auth_sessions.external_identity_id
+     where auth_sessions.user_id = ? order by auth_sessions.created_at desc`,
+    [userId],
+  );
 }

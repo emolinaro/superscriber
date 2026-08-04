@@ -33,7 +33,7 @@ describe("operator runbooks", () => {
     };
 
     for (const doc of readDocs()) {
-      const commands = doc.content.match(/npm run ([a-z:-]+)/g) ?? [];
+      const commands = doc.content.match(/npm run ([a-z0-9-]+(?::[a-z0-9-]+)?)/g) ?? [];
       for (const command of commands) {
         const script = command.replace("npm run ", "").trim();
         expect(packageJson.scripts, `${doc.file} references missing script "${script}"`).toHaveProperty(script);
