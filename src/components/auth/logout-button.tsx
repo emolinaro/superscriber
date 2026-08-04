@@ -5,7 +5,7 @@ import { signOut } from "next-auth/react";
 import { markIntentionalSignOut } from "@/lib/signed-out-marker";
 import { revokeCurrentSessionAction } from "@/server/actions/auth-actions";
 
-export function LogoutButton() {
+export function LogoutButton({ label = "Sign out" }: { label?: string }) {
   const [isPending, startTransition] = useTransition();
 
   return (
@@ -25,7 +25,7 @@ export function LogoutButton() {
       }}
       type="button"
     >
-      {isPending ? "Signing out..." : "Sign out"}
+      {isPending ? "Signing out..." : label}
     </button>
   );
 }

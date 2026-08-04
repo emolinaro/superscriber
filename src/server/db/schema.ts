@@ -155,6 +155,69 @@ export const externalIdentities = sqliteTable(
   }),
 );
 
+export const authControl = sqliteTable("auth_control", {
+  id: integer("id").primaryKey(),
+  breakGlassUserId: text("break_glass_user_id")
+    .notNull()
+    .references(() => users.id, { onDelete: "restrict" }),
+  updatedAt: text("updated_at").notNull(),
+  updatedByUserId: text("updated_by_user_id").references(() => users.id, {
+    onDelete: "set null",
+  }),
+  changeReason: text("change_reason").notNull(),
+});
+
+export const emergencyActivations = sqliteTable(
+  "emergency_activations",
+  {
+    id: text("id").primaryKey(),
+    correlationId: text("correlation_id").notNull(),
+    breakGlassUserId: text("break_glass_user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "restrict" }),
+    reason: text("reason").notNull(),
+    sourceZone: text("source_zone").notNull(),
+    openedAt: text("opened_at").notNull(),
+    endsAt: text("ends_at").notNull(),
+    closedAt: text("closed_at"),
+  },
+  (table) => ({
+    correlationUnique: uniqueIndex("emergency_activations_correlation_unique").on(
+      table.correlationId,
+    ),
+  }),
+);
+
+export const breakGlassRecoveryCodes = sqliteTable("break_glass_recovery_codes", {
+  id: text("id").primaryKey(),
+  breakGlassUserId: text("break_glass_user_id")
+    .notNull()
+    .references(() => users.id, { onDelete: "restrict" }),
+  codeHash: text("code_hash").notNull(),
+  createdAt: text("created_at").notNull(),
+  usedAt: text("used_at"),
+  rotatedAt: text("rotated_at"),
+});
+
+export const webauthnCredentials = sqliteTable(
+  "webauthn_credentials",
+  {
+    id: text("id").primaryKey(),
+    userId: text("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "restrict" }),
+    publicKey: text("public_key").notNull(),
+    counter: integer("counter").notNull().default(0),
+    transports: text("transports"),
+    label: text("label").notNull().default(""),
+    createdAt: text("created_at").notNull(),
+    lastUsedAt: text("last_used_at"),
+  },
+  (table) => ({
+    userIdx: index("webauthn_credentials_user_idx").on(table.userId),
+  }),
+);
+
 export const oidcLogoutReplays = sqliteTable(
   "oidc_logout_replays",
   {

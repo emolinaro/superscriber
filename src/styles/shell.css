@@ -8,6 +8,24 @@
   background: var(--color-bone);
 }
 
+.banner-emergency {
+  position: sticky;
+  top: 0;
+  z-index: 40;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-3) var(--space-4);
+  border-bottom: 1px solid var(--color-rust-600);
+  color: var(--color-danger-fg);
+  background: var(--color-danger-bg);
+}
+
+.banner-emergency__reason {
+  font-style: italic;
+}
+
 .skip-link {
   position: absolute;
   top: var(--space-3);

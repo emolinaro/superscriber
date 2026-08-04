@@ -13,7 +13,7 @@ type Migration = {
   rebuildsTables?: boolean;
 };
 
-export const LATEST_SCHEMA_VERSION = 5;
+export const LATEST_SCHEMA_VERSION = 6;
 
 const migrations: Migration[] = [
   { version: 1, name: "baseline-appliance", up: createBaselineSchema },
@@ -21,6 +21,7 @@ const migrations: Migration[] = [
   { version: 3, name: "auth-session-registry", up: addAuthSessionRegistrySchema },
   { version: 4, name: "identity-links", up: addIdentityLinksSchema, rebuildsTables: true },
   { version: 5, name: "oidc-backchannel-replays", up: addOidcBackchannelReplaySchema },
+  { version: 6, name: "break-glass-controls", up: addBreakGlassControlsSchema },
 ];
 
 const LEGACY_AUDIT_METADATA_JSON = serializeAuditMetadata(LEGACY_AUDIT_METADATA);
@@ -757,6 +758,103 @@ function addOidcBackchannelReplaySchema(sqlite: Database.Database) {
     sqlite.exec(`
       CREATE UNIQUE INDEX oidc_logout_replays_issuer_jti_unique
       ON oidc_logout_replays(issuer, jti);
+    `);
+  }
+}
+
+function addBreakGlassControlsSchema(sqlite: Database.Database) {
+  // Plan section 8.1: exactly-one break-glass designation with trigger-level
+  // invariants so no service path can bypass them.
+  sqlite.exec(`
+    CREATE TABLE IF NOT EXISTS auth_control (
+      id INTEGER PRIMARY KEY CHECK (id = 1),
+      break_glass_user_id TEXT NOT NULL UNIQUE REFERENCES users(id) ON DELETE RESTRICT,
+      updated_at TEXT NOT NULL,
+      updated_by_user_id TEXT REFERENCES users(id) ON DELETE SET NULL,
+      change_reason TEXT NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS emergency_activations (
+      id TEXT PRIMARY KEY NOT NULL,
+      correlation_id TEXT NOT NULL UNIQUE,
+      break_glass_user_id TEXT NOT NULL REFERENCES users(id) ON DELETE RESTRICT,
+      reason TEXT NOT NULL,
+      source_zone TEXT NOT NULL,
+      opened_at TEXT NOT NULL,
+      ends_at TEXT NOT NULL,
+      closed_at TEXT
+    );
+
+    CREATE TABLE IF NOT EXISTS break_glass_recovery_codes (
+      id TEXT PRIMARY KEY NOT NULL,
+      break_glass_user_id TEXT NOT NULL REFERENCES users(id) ON DELETE RESTRICT,
+      code_hash TEXT NOT NULL UNIQUE,
+      created_at TEXT NOT NULL,
+      used_at TEXT,
+      rotated_at TEXT
+    );
+
+    CREATE TABLE IF NOT EXISTS webauthn_credentials (
+      id TEXT PRIMARY KEY NOT NULL,
+      user_id TEXT NOT NULL REFERENCES users(id) ON DELETE RESTRICT,
+      public_key TEXT NOT NULL,
+      counter INTEGER NOT NULL DEFAULT 0,
+      transports TEXT,
+      label TEXT NOT NULL DEFAULT '',
+      created_at TEXT NOT NULL,
+      last_used_at TEXT
+    );
+
+    CREATE TRIGGER IF NOT EXISTS auth_control_singleton
+    BEFORE INSERT ON auth_control
+    WHEN (SELECT COUNT(*) FROM auth_control) >= 1
+    BEGIN
+      SELECT RAISE(ABORT, 'auth_control is a singleton: transfer the existing designation');
+    END;
+
+    CREATE TRIGGER IF NOT EXISTS auth_control_must_be_active_admin_insert
+    BEFORE INSERT ON auth_control
+    WHEN NOT EXISTS (
+      SELECT 1 FROM users
+      WHERE id = NEW.break_glass_user_id AND role = 'admin' AND is_active = 1
+    )
+    BEGIN
+      SELECT RAISE(ABORT, 'break-glass designation requires an active admin user');
+    END;
+
+    CREATE TRIGGER IF NOT EXISTS auth_control_must_be_active_admin_update
+    BEFORE UPDATE ON auth_control
+    WHEN NOT EXISTS (
+      SELECT 1 FROM users
+      WHERE id = NEW.break_glass_user_id AND role = 'admin' AND is_active = 1
+    )
+    BEGIN
+      SELECT RAISE(ABORT, 'break-glass designation requires an active admin user');
+    END;
+
+    CREATE TRIGGER IF NOT EXISTS users_break_glass_update_guard
+    BEFORE UPDATE ON users
+    WHEN EXISTS (
+      SELECT 1 FROM auth_control WHERE break_glass_user_id = OLD.id
+    ) AND (NEW.role != 'admin' OR NEW.is_active != 1)
+    BEGIN
+      SELECT RAISE(ABORT, 'the designated break-glass user cannot be demoted or deactivated');
+    END;
+
+    CREATE TRIGGER IF NOT EXISTS users_break_glass_delete_guard
+    BEFORE DELETE ON users
+    WHEN EXISTS (
+      SELECT 1 FROM auth_control WHERE break_glass_user_id = OLD.id
+    )
+    BEGIN
+      SELECT RAISE(ABORT, 'the designated break-glass user cannot be deleted');
+    END;
+  `);
+
+  if (!hasIndex(sqlite, "webauthn_credentials_user_idx")) {
+    sqlite.exec(`
+      CREATE INDEX webauthn_credentials_user_idx
+      ON webauthn_credentials(user_id);
     `);
   }
 }

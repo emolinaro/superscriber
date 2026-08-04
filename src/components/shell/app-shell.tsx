@@ -10,6 +10,7 @@ import {
 } from "@/lib/signed-out-marker";
 import type { Principal, UserRole } from "@/domain/models";
 import { AccountMenu } from "./account-menu";
+import { LogoutButton } from "@/components/auth/logout-button";
 
 const ROLE_NAV: Record<UserRole, Array<{ href: string; label: string }>> = {
   uploader: [
@@ -79,11 +80,19 @@ function useSessionGuard() {
   }, []);
 }
 
+export type EmergencyBannerState = {
+  correlationId: string;
+  reason: string;
+  absoluteExpiresAt: string;
+};
+
 export function AppShell({
   principal,
+  emergency,
   children,
 }: {
   principal: Principal;
+  emergency?: EmergencyBannerState;
   children: React.ReactNode;
 }) {
   const pathname = usePathname() ?? "/workspace";
@@ -121,6 +130,15 @@ export function AppShell({
           <AccountMenu principal={principal} />
         </div>
       </header>
+      {emergency ? (
+        <div className="banner banner-emergency" data-tone="danger" role="alert">
+          <strong>Emergency administrator session</strong>
+          <span> Activation {emergency.correlationId}.</span>
+          <span className="banner-emergency__reason"> {emergency.reason}</span>
+          <span> Expires {emergency.absoluteExpiresAt} UTC.</span>{" "}
+          <LogoutButton label="End emergency session" />
+        </div>
+      ) : null}
       <main className="app-shell__main" id="app-main" tabIndex={-1}>
         {children}
       </main>

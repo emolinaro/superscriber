@@ -1,5 +1,5 @@
 import { AppShell } from "@/components/shell/app-shell";
-import { getActivePrincipal } from "@/server/session";
+import { getActiveSession } from "@/server/session";
 
 export const dynamic = "force-dynamic";
 
@@ -8,7 +8,13 @@ export default async function AuthenticatedLayout({
 }: Readonly<{
   children: React.ReactNode;
 }>) {
-  const principal = await getActivePrincipal();
+  const session = await getActiveSession();
 
-  return principal ? <AppShell principal={principal}>{children}</AppShell> : children;
+  return session ? (
+    <AppShell principal={session.user} emergency={session.emergency}>
+      {children}
+    </AppShell>
+  ) : (
+    children
+  );
 }

@@ -3,11 +3,20 @@ import { redirect } from "next/navigation";
 import { type Principal, type UserRole } from "@/domain/models";
 import { sanitizeReturnTo } from "@/lib/safe-return-to";
 import { canAccessRecording } from "@/server/access/service";
+import { readEmergencyContext } from "@/server/auth/break-glass";
 import { authOptions } from "@/server/auth/options";
+
+export type EmergencySessionContext = {
+  correlationId: string;
+  reason: string;
+  absoluteExpiresAt: string;
+};
 
 export type ActiveSession = {
   user: Principal;
   expiresAt: string;
+  /** Present only for break-glass sessions (plan section 8.4). */
+  emergency?: EmergencySessionContext;
 };
 
 function parseRecordingId(pathname: string) {
@@ -62,6 +71,10 @@ export async function getActiveSession(): Promise<ActiveSession | null> {
       role: session.user.role,
     },
     expiresAt: session.expires,
+    emergency:
+      session.authSource === "break_glass"
+        ? (readEmergencyContext(session.authSessionId) ?? undefined)
+        : undefined,
   };
 }
 
