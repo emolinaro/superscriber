@@ -2,6 +2,7 @@ import type { NextAuthOptions } from "next-auth";
 import CredentialsProvider from "next-auth/providers/credentials";
 import { loadAuthConfig } from "@/server/auth/auth-config";
 import { buildAuthentikProvider } from "@/server/auth/authentik-provider";
+import { getBreakGlassDesignation } from "@/server/auth/break-glass";
 import { resolveOidcAdmission } from "@/server/auth/oidc-admission";
 import { resolveAuthSecret } from "@/server/auth/secret";
 import { verifyLocalCredentials } from "@/server/auth/service";
@@ -43,6 +44,15 @@ function resolveProviders(): NextAuthOptions["providers"] {
         const user = await verifyLocalCredentials(parsed.data);
         if (!user) {
           return null;
+        }
+
+        const config = loadAuthConfig();
+        if (config.mode === "authentik-primary") {
+          // Credentials accept only the designated break-glass account (3.1).
+          const designation = getBreakGlassDesignation();
+          if (!designation || designation.breakGlassUserId !== user.id) {
+            return null;
+          }
         }
 
         return {

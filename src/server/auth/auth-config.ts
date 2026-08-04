@@ -27,6 +27,22 @@ export type AuthConfig =
       roleMap: RoleMap;
     };
 
+/**
+ * Deployment profiles (plan section 3.1). Only `no-mail` exists: mail is
+ * disabled by design and no SMTP configuration is required or consulted.
+ */
+export function loadDeploymentProfile(
+  env: Record<string, string | undefined> = process.env,
+): "no-mail" {
+  const raw = env.SUPERSCRIBER_DEPLOYMENT_PROFILE?.trim() || "no-mail";
+  if (raw !== "no-mail") {
+    throw new AuthConfigError(
+      `SUPERSCRIBER_DEPLOYMENT_PROFILE supports only "no-mail"; got "${raw}". Mail is disabled by design.`,
+    );
+  }
+  return "no-mail";
+}
+
 export class AuthConfigError extends Error {
   constructor(message: string) {
     super(message);

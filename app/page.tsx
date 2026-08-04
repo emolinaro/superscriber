@@ -1,11 +1,17 @@
-import { cookies } from "next/headers";
+import { cookies, headers } from "next/headers";
 import { redirect } from "next/navigation";
 import { AuthSurface } from "@/components/auth/auth-surface";
 import { BootstrapSetupForm } from "@/components/auth/bootstrap-setup-form";
 import { LoginForm } from "@/components/auth/login-form";
 import { OidcSignInButton } from "@/components/auth/oidc-sign-in-button";
 import { sanitizeReturnTo } from "@/lib/safe-return-to";
+import { resolveAuthSurfaceModel } from "@/lib/auth-surface-model";
 import { loadAuthConfig } from "@/server/auth/auth-config";
+import {
+  evaluateSourceZone,
+  loadManagementNetworkPolicy,
+  type SourceZone,
+} from "@/server/auth/management-network";
 import { hasAnyUsers } from "@/server/auth/service";
 import { getActivePrincipal, resolveAuthorizedReturnTo } from "@/server/session";
 
@@ -75,6 +81,20 @@ export default async function LandingPage({
 
   const anyUsers = await hasAnyUsers();
   const authMode = loadAuthConfig().mode;
+
+  // The management boundary governs whether the emergency break-glass
+  // disclosure renders at all (plan 8.2). Without a mounted policy (or an
+  // unreadable one) the zone fails closed to public.
+  let zone: SourceZone = "public";
+  const policyPath = process.env.SUPERSCRIBER_MANAGEMENT_NETWORKS_FILE?.trim();
+  if (policyPath && authMode === "authentik-primary") {
+    try {
+      zone = evaluateSourceZone(await headers(), loadManagementNetworkPolicy(policyPath)).zone;
+    } catch {
+      zone = "public";
+    }
+  }
+  const surface = resolveAuthSurfaceModel({ mode: authMode, zone });
   const notice = buildNotice(
     firstValue(params.reason),
     firstValue(params.notice),
@@ -131,8 +151,20 @@ export default async function LandingPage({
       >
         {anyUsers ? (
           <>
-            {authMode !== "local" ? <OidcSignInButton returnTo={requestedReturnTo} /> : null}
-            <LoginForm initialEmail={bootstrapEmail} returnTo={requestedReturnTo} />
+            {surface.showOidcSignIn ? <OidcSignInButton returnTo={requestedReturnTo} /> : null}
+            {surface.showLocalCredentialsForm ? (
+              <LoginForm initialEmail={bootstrapEmail} returnTo={requestedReturnTo} />
+            ) : null}
+            {surface.showBreakGlassDisclosure ? (
+              <details className="break-glass-disclosure" data-testid="break-glass-disclosure">
+                <summary>Emergency local administrator</summary>
+                <p className="field-note">
+                  Emergency sign-in requires the designated custodian account and a registered
+                  hardware security key. Contact the deployment custodians to activate the
+                  break-glass path.
+                </p>
+              </details>
+            ) : null}
           </>
         ) : readiness ? (
           <BootstrapSetupForm readiness={readiness} />

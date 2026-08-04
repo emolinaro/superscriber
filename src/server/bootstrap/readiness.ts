@@ -1,7 +1,15 @@
 import { existsSync, mkdirSync, unlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { openAppDatabase } from "@/server/db/client";
+import { and, eq, isNull, sql } from "drizzle-orm";
+import { getBreakGlassDesignation } from "@/server/auth/break-glass";
+import {
+  loadAuthConfig,
+  loadDeploymentProfile,
+  type AuthConfig,
+} from "@/server/auth/auth-config";
 import { resolveAuthSecret } from "@/server/auth/secret";
+import { getAppDb, openAppDatabase } from "@/server/db/client";
+import { breakGlassRecoveryCodes, users, webauthnCredentials } from "@/server/db/schema";
 import { getOrchestrationConfig } from "@/server/orchestration/config";
 
 export type BootstrapReadinessState = "ready" | "warning" | "blocked";
@@ -10,7 +18,9 @@ export type BootstrapReadinessCheckId =
   | "media_storage"
   | "upload_storage"
   | "auth_secret"
-  | "engine_configuration";
+  | "engine_configuration"
+  | "auth_configuration"
+  | "deployment_profile";
 
 export type BootstrapReadinessCheck = {
   id: BootstrapReadinessCheckId;
@@ -177,6 +187,114 @@ function checkEngineConfiguration(): BootstrapReadinessCheck {
   );
 }
 
+function checkDeploymentProfile(): BootstrapReadinessCheck {
+  try {
+    loadDeploymentProfile();
+    return ready(
+      "deployment_profile",
+      "Deployment profile",
+      "No-mail deployment: no SMTP configuration is required or used.",
+    );
+  } catch (error) {
+    return blocked(
+      "deployment_profile",
+      "Deployment profile",
+      error instanceof Error ? error.message : "Deployment profile is not supported.",
+    );
+  }
+}
+
+function checkAuthConfiguration(): BootstrapReadinessCheck {
+  let config: AuthConfig;
+  try {
+    config = loadAuthConfig();
+  } catch (error) {
+    return blocked(
+      "auth_configuration",
+      "Authentication",
+      error instanceof Error ? error.message : "Authentication configuration failed.",
+    );
+  }
+
+  if (config.mode === "local") {
+    return ready(
+      "auth_configuration",
+      "Authentication",
+      "Local credentials are the only sign-in method.",
+    );
+  }
+
+  if (config.mode === "dual") {
+    return ready(
+      "auth_configuration",
+      "Authentication",
+      "Dual mode: local credentials and linked Authentik sign-in are available.",
+    );
+  }
+
+  // authentik-primary startup invariant (plan section 8.1).
+  const db = getAppDb();
+  const designation = getBreakGlassDesignation(db);
+  if (!designation) {
+    return blocked(
+      "auth_configuration",
+      "Authentication",
+      "Authentik-primary requires exactly one designated break-glass administrator before startup.",
+    );
+  }
+
+  const designee = db
+    .select({ role: users.role, isActive: users.isActive })
+    .from(users)
+    .where(eq(users.id, designation.breakGlassUserId))
+    .get();
+  if (!designee || designee.role !== "admin" || !designee.isActive) {
+    return blocked(
+      "auth_configuration",
+      "Authentication",
+      "Authentik-primary requires the designated break-glass account to be an active administrator.",
+    );
+  }
+
+  const keyCount = db
+    .select({ count: sql<number>`count(*)` })
+    .from(webauthnCredentials)
+    .where(eq(webauthnCredentials.userId, designation.breakGlassUserId))
+    .get()!.count;
+  if (keyCount < 2) {
+    return blocked(
+      "auth_configuration",
+      "Authentication",
+      "Authentik-primary requires two enrolled break-glass security keys before startup.",
+    );
+  }
+
+  const custodyCount = db
+    .select({ count: sql<number>`count(*)` })
+    .from(breakGlassRecoveryCodes)
+    .where(
+      and(
+        eq(breakGlassRecoveryCodes.breakGlassUserId, designation.breakGlassUserId),
+        isNull(breakGlassRecoveryCodes.usedAt),
+        isNull(breakGlassRecoveryCodes.rotatedAt),
+      ),
+    )
+    .get()!.count;
+  if (custodyCount === 0) {
+    return blocked(
+      "auth_configuration",
+      "Authentication",
+      "Authentik-primary requires recorded break-glass recovery custody before startup.",
+    );
+  }
+
+  return ready(
+    "auth_configuration",
+    "Authentication",
+    "Authentik-primary: institutional sign-in is normal; the break-glass boundary is ready.",
+  );
+}
+
 export async function getBootstrapReadiness(): Promise<BootstrapReadiness> {
   const checks = [
     checkDatabase(),
@@ -184,6 +302,8 @@ export async function getBootstrapReadiness(): Promise<BootstrapReadiness> {
     checkWritableDirectory("upload_storage", "Upload storage", resolveUploadDir()),
     checkAuthSecret(),
     checkEngineConfiguration(),
+    checkAuthConfiguration(),
+    checkDeploymentProfile(),
   ];
 
   return {

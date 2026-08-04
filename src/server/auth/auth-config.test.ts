@@ -2,9 +2,27 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { loadAuthConfig } from "@/server/auth/auth-config";
+import { loadAuthConfig, loadDeploymentProfile } from "@/server/auth/auth-config";
 
 const ISSUER = "https://auth.example.com/application/o/superscriber/";
+
+describe("deployment profile", () => {
+  it("defaults to no-mail when unset", () => {
+    expect(loadDeploymentProfile({})).toBe("no-mail");
+  });
+
+  it("accepts the explicit no-mail profile with no SMTP configuration required", () => {
+    expect(loadDeploymentProfile({ SUPERSCRIBER_DEPLOYMENT_PROFILE: "no-mail" })).toBe(
+      "no-mail",
+    );
+  });
+
+  it("rejects any other deployment profile value", () => {
+    expect(() => loadDeploymentProfile({ SUPERSCRIBER_DEPLOYMENT_PROFILE: "smtp" })).toThrow(
+      /no-mail/,
+    );
+  });
+});
 
 describe("auth config", () => {
   let dir: string;

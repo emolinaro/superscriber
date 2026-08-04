@@ -140,6 +140,62 @@ describe("auth options in dual mode", () => {
     });
   });
 
+  it("authentik-primary credentials accept only the designated break-glass account", async () => {
+    const dbPath = join(dir, "primary.db");
+    stubEnv(dbPath, "authentik-primary");
+
+    const { openAppDatabase } = await import("@/server/db/client");
+    const bundle = openAppDatabase(dbPath);
+    const { createLocalUser } = await import("@/server/auth/service");
+    const admin = await createLocalUser(
+      {
+        displayName: "BG Admin",
+        email: "bg@example.com",
+        password: "Superscriber!123",
+        role: "admin",
+      },
+      bundle.db,
+    );
+    await createLocalUser(
+      {
+        displayName: "Normal Reviewer",
+        email: "normal@example.com",
+        password: "Superscriber!123",
+        role: "reviewer",
+      },
+      bundle.db,
+    );
+
+    vi.resetModules();
+    stubEnv(dbPath, "authentik-primary");
+    const { authOptions } = await import("@/server/auth/options");
+    // next-auth v4 CredentialsProvider keeps the real authorize under
+    // .options; the top-level field is a () => null stub.
+    const credentials = authOptions.providers.find(
+      (provider: { id: string }) => provider.id === "credentials",
+    ) as { options: { authorize: (input: unknown) => Promise<unknown> } };
+    const authorize = credentials.options.authorize;
+
+    // Without a designation, nobody passes credentials in primary mode.
+    expect(
+      await authorize({ email: "bg@example.com", password: "Superscriber!123" }),
+    ).toBeNull();
+
+    const { designateBreakGlassUser } = await import("@/server/auth/break-glass");
+    designateBreakGlassUser(
+      { userId: admin.id, changeReason: "Break-glass designation." },
+      bundle.db,
+    );
+
+    expect(
+      await authorize({ email: "normal@example.com", password: "Superscriber!123" }),
+    ).toBeNull();
+
+    expect(
+      await authorize({ email: "bg@example.com", password: "Superscriber!123" }),
+    ).toMatchObject({ id: admin.id, role: "admin" });
+  });
+
   it("jwt denies an identity whose admission fails at mint time", async () => {
     const dbPath = join(dir, "dual2.db");
     stubEnv(dbPath, "dual");
