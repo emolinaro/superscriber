@@ -36,6 +36,34 @@ describe("security events", () => {
     });
   });
 
+  it("drops secret- and identity-shaped metadata keys and email-looking values", () => {
+    const { db, sqlite } = openAppDatabase(":memory:");
+
+    const id = recordSecurityEvent(
+      {
+        type: "oidc.admission.denied",
+        outcome: "denied",
+        metadata: {
+          reason: "identity_not_linked",
+          clientSecret: "should-never-persist",
+          accessToken: "should-never-persist",
+          userEmail: "someone@example.com",
+          nestedObject: { no: "objects" },
+        },
+      },
+      db,
+    );
+
+    const row = sqlite
+      .prepare(`SELECT metadata FROM security_events WHERE id = ?`)
+      .get(id) as { metadata: string };
+
+    const parsed = JSON.parse(row.metadata) as { data: Record<string, unknown> };
+    expect(parsed.data).toEqual({ reason: "identity_not_linked" });
+    expect(row.metadata).not.toContain("should-never-persist");
+    expect(row.metadata).not.toContain("@");
+  });
+
   it("defaults metadata to an empty versioned envelope", () => {
     const { db, sqlite } = openAppDatabase(":memory:");
 
