@@ -155,6 +155,22 @@ export const externalIdentities = sqliteTable(
   }),
 );
 
+export const oidcLogoutReplays = sqliteTable(
+  "oidc_logout_replays",
+  {
+    id: text("id").primaryKey(),
+    issuer: text("issuer").notNull(),
+    jti: text("jti").notNull(),
+    seenAt: text("seen_at").notNull(),
+  },
+  (table) => ({
+    issuerJtiUnique: uniqueIndex("oidc_logout_replays_issuer_jti_unique").on(
+      table.issuer,
+      table.jti,
+    ),
+  }),
+);
+
 export const securityEvents = sqliteTable(
   "security_events",
   {

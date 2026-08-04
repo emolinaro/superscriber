@@ -110,6 +110,48 @@ test.describe.serial("authentik oidc dual login", () => {
     ).toBeVisible();
   });
 
+  test("back-channel logout revokes the provider session and the open UI converges", async ({
+    page,
+  }) => {
+    seedOidcLinkedUser({
+      ...reviewer,
+      email: "oidc-bclogout@example.com",
+      subject: "e2e-oidc-sub-4",
+    });
+    fake.setUser({
+      sub: "e2e-oidc-sub-4",
+      name: reviewer.displayName,
+      sid: "e2e-sid-backchannel",
+      groups: [E2E_OIDC_GROUPS.reviewer],
+    });
+
+    await oidcSignIn(page);
+    await expect(page).toHaveURL(/\/workspace$/);
+
+    const logoutToken = fake.signLogoutToken({
+      iss: fake.issuer,
+      aud: "superscriber",
+      iat: Math.floor(Date.now() / 1000),
+      jti: crypto.randomUUID(),
+      events: { "http://schemas.openid.net/event/backchannel-logout": {} },
+      sid: "e2e-sid-backchannel",
+    });
+
+    const response = await page.request.post("/api/auth/backchannel-logout/authentik", {
+      form: { logout_token: logoutToken },
+    });
+    expect(response.status()).toBe(200);
+
+    // The open page converges to session-expired within one poll cycle.
+    await expect(page).toHaveURL(/reason=session-expired/, { timeout: 15_000 });
+
+    // Retried delivery of the same (issuer, jti) is an idempotent success.
+    const replay = await page.request.post("/api/auth/backchannel-logout/authentik", {
+      form: { logout_token: logoutToken },
+    });
+    expect(replay.status()).toBe(200);
+  });
+
   test("the same local principal results from OIDC and credentials in dual mode", async ({
     page,
   }) => {

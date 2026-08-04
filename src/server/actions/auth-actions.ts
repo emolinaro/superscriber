@@ -2,11 +2,32 @@
 
 import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
+import { getServerSession } from "next-auth";
 import { type BootstrapFormState } from "@/lib/auth-forms";
+import { authOptions } from "@/server/auth/options";
 import { createBootstrapAdmin as createBootstrapAdminAccount, hasAnyUsers } from "@/server/auth/service";
+import { revokeAuthSession } from "@/server/auth/session-registry";
 import { bootstrapAdminSchema, normalizeEmail } from "@/server/auth/validation";
 
 const BOOTSTRAP_EMAIL_COOKIE = "superscriber.bootstrap-email";
+
+/**
+ * Plan section 6.4.1: logout revokes the current durable session row before
+ * the cookie clear. Failure must never keep a user signed in, so this action
+ * always resolves; the client proceeds to clear the cookie regardless.
+ */
+export async function revokeCurrentSessionAction(): Promise<{ ok: true }> {
+  try {
+    const session = await getServerSession(authOptions);
+    if (session?.authSessionId && session.user?.id) {
+      revokeAuthSession(session.authSessionId, "logout");
+    }
+  } catch {
+    // Cookie clear proceeds regardless.
+  }
+
+  return { ok: true };
+}
 
 function asString(formData: FormData, key: string, fallback = "") {
   const value = formData.get(key);

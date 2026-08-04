@@ -13,13 +13,14 @@ type Migration = {
   rebuildsTables?: boolean;
 };
 
-export const LATEST_SCHEMA_VERSION = 4;
+export const LATEST_SCHEMA_VERSION = 5;
 
 const migrations: Migration[] = [
   { version: 1, name: "baseline-appliance", up: createBaselineSchema },
   { version: 2, name: "governed-casefile", up: addGovernedCasefileSchema },
   { version: 3, name: "auth-session-registry", up: addAuthSessionRegistrySchema },
   { version: 4, name: "identity-links", up: addIdentityLinksSchema, rebuildsTables: true },
+  { version: 5, name: "oidc-backchannel-replays", up: addOidcBackchannelReplaySchema },
 ];
 
 const LEGACY_AUDIT_METADATA_JSON = serializeAuditMetadata(LEGACY_AUDIT_METADATA);
@@ -738,6 +739,26 @@ function addIdentityLinksSchema(sqlite: Database.Database) {
     "external_identity_id",
     "external_identity_id TEXT REFERENCES external_identities(id) ON DELETE RESTRICT",
   );
+}
+
+function addOidcBackchannelReplaySchema(sqlite: Database.Database) {
+  // Back-channel logout replay protection (plan 6.4.4): (issuer, jti) pairs
+  // are single-use, so retried deliveries are idempotent no-ops.
+  sqlite.exec(`
+    CREATE TABLE IF NOT EXISTS oidc_logout_replays (
+      id TEXT PRIMARY KEY NOT NULL,
+      issuer TEXT NOT NULL,
+      jti TEXT NOT NULL,
+      seen_at TEXT NOT NULL
+    );
+  `);
+
+  if (!hasIndex(sqlite, "oidc_logout_replays_issuer_jti_unique")) {
+    sqlite.exec(`
+      CREATE UNIQUE INDEX oidc_logout_replays_issuer_jti_unique
+      ON oidc_logout_replays(issuer, jti);
+    `);
+  }
 }
 
 export function runMigrations(

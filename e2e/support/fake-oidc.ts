@@ -20,6 +20,8 @@ export type FakeOidcServer = {
   issuer: string;
   port: number;
   setUser(user: FakeOidcUser | null): void;
+  /** Signs a back-channel logout token with the fake's current key. */
+  signLogoutToken(claims: Record<string, unknown>): string;
   close(): Promise<void>;
 };
 
@@ -47,8 +49,11 @@ function base64url(input: string | Buffer) {
   return Buffer.from(input).toString("base64url");
 }
 
-export async function startFakeOidcServer(options: { clientId?: string } = {}): Promise<FakeOidcServer> {
+export async function startFakeOidcServer(
+  options: { clientId?: string; port?: number } = {},
+): Promise<FakeOidcServer> {
   const clientId = options.clientId ?? "superscriber";
+  const requestedPort = options.port ?? E2E_OIDC_PORT;
   const { privateKey, publicKey } = generateKeyPairSync("rsa", { modulusLength: 2048 });
   const kid = randomBytes(8).toString("hex");
   const publicJwk = publicKey.export({ format: "jwk" });
@@ -56,7 +61,7 @@ export async function startFakeOidcServer(options: { clientId?: string } = {}): 
   let currentUser: FakeOidcUser | null = null;
   const pendingCodes = new Map<string, { nonce: string }>();
 
-  const issuer = E2E_OIDC_ISSUER;
+  let issuer = `http://127.0.0.1:${requestedPort}/`;
 
   function signIdToken(user: FakeOidcUser, nonce: string) {
     const nowSeconds = Math.floor(Date.now() / 1000);
@@ -193,14 +198,24 @@ export async function startFakeOidcServer(options: { clientId?: string } = {}): 
 
   await new Promise<void>((resolve, reject) => {
     server.once("error", reject);
-    server.listen(E2E_OIDC_PORT, "127.0.0.1", () => resolve());
+    server.listen(requestedPort, "127.0.0.1", () => resolve());
   });
+
+  const address = server.address();
+  const boundPort = typeof address === "object" && address ? address.port : requestedPort;
+  issuer = `http://127.0.0.1:${boundPort}/`;
 
   return {
     issuer,
-    port: E2E_OIDC_PORT,
+    port: boundPort,
     setUser(user) {
       currentUser = user;
+    },
+    signLogoutToken(claims) {
+      const header = { alg: "RS256", typ: "JWT", kid };
+      const unsigned = `${base64url(JSON.stringify(header))}.${base64url(JSON.stringify(claims))}`;
+      const signature = createSign("RSA-SHA256").update(unsigned).sign(privateKey, "base64url");
+      return `${unsigned}.${signature}`;
     },
     async close() {
       server.closeAllConnections?.();
