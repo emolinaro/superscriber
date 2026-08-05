@@ -33,7 +33,7 @@ dual mode with sidecar).
 
 ## Runs at this commit
 
-- npm test: 461 unit/integration tests green
+- npm test: 465 unit/integration tests green
 - npm run typecheck: clean
 - npm run build: clean
 - npm run e2e (local, dual mode): 21/21 green (includes the break-glass ceremony)
