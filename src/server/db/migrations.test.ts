@@ -97,7 +97,110 @@ describe("migrations", () => {
     expect(sqlite.prepare("select version from schema_migrations order by version").all()).toEqual([
       { version: 1 },
       { version: 2 },
+      { version: 3 },
+      { version: 4 },
+      { version: 5 },
+      { version: 6 },
+      { version: 7 },
     ]);
+  });
+
+  it("upgrades a populated v2 database without touching existing user ids", () => {
+    const sqlite = new Database(":memory:");
+
+    runMigrations(sqlite, 2);
+    seedCurrentSchemaFixture(sqlite);
+
+    runMigrations(sqlite);
+
+    expect(
+      sqlite.prepare("select id, auth_version as authVersion from users order by id").all(),
+    ).toEqual([
+      { id: "user-approver", authVersion: 1 },
+      { id: "user-reviewer", authVersion: 1 },
+    ]);
+
+    // The deployment-level legacy-session retirement event is recorded once.
+    const events = sqlite
+      .prepare("select type, outcome from security_events")
+      .all() as Array<{ type: string; outcome: string }>;
+    expect(events).toEqual([
+      { type: "auth.legacy_sessions_invalidated", outcome: "success" },
+    ]);
+
+    // Re-running the migration must not duplicate the event.
+    runMigrations(sqlite);
+    expect(sqlite.prepare("select count(*) as count from security_events").get()).toEqual({
+      count: 1,
+    });
+  });
+
+  it("does not record a legacy-session event for a fresh empty database", () => {
+    const sqlite = new Database(":memory:");
+
+    runMigrations(sqlite);
+
+    expect(sqlite.prepare("select count(*) as count from security_events").get()).toEqual({
+      count: 0,
+    });
+  });
+
+  it("rebuilds users with a nullable password hash while preserving rows and foreign keys", () => {
+    const sqlite = new Database(":memory:");
+    sqlite.pragma("foreign_keys = ON");
+
+    runMigrations(sqlite, 3);
+    const now = "2026-08-03T00:00:00.000Z";
+    sqlite.exec(`
+      INSERT INTO users (id, email, display_name, password_hash, role, is_active, created_at, updated_at)
+        VALUES ('user-a', 'a@example.com', 'User A', 'hash-a', 'reviewer', 1, '${now}', '${now}');
+      INSERT INTO auth_sessions (
+        id, user_id, auth_source, auth_version, status, created_at, last_seen_at,
+        idle_expires_at, absolute_expires_at
+      ) VALUES (
+        'sess-1', 'user-a', 'local', 1, 'active', '${now}', '${now}', '${now}', '${now}'
+      );
+    `);
+
+    runMigrations(sqlite);
+
+    expect(
+      sqlite.prepare("select id, password_hash as passwordHash, auth_version as authVersion from users").all(),
+    ).toEqual([{ id: "user-a", passwordHash: "hash-a", authVersion: 1 }]);
+    expect(
+      sqlite.prepare("select id, user_id as userId from auth_sessions").all(),
+    ).toEqual([{ id: "sess-1", userId: "user-a" }]);
+    expect(sqlite.prepare("PRAGMA foreign_key_check").all()).toEqual([]);
+
+    // password_hash is nullable now: OIDC-only shadow users can exist.
+    sqlite.exec(`
+      INSERT INTO users (id, email, display_name, password_hash, role, is_active, created_at, updated_at)
+        VALUES ('user-shadow', 's@example.com', 'Shadow', NULL, 'uploader', 1, '${now}', '${now}');
+    `);
+
+    // Foreign keys still enforce after the rebuild.
+    expect(() =>
+      sqlite.exec(
+        `INSERT INTO auth_sessions (
+           id, user_id, auth_source, auth_version, status, created_at, last_seen_at,
+           idle_expires_at, absolute_expires_at
+         ) VALUES ('sess-bad', 'ghost', 'local', 1, 'active', '${now}', '${now}', '${now}', '${now}')`,
+      ),
+    ).toThrow();
+
+    // The identity pair reservation index enforces forever-reservation.
+    sqlite.exec(`
+      INSERT INTO external_identities (
+        id, user_id, issuer, subject, status, linked_at, change_reason
+      ) VALUES ('link-1', 'user-a', 'https://issuer/', 'sub-1', 'retired', '${now}', 'test');
+    `);
+    expect(() =>
+      sqlite.exec(`
+        INSERT INTO external_identities (
+          id, user_id, issuer, subject, status, linked_at, change_reason
+        ) VALUES ('link-2', 'user-a', 'https://issuer/', 'sub-1', 'active', '${now}', 'test');
+      `),
+    ).toThrow(/UNIQUE/);
   });
 
   it("preserves legacy rows and normalizes approved assignments and reopened pointers", () => {

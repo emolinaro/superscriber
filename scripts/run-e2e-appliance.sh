@@ -9,7 +9,7 @@ TMP_ROOT="${REPO_ROOT}/.tmp"
 IMAGE="${SUPERSCRIBER_E2E_IMAGE:-superscriber:e2e}"
 CONTAINER_NAME="${SUPERSCRIBER_E2E_CONTAINER_NAME:-superscriber-e2e}"
 PORT="${SUPERSCRIBER_E2E_PORT:-3105}"
-APP_URL="${PLAYWRIGHT_BASE_URL:-http://127.0.0.1:${PORT}}"
+APP_URL="${PLAYWRIGHT_BASE_URL:-http://localhost:${PORT}}"
 mkdir -p "${TMP_ROOT}"
 DATA_DIR_CREATED=0
 if [[ -n "${SUPERSCRIBER_E2E_DATA_DIR:-}" ]]; then
@@ -34,12 +34,26 @@ export SUPERSCRIBER_E2E_ENGINE="stub"
 export SUPERSCRIBER_E2E_CONTAINER_NAME="${CONTAINER_NAME}"
 export SUPERSCRIBER_E2E_CONTAINER_DB_PATH="${SUPERSCRIBER_E2E_CONTAINER_DB_PATH:-/app/data/superscriber.db}"
 
+# The OIDC fake provider runs as a sidecar sharing the app container's network
+# namespace, so the app, the browser, and the suite all see one identical
+# issuer: http://127.0.0.1:4105/ (loopback inside the shared netns, published
+# to the host for Playwright).
+OIDC_PORT="${SUPERSCRIBER_E2E_OIDC_PORT:-4105}"
+OIDC_SIDECAR="${CONTAINER_NAME}-oidc"
+OIDC_DIR="${TMP_ROOT}/e2e-oidc-config"
+export SUPERSCRIBER_E2E_OIDC_PORT="${OIDC_PORT}"
+
 cleanup_container() {
-  docker rm -f "${CONTAINER_NAME}" >/dev/null 2>&1 || true
+  docker rm -f "${CONTAINER_NAME}" "${OIDC_SIDECAR}" >/dev/null 2>&1 || true
+}
+
+cleanup_oidc_config() {
+  rm -rf "${OIDC_DIR}" >/dev/null 2>&1 || true
 }
 
 cleanup_run() {
   cleanup_container
+  cleanup_oidc_config
   if [[ "${DATA_DIR_CREATED}" -eq 1 ]]; then
     # The container owns the files it creates in the data dir, so on Linux CI
     # runners the host uid cannot delete them. Remove the dir through a
@@ -56,6 +70,11 @@ preflight_port_free() {
     echo "Refusing to start: ${APP_URL}/api/health already answers." >&2
     echo "Another server owns port ${PORT}; the suite would silently run against it instead of the container." >&2
     echo "Stop that server, or set SUPERSCRIBER_E2E_PORT to a free port." >&2
+    return 1
+  fi
+  if python3 "${REPO_ROOT}/scripts/http_probe.py" "http://127.0.0.1:${OIDC_PORT}/jwks" >/dev/null 2>&1; then
+    echo "Refusing to start: a server already answers on OIDC port ${OIDC_PORT}." >&2
+    echo "Stop it, or set SUPERSCRIBER_E2E_OIDC_PORT to a free port." >&2
     return 1
   fi
 }
@@ -84,8 +103,32 @@ wait_for_app() {
 
 start_container() {
   cleanup_container
+  cleanup_oidc_config
   preflight_port_free
   mkdir -p "${DATA_DIR}"
+
+  # Mounted OIDC material for the container's dual-auth configuration.
+  mkdir -p "${OIDC_DIR}"
+  printf 'fake-oidc-client-secret\n' > "${OIDC_DIR}/client-secret"
+  cat > "${OIDC_DIR}/management-networks.json" <<JSON
+{
+  "managementNetworks": ["10.10.0.0/16"],
+  "trustedProxies": ["10.10.0.2"]
+}
+JSON
+  cat > "${OIDC_DIR}/role-map.json" <<JSON
+{
+  "version": 1,
+  "issuer": "http://127.0.0.1:${OIDC_PORT}/",
+  "claim": "superscriber_role_group_ids",
+  "groups": {
+    "uploader": "11111111-1111-4111-8111-111111111111",
+    "reviewer": "22222222-2222-4222-8222-222222222222",
+    "approver": "33333333-3333-4333-8333-333333333333",
+    "admin": "44444444-4444-4444-8444-444444444444"
+  }
+}
+JSON
   # The container entrypoint chowns the bind-mounted data dir to the in-image
   # user without widening its mode. Keep it traversable so the host Playwright
   # process can stat the sqlite database on stock Linux CI runners.
@@ -95,15 +138,52 @@ start_container() {
     --detach \
     --name "${CONTAINER_NAME}" \
     --publish "${PORT}:3000" \
+    --publish "${OIDC_PORT}:4105" \
     --volume "${DATA_DIR}:/app/data" \
+    --volume "${OIDC_DIR}:/run/oidc:ro" \
     --env NEXTAUTH_URL="${APP_URL}" \
     --env AUTH_URL="${APP_URL}" \
+    --env SUPERSCRIBER_AUTH_MODE=dual \
+    --env SUPERSCRIBER_OIDC_ISSUER="http://127.0.0.1:4105/" \
+    --env SUPERSCRIBER_OIDC_CLIENT_ID="superscriber" \
+    --env SUPERSCRIBER_OIDC_CLIENT_SECRET_FILE="/run/oidc/client-secret" \
+    --env SUPERSCRIBER_OIDC_ROLE_MAP_FILE="/run/oidc/role-map.json" \
+    --env SUPERSCRIBER_MANAGEMENT_NETWORKS_FILE="/run/oidc/management-networks.json" \
     --env SUPERSCRIBER_TRANSCRIBE_MODEL="missing-e2e-model" \
     --env SUPERSCRIBER_TRANSCRIBE_OFFLINE=1 \
     --env SUPERSCRIBER_TRANSCRIBE_ALLOW_STUB_FALLBACK=1 \
     --env SUPERSCRIBER_WORKER_POLL_SECONDS=1 \
     --env SUPERSCRIBER_WORKER_HEARTBEAT_SECONDS=2 \
     "${IMAGE}" >/dev/null
+
+  # Sidecar fake OIDC provider in the app container's network namespace. The
+  # canonical implementation is TypeScript shared with the suite; esbuild
+  # bundles it to a single plain-ESM file the stock node in the app image can
+  # run without extra tooling.
+  "${REPO_ROOT}/node_modules/.bin/esbuild" \
+    "${REPO_ROOT}/scripts/fake-oidc-sidecar-entry.ts" \
+    --format=esm --platform=node --target=node20 --bundle \
+    --outfile="${OIDC_DIR}/fake-oidc-sidecar.mjs" >/dev/null
+
+  docker run \
+    --detach \
+    --rm \
+    --name "${OIDC_SIDECAR}" \
+    --network "container:${CONTAINER_NAME}" \
+    --entrypoint node \
+    --volume "${OIDC_DIR}/fake-oidc-sidecar.mjs:/fake-oidc-sidecar.mjs:ro" \
+    "${IMAGE}" /fake-oidc-sidecar.mjs 4105 >/dev/null
+
+  local oidc_attempts=0
+  until python3 "${REPO_ROOT}/scripts/http_probe.py" "http://127.0.0.1:${OIDC_PORT}/.well-known/openid-configuration"; do
+    oidc_attempts=$((oidc_attempts + 1))
+    if [[ ${oidc_attempts} -ge 30 ]]; then
+      echo "Timed out waiting for the fake OIDC sidecar" >&2
+      docker logs "${OIDC_SIDECAR}" >&2 || true
+      return 1
+    fi
+    sleep 1
+  done
 
   wait_for_app
 }

@@ -45,6 +45,13 @@ function createModel(
         createdAtIso: "2026-08-01T12:00:00.000Z",
       },
     ],
+    breakGlass: {
+      designation: null,
+      viewerIsCustodian: false,
+      enrolledKeyCount: 0,
+      recoveryCodeCount: 0,
+      adminCandidates: [],
+    },
     ...overrides,
   };
 }

@@ -1,3 +1,4 @@
+import { sql } from "drizzle-orm";
 import { index, integer, sqliteTable, text, uniqueIndex } from "drizzle-orm/sqlite-core";
 import {
   APPROVAL_STATES,
@@ -61,9 +62,11 @@ export const users = sqliteTable(
     id: text("id").primaryKey(),
     email: text("email").notNull(),
     displayName: text("display_name").notNull(),
-    passwordHash: text("password_hash").notNull(),
+    // Nullable since schema v4: OIDC-only shadow users carry no local secret.
+    passwordHash: text("password_hash"),
     role: text("role", { enum: USER_ROLES }).$type<UserRole>().notNull(),
     isActive: integer("is_active", { mode: "boolean" }).notNull().default(true),
+    authVersion: integer("auth_version").notNull().default(1),
     createdAt: text("created_at").notNull(),
     updatedAt: text("updated_at").notNull(),
   },
@@ -71,6 +74,203 @@ export const users = sqliteTable(
     emailUnique: uniqueIndex("users_email_unique").on(table.email),
     roleIdx: index("users_role_idx").on(table.role),
     activeIdx: index("users_active_idx").on(table.isActive),
+  }),
+);
+
+export const AUTH_SOURCES = ["local", "authentik", "break_glass"] as const;
+export type AuthSource = (typeof AUTH_SOURCES)[number];
+
+export const AUTH_SESSION_STATUSES = ["active", "revoked", "expired"] as const;
+export type AuthSessionStatus = (typeof AUTH_SESSION_STATUSES)[number];
+
+export const SECURITY_EVENT_OUTCOMES = ["success", "denied", "error"] as const;
+export type SecurityEventOutcome = (typeof SECURITY_EVENT_OUTCOMES)[number];
+
+export const authSessions = sqliteTable(
+  "auth_sessions",
+  {
+    id: text("id").primaryKey(),
+    userId: text("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "restrict" }),
+    authSource: text("auth_source", { enum: AUTH_SOURCES }).$type<AuthSource>().notNull(),
+    authVersion: integer("auth_version").notNull(),
+    providerSid: text("provider_sid"),
+    externalIdentityId: text("external_identity_id").references(
+      () => externalIdentities.id,
+      { onDelete: "restrict" },
+    ),
+    status: text("status", { enum: AUTH_SESSION_STATUSES })
+      .$type<AuthSessionStatus>()
+      .notNull(),
+    createdAt: text("created_at").notNull(),
+    lastSeenAt: text("last_seen_at").notNull(),
+    idleExpiresAt: text("idle_expires_at").notNull(),
+    absoluteExpiresAt: text("absolute_expires_at").notNull(),
+    revokedAt: text("revoked_at"),
+    revokedReason: text("revoked_reason"),
+    emergencyActivationId: text("emergency_activation_id"),
+  },
+  (table) => ({
+    userStatusIdx: index("auth_sessions_user_status_idx").on(table.userId, table.status),
+    providerSidIdx: index("auth_sessions_provider_sid_idx").on(table.providerSid),
+  }),
+);
+
+export const EXTERNAL_IDENTITY_STATUSES = ["active", "retired"] as const;
+export type ExternalIdentityStatus = (typeof EXTERNAL_IDENTITY_STATUSES)[number];
+
+export const externalIdentities = sqliteTable(
+  "external_identities",
+  {
+    id: text("id").primaryKey(),
+    userId: text("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "restrict" }),
+    issuer: text("issuer").notNull(),
+    subject: text("subject").notNull(),
+    status: text("status", { enum: EXTERNAL_IDENTITY_STATUSES })
+      .$type<ExternalIdentityStatus>()
+      .notNull(),
+    linkedAt: text("linked_at").notNull(),
+    linkedByUserId: text("linked_by_user_id").references(() => users.id, {
+      onDelete: "set null",
+    }),
+    retiredAt: text("retired_at"),
+    retiredByUserId: text("retired_by_user_id").references(() => users.id, {
+      onDelete: "set null",
+    }),
+    changeReason: text("change_reason").notNull(),
+    lastLoginAt: text("last_login_at"),
+    lastRoleMapVersion: integer("last_role_map_version"),
+  },
+  (table) => ({
+    pairReservedUnique: uniqueIndex("external_identity_pair_reserved").on(
+      table.issuer,
+      table.subject,
+    ),
+    activeUserIssuerUnique: uniqueIndex("external_identity_active_user_issuer")
+      .on(table.userId, table.issuer)
+      .where(sql`status = 'active'`),
+  }),
+);
+
+export const authControl = sqliteTable("auth_control", {
+  id: integer("id").primaryKey(),
+  breakGlassUserId: text("break_glass_user_id")
+    .notNull()
+    .references(() => users.id, { onDelete: "restrict" }),
+  updatedAt: text("updated_at").notNull(),
+  updatedByUserId: text("updated_by_user_id").references(() => users.id, {
+    onDelete: "set null",
+  }),
+  changeReason: text("change_reason").notNull(),
+});
+
+export const emergencyActivations = sqliteTable(
+  "emergency_activations",
+  {
+    id: text("id").primaryKey(),
+    correlationId: text("correlation_id").notNull(),
+    breakGlassUserId: text("break_glass_user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "restrict" }),
+    reason: text("reason").notNull(),
+    sourceZone: text("source_zone").notNull(),
+    openedAt: text("opened_at").notNull(),
+    endsAt: text("ends_at").notNull(),
+    closedAt: text("closed_at"),
+  },
+  (table) => ({
+    correlationUnique: uniqueIndex("emergency_activations_correlation_unique").on(
+      table.correlationId,
+    ),
+  }),
+);
+
+export const breakGlassRecoveryCodes = sqliteTable("break_glass_recovery_codes", {
+  id: text("id").primaryKey(),
+  breakGlassUserId: text("break_glass_user_id")
+    .notNull()
+    .references(() => users.id, { onDelete: "restrict" }),
+  codeHash: text("code_hash").notNull(),
+  createdAt: text("created_at").notNull(),
+  usedAt: text("used_at"),
+  rotatedAt: text("rotated_at"),
+});
+
+export const breakGlassCeremonies = sqliteTable(
+  "break_glass_ceremonies",
+  {
+    id: text("id").primaryKey(),
+    userId: text("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "restrict" }),
+    reason: text("reason").notNull(),
+    sourceZone: text("source_zone").notNull(),
+    via: text("via", { enum: ["webauthn", "recovery"] }).notNull(),
+    expiresAt: text("expires_at").notNull(),
+    consumedAt: text("consumed_at"),
+  },
+  (table) => ({
+    userIdx: index("break_glass_ceremonies_user_idx").on(table.userId),
+  }),
+);
+
+export const webauthnCredentials = sqliteTable(
+  "webauthn_credentials",
+  {
+    id: text("id").primaryKey(),
+    userId: text("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "restrict" }),
+    publicKey: text("public_key").notNull(),
+    counter: integer("counter").notNull().default(0),
+    transports: text("transports"),
+    label: text("label").notNull().default(""),
+    createdAt: text("created_at").notNull(),
+    lastUsedAt: text("last_used_at"),
+  },
+  (table) => ({
+    userIdx: index("webauthn_credentials_user_idx").on(table.userId),
+  }),
+);
+
+export const oidcLogoutReplays = sqliteTable(
+  "oidc_logout_replays",
+  {
+    id: text("id").primaryKey(),
+    issuer: text("issuer").notNull(),
+    jti: text("jti").notNull(),
+    seenAt: text("seen_at").notNull(),
+  },
+  (table) => ({
+    issuerJtiUnique: uniqueIndex("oidc_logout_replays_issuer_jti_unique").on(
+      table.issuer,
+      table.jti,
+    ),
+  }),
+);
+
+export const securityEvents = sqliteTable(
+  "security_events",
+  {
+    id: text("id").primaryKey(),
+    type: text("type").notNull(),
+    outcome: text("outcome", { enum: SECURITY_EVENT_OUTCOMES })
+      .$type<SecurityEventOutcome>()
+      .notNull(),
+    userId: text("user_id").references(() => users.id, { onDelete: "set null" }),
+    sessionId: text("session_id"),
+    correlationId: text("correlation_id"),
+    sourceZone: text("source_zone"),
+    detail: text("detail").notNull().default(""),
+    metadata: text("metadata").notNull().default('{"version":1,"data":{}}'),
+    createdAt: text("created_at").notNull(),
+  },
+  (table) => ({
+    createdIdx: index("security_events_created_idx").on(table.createdAt),
+    userCreatedIdx: index("security_events_user_created_idx").on(table.userId, table.createdAt),
   }),
 );
 

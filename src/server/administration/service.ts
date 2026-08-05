@@ -1,4 +1,3 @@
-import { desc } from "drizzle-orm";
 import { describePolicyProfile, evaluatePolicy } from "@/domain/policy";
 import type {
   ApprovalRecord,
@@ -21,11 +20,16 @@ import {
   toRecordingAssignment,
   toRevision,
 } from "@/server/db/mappers";
+import { and, desc, eq, isNull, sql } from "drizzle-orm";
 import {
   approvals,
+  authControl,
+  breakGlassRecoveryCodes,
   recordingAssignments,
   recordings,
   revisions,
+  users as usersTable,
+  webauthnCredentials,
   workspaces,
 } from "@/server/db/schema";
 import { formatDateTimeIso, formatDateTimeUtc, formatRoleLabel } from "@/lib/format";
@@ -43,6 +47,18 @@ export type AdministrationAssignmentCompatibility = {
   reason: string | null;
 };
 
+export type BreakGlassPanelModel = {
+  designation: {
+    userId: string;
+    displayName: string;
+    updatedAt: string;
+  } | null;
+  viewerIsCustodian: boolean;
+  enrolledKeyCount: number;
+  recoveryCodeCount: number;
+  adminCandidates: Array<{ id: string; displayName: string }>;
+};
+
 export type AdministrationAccountsViewModel = {
   section: "accounts";
   query: string;
@@ -58,6 +74,7 @@ export type AdministrationAccountsViewModel = {
     createdAtLabel: string;
     createdAtIso: string;
   }>;
+  breakGlass: BreakGlassPanelModel;
 };
 
 export type AdministrationAssignmentsViewModel = {
@@ -519,10 +536,56 @@ export function listAdministration(
       createdAtIso: formatDateTimeIso(user.createdAt),
     }));
 
+  const designationRow = db.select().from(authControl).where(eq(authControl.id, 1)).get();
+  const designee = designationRow
+    ? db
+        .select({ id: usersTable.id, displayName: usersTable.displayName })
+        .from(usersTable)
+        .where(eq(usersTable.id, designationRow.breakGlassUserId))
+        .get()
+    : null;
+  const breakGlass: BreakGlassPanelModel = {
+    viewerIsCustodian: designationRow
+      ? designationRow.breakGlassUserId === principal.userId
+      : false,
+    designation:
+      designationRow && designee
+        ? {
+            userId: designee.id,
+            displayName: designee.displayName,
+            updatedAt: designationRow.updatedAt,
+          }
+        : null,
+    enrolledKeyCount: designationRow
+      ? db
+          .select({ count: sql<number>`count(*)` })
+          .from(webauthnCredentials)
+          .where(eq(webauthnCredentials.userId, designationRow.breakGlassUserId))
+          .get()!.count
+      : 0,
+    recoveryCodeCount: designationRow
+      ? db
+          .select({ count: sql<number>`count(*)` })
+          .from(breakGlassRecoveryCodes)
+          .where(
+            and(
+              eq(breakGlassRecoveryCodes.breakGlassUserId, designationRow.breakGlassUserId),
+              isNull(breakGlassRecoveryCodes.usedAt),
+              isNull(breakGlassRecoveryCodes.rotatedAt),
+            ),
+          )
+          .get()!.count
+      : 0,
+    adminCandidates: listLocalUsers(db)
+      .filter((user) => user.role === "admin" && user.isActive)
+      .map((user) => ({ id: user.id, displayName: user.displayName })),
+  };
+
   return {
     section: "accounts",
     query,
     columns: [...ACCOUNT_COLUMNS],
     users,
+    breakGlass,
   };
 }

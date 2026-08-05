@@ -3,6 +3,7 @@
 import type { AdministrationSection, AdministrationViewModel } from "@/server/administration/service";
 import { usePhoneSafetyMode } from "@/components/ui/phone-safety";
 import { AccountsSection } from "./accounts-section";
+import { BreakGlassPanel } from "./break-glass-panel";
 import { AssignmentsSection } from "./assignments-section";
 import { PolicySection } from "./policy-section";
 
@@ -64,7 +65,10 @@ export function AdministrationShell({
       ) : null}
 
       {model.section === "accounts" ? (
-        <AccountsSection model={model} phoneSafetyMode={phoneSafetyMode} />
+        <>
+          {model.breakGlass ? <BreakGlassPanel model={model.breakGlass} /> : null}
+          <AccountsSection model={model} phoneSafetyMode={phoneSafetyMode} />
+        </>
       ) : null}
       {model.section === "assignments" ? (
         <AssignmentsSection model={model} phoneSafetyMode={phoneSafetyMode} />

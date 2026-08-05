@@ -1,9 +1,18 @@
-import { cookies } from "next/headers";
+import { cookies, headers } from "next/headers";
 import { redirect } from "next/navigation";
 import { AuthSurface } from "@/components/auth/auth-surface";
+import { EmergencyAccess } from "@/components/auth/emergency-access";
 import { BootstrapSetupForm } from "@/components/auth/bootstrap-setup-form";
 import { LoginForm } from "@/components/auth/login-form";
+import { OidcSignInButton } from "@/components/auth/oidc-sign-in-button";
 import { sanitizeReturnTo } from "@/lib/safe-return-to";
+import { resolveAuthSurfaceModel } from "@/lib/auth-surface-model";
+import { loadAuthConfig } from "@/server/auth/auth-config";
+import {
+  evaluateSourceZone,
+  loadManagementNetworkPolicy,
+  type SourceZone,
+} from "@/server/auth/management-network";
 import { hasAnyUsers } from "@/server/auth/service";
 import { getActivePrincipal, resolveAuthorizedReturnTo } from "@/server/session";
 
@@ -17,7 +26,21 @@ function firstValue(value: string | string[] | undefined) {
   return Array.isArray(value) ? value[0] : value;
 }
 
-function buildNotice(reason: string | undefined, notice: string | undefined) {
+function buildNotice(
+  reason: string | undefined,
+  notice: string | undefined,
+  error: string | undefined,
+) {
+  // Every Auth.js/OAuth error code maps to one generic denial; the page must
+  // never reveal whether an email, subject, user, or group exists (6.3).
+  if (error) {
+    return {
+      tone: "danger" as const,
+      message:
+        "Access is not provisioned for this account, or sign-in could not be completed. Contact an administrator.",
+      focusHeading: true,
+    };
+  }
   if (notice === "bootstrap-complete") {
     return {
       tone: "ok" as const,
@@ -58,7 +81,26 @@ export default async function LandingPage({
   }
 
   const anyUsers = await hasAnyUsers();
-  const notice = buildNotice(firstValue(params.reason), firstValue(params.notice));
+  const authMode = loadAuthConfig().mode;
+
+  // The management boundary governs whether the emergency break-glass
+  // disclosure renders at all (plan 8.2). Without a mounted policy (or an
+  // unreadable one) the zone fails closed to public.
+  let zone: SourceZone = "public";
+  const policyPath = process.env.SUPERSCRIBER_MANAGEMENT_NETWORKS_FILE?.trim();
+  if (policyPath && authMode !== "local") {
+    try {
+      zone = evaluateSourceZone(await headers(), loadManagementNetworkPolicy(policyPath)).zone;
+    } catch {
+      zone = "public";
+    }
+  }
+  const surface = resolveAuthSurfaceModel({ mode: authMode, zone });
+  const notice = buildNotice(
+    firstValue(params.reason),
+    firstValue(params.notice),
+    firstValue(params.error),
+  );
   const cookieStore = await cookies();
   const bootstrapEmail = cookieStore.get(BOOTSTRAP_EMAIL_COOKIE)?.value ?? "";
   const readiness = anyUsers
@@ -109,7 +151,13 @@ export default async function LandingPage({
         }
       >
         {anyUsers ? (
-          <LoginForm initialEmail={bootstrapEmail} returnTo={requestedReturnTo} />
+          <>
+            {surface.showOidcSignIn ? <OidcSignInButton returnTo={requestedReturnTo} /> : null}
+            {surface.showLocalCredentialsForm ? (
+              <LoginForm initialEmail={bootstrapEmail} returnTo={requestedReturnTo} />
+            ) : null}
+            {surface.showBreakGlassDisclosure ? <EmergencyAccess /> : null}
+          </>
         ) : readiness ? (
           <BootstrapSetupForm readiness={readiness} />
         ) : null}

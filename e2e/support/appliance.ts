@@ -175,7 +175,7 @@ function resolveRuntimeRoot(): RuntimeRoot {
   return latest;
 }
 
-function withRuntimeDb<T>(run: (db: Database.Database) => T) {
+export function withRuntimeDb<T>(run: (db: Database.Database) => T) {
   const runtime = resolveRuntimeRoot();
   const db = new Database(runtime.dbPath, { readonly: false });
 
@@ -331,6 +331,84 @@ conn.close()
   });
 }
 
+export function queryRuntimeRows<Row>(sql: string, params: string[]): Row[] {
+  if (e2eContainerName()) {
+    return queryContainerDb<Row>(sql, params);
+  }
+  return withRuntimeDb((db) => db.prepare(sql).all(...params) as Row[]);
+}
+
+/**
+ * Executes a write statement against the runtime database in whichever mode
+ * the suite is running (host file or in-container interpreter).
+ */
+export function execRuntimeSql(sql: string, params: string[]) {
+  if (e2eContainerName()) {
+    execContainerPython(
+      `import sqlite3, sys
+db_path, sql = sys.argv[1], sys.argv[2]
+conn = sqlite3.connect(db_path)
+conn.execute(sql, sys.argv[3:])
+conn.commit()
+conn.close()
+`,
+      [CONTAINER_DB_PATH, sql, ...params],
+    );
+    return;
+  }
+
+  withRuntimeDb((db) => {
+    db.prepare(sql).run(...params);
+  });
+}
+
+export function revokeAuthSessionsForEmail(email: string) {
+  const revokedAt = new Date().toISOString();
+  const sql = `update auth_sessions set status = 'revoked', revoked_at = ?, revoked_reason = 'e2e_revocation' where status = 'active' and user_id = (select id from users where email = ?)`;
+
+  if (e2eContainerName()) {
+    execContainerPython(
+      `import sqlite3, sys
+db_path, revoked_at, email = sys.argv[1:4]
+conn = sqlite3.connect(db_path)
+conn.execute(
+    "update auth_sessions set status = 'revoked', revoked_at = ?, revoked_reason = 'e2e_revocation' where status = 'active' and user_id = (select id from users where email = ?)",
+    (revoked_at, email),
+)
+conn.commit()
+conn.close()
+`,
+      [CONTAINER_DB_PATH, revokedAt, email],
+    );
+    return;
+  }
+
+  withRuntimeDb((db) => {
+    db.prepare(sql).run(revokedAt, email);
+  });
+}
+
+export function authSessionRowsForEmail(email: string) {
+  const sql = `select auth_sessions.id, auth_sessions.status, auth_sessions.auth_source as authSource, auth_sessions.revoked_reason as revokedReason from auth_sessions join users on users.id = auth_sessions.user_id where users.email = ? order by auth_sessions.created_at`;
+  if (e2eContainerName()) {
+    return queryContainerDb<{
+      id: string;
+      status: string;
+      authSource: string;
+      revokedReason: string | null;
+    }>(sql, [email]);
+  }
+  return withRuntimeDb(
+    (db) =>
+      db.prepare(sql).all(email) as Array<{
+        id: string;
+        status: string;
+        authSource: string;
+        revokedReason: string | null;
+      }>,
+  );
+}
+
 export function auditRows(recordingId: string) {
   const sql = `select type, detail, effective_role as effectiveRole, admin_action_session_id as adminActionSessionId, created_at as createdAt from audit_events where recording_id = ? order by created_at desc`;
   if (e2eContainerName()) {
@@ -399,14 +477,22 @@ export async function chooseOptionByText(select: Locator, text: string) {
 
 async function accountVisible(page: Page, user: LocalUser) {
   await page.goto("/administration?section=accounts");
-  const search = page.getByLabel("Search accounts");
-  await search.fill("");
-  await expect(search).toHaveValue("");
 
-  return (
-    (await page.getByRole("cell", { name: user.email }).isVisible().catch(() => false)) ||
-    (await page.getByText(user.email).isVisible().catch(() => false))
-  );
+  // Wait-based checks: the accounts table is server-rendered and can stream
+  // in after the load event, so a no-wait isVisible() here races hydration.
+  const cell = page.getByRole("cell", { name: user.email }).first();
+  const visible = await cell
+    .waitFor({ state: "visible", timeout: 7_500 })
+    .then(() => true)
+    .catch(() => false);
+  if (visible) {
+    return true;
+  }
+
+  const search = page.getByLabel("Search accounts");
+  await search.fill(user.email);
+  await expect(cell).toBeVisible({ timeout: 7_500 }).catch(() => undefined);
+  return cell.isVisible().catch(() => false);
 }
 
 async function createLocalAccount(page: Page, user: LocalUser) {
@@ -437,8 +523,13 @@ async function createLocalAccount(page: Page, user: LocalUser) {
       return;
     }
 
-    const error = await failureAlert.textContent();
-    throw new Error(`Failed to create local account ${user.email}: ${error ?? "unknown"}`);
+    const error = await failureAlert
+      .first()
+      .textContent({ timeout: 10_000 })
+      .catch(() => null);
+    throw new Error(
+      `Failed to create local account ${user.email}: ${error ?? "dialog closed without an alert"}`,
+    );
   }
 
   await expect(page.getByRole("cell", { name: user.email })).toBeVisible();
@@ -473,7 +564,7 @@ export async function login(page: Page, user: LocalUser): Promise<void> {
       csrfToken: csrfBody.csrfToken,
       email: user.email,
       password: user.password,
-      callbackUrl: `${process.env.PLAYWRIGHT_BASE_URL || "http://127.0.0.1:3105"}/workspace`,
+      callbackUrl: `${process.env.PLAYWRIGHT_BASE_URL || "http://localhost:3105"}/workspace`,
       json: "true",
     },
   });
@@ -485,6 +576,10 @@ export async function login(page: Page, user: LocalUser): Promise<void> {
 }
 
 export async function logout(page: Page) {
+  // Leave the guarded shell before clearing cookies so the session-state
+  // poller cannot race this synthetic sign-out. (The real Sign out button
+  // marks the tab instead; see signed-out-marker.ts.)
+  await page.goto("/api/auth/session-state");
   await page.context().clearCookies();
   await page.goto("/?reason=logged-out");
   await expect(page).toHaveURL(/\/?\?reason=logged-out/);

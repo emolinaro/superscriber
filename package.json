@@ -13,6 +13,10 @@
     "e2e:install": "playwright install chromium",
     "e2e:container": "bash scripts/run-e2e-appliance.sh test",
     "typecheck": "tsc --noEmit",
+    "identity:import": "tsx scripts/identity-import.ts",
+    "auth:revoke": "tsx scripts/auth-revoke.ts",
+    "break-glass:designate": "tsx scripts/break-glass.ts designate",
+    "break-glass:transfer": "tsx scripts/break-glass.ts transfer",
     "worker:check": "bash scripts/run-worker-python.sh -m py_compile worker/main.py worker/prefetch_model.py worker/runtime_support.py",
     "worker:prefetch": "bash scripts/run-worker-python.sh worker/prefetch_model.py",
     "worker:python": "bash scripts/run-worker-python.sh worker/main.py"
@@ -21,6 +25,7 @@
     "@fontsource-variable/newsreader": "5.3.0",
     "@fontsource-variable/public-sans": "5.3.0",
     "@fontsource/ibm-plex-mono": "5.3.0",
+    "@simplewebauthn/server": "13.3.2",
     "bcryptjs": "^3.0.3",
     "better-sqlite3": "^12.9.0",
     "docx": "^9.6.1",

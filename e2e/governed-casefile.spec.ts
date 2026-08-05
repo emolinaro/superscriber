@@ -181,6 +181,9 @@ test.describe.serial("governed casefile workflows", () => {
   });
 
   test("requires audited admin action mode without implicit assignment", async ({ page }) => {
+    // This test uploads and waits through the real container transcription
+    // pipeline; under loaded hosts the 90s default was observed to expire.
+    test.setTimeout(240_000);
     await bootstrapAndLogin(page, adminUser);
     const recordingId = await uploadFixture(page, { title: "Governed admin action mode" });
     await createAndAssignUsers(page, recordingId);

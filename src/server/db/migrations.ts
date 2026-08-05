@@ -5,13 +5,24 @@ type Migration = {
   version: number;
   name: string;
   up: (sqlite: Database.Database) => void;
+  /**
+   * SQLite table rebuilds (drop + rename) require PRAGMA foreign_keys = OFF,
+   * which is a no-op inside a transaction. The runner toggles it around the
+   * migration transaction and verifies foreign_key_check afterwards.
+   */
+  rebuildsTables?: boolean;
 };
 
-export const LATEST_SCHEMA_VERSION = 2;
+export const LATEST_SCHEMA_VERSION = 7;
 
 const migrations: Migration[] = [
   { version: 1, name: "baseline-appliance", up: createBaselineSchema },
   { version: 2, name: "governed-casefile", up: addGovernedCasefileSchema },
+  { version: 3, name: "auth-session-registry", up: addAuthSessionRegistrySchema },
+  { version: 4, name: "identity-links", up: addIdentityLinksSchema, rebuildsTables: true },
+  { version: 5, name: "oidc-backchannel-replays", up: addOidcBackchannelReplaySchema },
+  { version: 6, name: "break-glass-controls", up: addBreakGlassControlsSchema },
+  { version: 7, name: "break-glass-ceremonies", up: addBreakGlassCeremoniesSchema },
 ];
 
 const LEGACY_AUDIT_METADATA_JSON = serializeAuditMetadata(LEGACY_AUDIT_METADATA);
@@ -573,6 +584,305 @@ function addGovernedCasefileSchema(sqlite: Database.Database) {
   }
 }
 
+function addAuthSessionRegistrySchema(sqlite: Database.Database) {
+  ensureColumn(sqlite, "users", "auth_version", "auth_version INTEGER NOT NULL DEFAULT 1");
+
+  sqlite.exec(`
+    CREATE TABLE IF NOT EXISTS auth_sessions (
+      id TEXT PRIMARY KEY NOT NULL,
+      user_id TEXT NOT NULL REFERENCES users(id) ON DELETE RESTRICT,
+      auth_source TEXT NOT NULL CHECK (auth_source IN ('local', 'authentik', 'break_glass')),
+      auth_version INTEGER NOT NULL,
+      provider_sid TEXT,
+      status TEXT NOT NULL CHECK (status IN ('active', 'revoked', 'expired')),
+      created_at TEXT NOT NULL,
+      last_seen_at TEXT NOT NULL,
+      idle_expires_at TEXT NOT NULL,
+      absolute_expires_at TEXT NOT NULL,
+      revoked_at TEXT,
+      revoked_reason TEXT,
+      emergency_activation_id TEXT
+    );
+
+    CREATE TABLE IF NOT EXISTS security_events (
+      id TEXT PRIMARY KEY NOT NULL,
+      type TEXT NOT NULL,
+      outcome TEXT NOT NULL CHECK (outcome IN ('success', 'denied', 'error')),
+      user_id TEXT REFERENCES users(id) ON DELETE SET NULL,
+      session_id TEXT,
+      correlation_id TEXT,
+      source_zone TEXT,
+      detail TEXT NOT NULL DEFAULT '',
+      metadata TEXT NOT NULL DEFAULT '{"version":1,"data":{}}',
+      created_at TEXT NOT NULL
+    );
+  `);
+
+  if (!hasIndex(sqlite, "auth_sessions_user_status_idx")) {
+    sqlite.exec(`
+      CREATE INDEX auth_sessions_user_status_idx
+      ON auth_sessions(user_id, status);
+    `);
+  }
+
+  if (!hasIndex(sqlite, "auth_sessions_provider_sid_idx")) {
+    sqlite.exec(`
+      CREATE INDEX auth_sessions_provider_sid_idx
+      ON auth_sessions(provider_sid);
+    `);
+  }
+
+  if (!hasIndex(sqlite, "security_events_created_idx")) {
+    sqlite.exec(`
+      CREATE INDEX security_events_created_idx
+      ON security_events(created_at);
+    `);
+  }
+
+  if (!hasIndex(sqlite, "security_events_user_created_idx")) {
+    sqlite.exec(`
+      CREATE INDEX security_events_user_created_idx
+      ON security_events(user_id, created_at);
+    `);
+  }
+
+  // When upgrading an appliance that already has users, every pre-existing
+  // Auth.js cookie has no auth_sessions row and will be rejected. Record the
+  // deployment-level event once instead of enumerating cookie holders.
+  const userCount = (
+    sqlite.prepare("SELECT COUNT(*) AS count FROM users").get() as { count: number }
+  ).count;
+  if (userCount > 0) {
+    sqlite
+      .prepare(
+        `
+          INSERT INTO security_events (
+            id, type, outcome, user_id, session_id, correlation_id, source_zone,
+            detail, metadata, created_at
+          ) VALUES (?, ?, ?, NULL, NULL, NULL, NULL, ?, '{"version":1,"data":{}}', ?)
+        `,
+      )
+      .run(
+        `security-migration-${crypto.randomUUID()}`,
+        "auth.legacy_sessions_invalidated",
+        "success",
+        "Session registry introduced; all pre-existing cookie sessions are retired and users must sign in again.",
+        nowIso(),
+      );
+  }
+}
+
+function addIdentityLinksSchema(sqlite: Database.Database) {
+  // Plan section 4.1: users.password_hash becomes nullable for OIDC-only
+  // shadow users via a tested table rebuild. Existing hashes are preserved.
+  sqlite.exec(`
+    CREATE TABLE users_new (
+      id TEXT PRIMARY KEY NOT NULL,
+      email TEXT NOT NULL,
+      display_name TEXT NOT NULL,
+      password_hash TEXT,
+      role TEXT NOT NULL,
+      is_active INTEGER NOT NULL DEFAULT 1,
+      auth_version INTEGER NOT NULL DEFAULT 1,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    );
+
+    INSERT INTO users_new (
+      id, email, display_name, password_hash, role, is_active, auth_version,
+      created_at, updated_at
+    )
+      SELECT id, email, display_name, password_hash, role, is_active, auth_version,
+        created_at, updated_at
+      FROM users;
+
+    DROP TABLE users;
+
+    ALTER TABLE users_new RENAME TO users;
+
+    CREATE UNIQUE INDEX IF NOT EXISTS users_email_unique ON users(email);
+    CREATE INDEX IF NOT EXISTS users_role_idx ON users(role);
+    CREATE INDEX IF NOT EXISTS users_active_idx ON users(is_active);
+
+    CREATE TABLE IF NOT EXISTS external_identities (
+      id TEXT PRIMARY KEY NOT NULL,
+      user_id TEXT NOT NULL REFERENCES users(id) ON DELETE RESTRICT,
+      issuer TEXT NOT NULL,
+      subject TEXT NOT NULL,
+      status TEXT NOT NULL CHECK (status IN ('active', 'retired')),
+      linked_at TEXT NOT NULL,
+      linked_by_user_id TEXT REFERENCES users(id) ON DELETE SET NULL,
+      retired_at TEXT,
+      retired_by_user_id TEXT REFERENCES users(id) ON DELETE SET NULL,
+      change_reason TEXT NOT NULL,
+      last_login_at TEXT,
+      last_role_map_version INTEGER
+    );
+  `);
+
+  if (!hasIndex(sqlite, "external_identity_pair_reserved")) {
+    sqlite.exec(`
+      CREATE UNIQUE INDEX external_identity_pair_reserved
+      ON external_identities(issuer, subject);
+    `);
+  }
+
+  if (!hasIndex(sqlite, "external_identity_active_user_issuer")) {
+    sqlite.exec(`
+      CREATE UNIQUE INDEX external_identity_active_user_issuer
+      ON external_identities(user_id, issuer)
+      WHERE status = 'active';
+    `);
+  }
+
+  ensureColumn(
+    sqlite,
+    "auth_sessions",
+    "external_identity_id",
+    "external_identity_id TEXT REFERENCES external_identities(id) ON DELETE RESTRICT",
+  );
+}
+
+function addOidcBackchannelReplaySchema(sqlite: Database.Database) {
+  // Back-channel logout replay protection (plan 6.4.4): (issuer, jti) pairs
+  // are single-use, so retried deliveries are idempotent no-ops.
+  sqlite.exec(`
+    CREATE TABLE IF NOT EXISTS oidc_logout_replays (
+      id TEXT PRIMARY KEY NOT NULL,
+      issuer TEXT NOT NULL,
+      jti TEXT NOT NULL,
+      seen_at TEXT NOT NULL
+    );
+  `);
+
+  if (!hasIndex(sqlite, "oidc_logout_replays_issuer_jti_unique")) {
+    sqlite.exec(`
+      CREATE UNIQUE INDEX oidc_logout_replays_issuer_jti_unique
+      ON oidc_logout_replays(issuer, jti);
+    `);
+  }
+}
+
+function addBreakGlassControlsSchema(sqlite: Database.Database) {
+  // Plan section 8.1: exactly-one break-glass designation with trigger-level
+  // invariants so no service path can bypass them.
+  sqlite.exec(`
+    CREATE TABLE IF NOT EXISTS auth_control (
+      id INTEGER PRIMARY KEY CHECK (id = 1),
+      break_glass_user_id TEXT NOT NULL UNIQUE REFERENCES users(id) ON DELETE RESTRICT,
+      updated_at TEXT NOT NULL,
+      updated_by_user_id TEXT REFERENCES users(id) ON DELETE SET NULL,
+      change_reason TEXT NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS emergency_activations (
+      id TEXT PRIMARY KEY NOT NULL,
+      correlation_id TEXT NOT NULL UNIQUE,
+      break_glass_user_id TEXT NOT NULL REFERENCES users(id) ON DELETE RESTRICT,
+      reason TEXT NOT NULL,
+      source_zone TEXT NOT NULL,
+      opened_at TEXT NOT NULL,
+      ends_at TEXT NOT NULL,
+      closed_at TEXT
+    );
+
+    CREATE TABLE IF NOT EXISTS break_glass_recovery_codes (
+      id TEXT PRIMARY KEY NOT NULL,
+      break_glass_user_id TEXT NOT NULL REFERENCES users(id) ON DELETE RESTRICT,
+      code_hash TEXT NOT NULL UNIQUE,
+      created_at TEXT NOT NULL,
+      used_at TEXT,
+      rotated_at TEXT
+    );
+
+    CREATE TABLE IF NOT EXISTS webauthn_credentials (
+      id TEXT PRIMARY KEY NOT NULL,
+      user_id TEXT NOT NULL REFERENCES users(id) ON DELETE RESTRICT,
+      public_key TEXT NOT NULL,
+      counter INTEGER NOT NULL DEFAULT 0,
+      transports TEXT,
+      label TEXT NOT NULL DEFAULT '',
+      created_at TEXT NOT NULL,
+      last_used_at TEXT
+    );
+
+    CREATE TRIGGER IF NOT EXISTS auth_control_singleton
+    BEFORE INSERT ON auth_control
+    WHEN (SELECT COUNT(*) FROM auth_control) >= 1
+    BEGIN
+      SELECT RAISE(ABORT, 'auth_control is a singleton: transfer the existing designation');
+    END;
+
+    CREATE TRIGGER IF NOT EXISTS auth_control_must_be_active_admin_insert
+    BEFORE INSERT ON auth_control
+    WHEN NOT EXISTS (
+      SELECT 1 FROM users
+      WHERE id = NEW.break_glass_user_id AND role = 'admin' AND is_active = 1
+    )
+    BEGIN
+      SELECT RAISE(ABORT, 'break-glass designation requires an active admin user');
+    END;
+
+    CREATE TRIGGER IF NOT EXISTS auth_control_must_be_active_admin_update
+    BEFORE UPDATE ON auth_control
+    WHEN NOT EXISTS (
+      SELECT 1 FROM users
+      WHERE id = NEW.break_glass_user_id AND role = 'admin' AND is_active = 1
+    )
+    BEGIN
+      SELECT RAISE(ABORT, 'break-glass designation requires an active admin user');
+    END;
+
+    CREATE TRIGGER IF NOT EXISTS users_break_glass_update_guard
+    BEFORE UPDATE ON users
+    WHEN EXISTS (
+      SELECT 1 FROM auth_control WHERE break_glass_user_id = OLD.id
+    ) AND (NEW.role != 'admin' OR NEW.is_active != 1)
+    BEGIN
+      SELECT RAISE(ABORT, 'the designated break-glass user cannot be demoted or deactivated');
+    END;
+
+    CREATE TRIGGER IF NOT EXISTS users_break_glass_delete_guard
+    BEFORE DELETE ON users
+    WHEN EXISTS (
+      SELECT 1 FROM auth_control WHERE break_glass_user_id = OLD.id
+    )
+    BEGIN
+      SELECT RAISE(ABORT, 'the designated break-glass user cannot be deleted');
+    END;
+  `);
+
+  if (!hasIndex(sqlite, "webauthn_credentials_user_idx")) {
+    sqlite.exec(`
+      CREATE INDEX webauthn_credentials_user_idx
+      ON webauthn_credentials(user_id);
+    `);
+  }
+}
+
+function addBreakGlassCeremoniesSchema(sqlite: Database.Database) {
+  // One-time emergency ceremony tokens, database-backed so the server-action
+  // runtime and the Auth.js callback route share one store.
+  sqlite.exec(`
+    CREATE TABLE IF NOT EXISTS break_glass_ceremonies (
+      id TEXT PRIMARY KEY NOT NULL,
+      user_id TEXT NOT NULL REFERENCES users(id) ON DELETE RESTRICT,
+      reason TEXT NOT NULL,
+      source_zone TEXT NOT NULL,
+      via TEXT NOT NULL CHECK (via IN ('webauthn', 'recovery')),
+      expires_at TEXT NOT NULL,
+      consumed_at TEXT
+    );
+  `);
+
+  if (!hasIndex(sqlite, "break_glass_ceremonies_user_idx")) {
+    sqlite.exec(`
+      CREATE INDEX break_glass_ceremonies_user_idx
+      ON break_glass_ceremonies(user_id);
+    `);
+  }
+}
+
 export function runMigrations(
   sqlite: Database.Database,
   targetVersion = LATEST_SCHEMA_VERSION,
@@ -591,14 +901,31 @@ export function runMigrations(
     }
 
     try {
-      sqlite.transaction(() => {
-        migration.up(sqlite);
-        sqlite
-          .prepare(
-            "INSERT INTO schema_migrations(version, name, applied_at) VALUES (?, ?, ?)",
-          )
-          .run(migration.version, migration.name, nowIso());
-      })();
+      if (migration.rebuildsTables) {
+        sqlite.pragma("foreign_keys = OFF");
+      }
+      try {
+        sqlite.transaction(() => {
+          migration.up(sqlite);
+          if (migration.rebuildsTables) {
+            const violations = sqlite.pragma("foreign_key_check") as unknown[];
+            if (violations.length > 0) {
+              throw new Error(
+                `foreign_key_check reported ${violations.length} violation(s) during migration ${migration.version}.`,
+              );
+            }
+          }
+          sqlite
+            .prepare(
+              "INSERT INTO schema_migrations(version, name, applied_at) VALUES (?, ?, ?)",
+            )
+            .run(migration.version, migration.name, nowIso());
+        })();
+      } finally {
+        if (migration.rebuildsTables) {
+          sqlite.pragma("foreign_keys = ON");
+        }
+      }
     } catch (error) {
       console.error(error);
       throw new Error(`Database migration ${migration.version} failed.`);

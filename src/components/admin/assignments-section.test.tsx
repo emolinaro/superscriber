@@ -270,7 +270,10 @@ describe("AssignmentsSection", () => {
     expect(screen.getAllByText("-")[0]).toBeVisible();
   });
 
-  it("confirms removal with immediate access revocation and retained history", async () => {
+  it(
+    "confirms removal with immediate access revocation and retained history",
+    { timeout: 20_000 },
+    async () => {
     const user = userEvent.setup();
     const removeRecordingAssignmentAction = vi.fn().mockResolvedValue({
       ok: true,
@@ -308,9 +311,14 @@ describe("AssignmentsSection", () => {
     });
     expect(screen.queryByRole("dialog", { name: "Remove assignment" })).not.toBeInTheDocument();
     expect(screen.getByRole("status")).toHaveTextContent("Recording assignment removed.");
-    await waitFor(() => {
-      expect(screen.getByRole("heading", { name: "Assignments" })).toHaveFocus();
-    });
+    // Focus moves on the next animation frame after dialog teardown; under a
+    // loaded parallel suite that frame can take well over a second.
+    await waitFor(
+      () => {
+        expect(screen.getByRole("heading", { name: "Assignments" })).toHaveFocus();
+      },
+      { timeout: 5_000 },
+    );
   });
 
   it("keeps active and history inspection visible on phone without drawers or remove controls", () => {

@@ -15,6 +15,7 @@ It runs as a single-institution deployment with local accounts, SQLite persisten
 ## What It Includes
 
 - Bootstrap admin setup plus local accounts for `uploader`, `reviewer`, `approver`, and `admin`
+- Optional institutional sign-in via Authentik OIDC (local, dual, or authentik-primary deployment modes) with live-revocable server-side sessions and a management-boundary break-glass account - operator runbooks in [`docs/operators/`](./docs/operators/)
 - Role-aware work inbox ledgers (tabbed per role) and a transcript-first casefile for review
 - Governed decision commands - save draft, submit, withdraw submission, request changes, approve, reopen - with the submitter barred from deciding their own revision
 - Admin read-only oversight by default, plus an explicit, record-bound, audited reviewer/approver action mode for casefile work
@@ -32,7 +33,7 @@ It runs as a single-institution deployment with local accounts, SQLite persisten
 - React 19
 - TypeScript
 - SQLite via `better-sqlite3` and Drizzle
-- Auth.js credentials auth
+- Auth.js credentials auth, with optional Authentik OIDC for institutional sign-in
 - Python worker runtime
 - Vitest
 
@@ -153,6 +154,10 @@ The default build prefetches the configured model into the image. Runtime downlo
 - `npm run e2e` — run the Playwright suite against an already-running app
 - `npm run e2e:install` — install the local Chromium browser for Playwright
 - `npm run e2e:container` — build and test the single Docker image end to end
+- `npm run identity:import` - dry-run or apply Authentik identity-link mappings
+- `npm run auth:revoke` - revoke all sessions for a user (incident response)
+- `npm run break-glass:designate` - designate the single break-glass admin
+- `npm run break-glass:transfer` - atomically transfer the break-glass designation
 - `npm run worker:check` — syntax-check the Python worker
 - `npm run worker:prefetch` — download the configured speech model into the local worker cache
 - `npm run worker:python` — run the Python worker against a live app
@@ -165,13 +170,14 @@ The default build prefetches the configured model into the image. Runtime downlo
 - [`src/server/`](./src/server/) — auth, access, persistence, ingest, orchestration, casefile, and work-inbox logic
 - [`data/`](./data/) — local SQLite data, secrets, temp uploads, and media files
 - [`worker/`](./worker/) — internal Python transcription worker
-- [`scripts/`](./scripts/) — container/runtime helpers
+- [`scripts/`](./scripts/) — container/runtime helpers and operator auth commands (identity import, session revoke, break-glass)
 
 ## Project Docs
 
 - [`CHANGELOG.md`](./CHANGELOG.md) — release history and shipped behavior notes
 - [`DESIGN.md`](./DESIGN.md) — design record and behavioral contract for the governed casefile workspace
 - [`TODOS.md`](./TODOS.md) — deferred follow-on work after the current appliance release
+- [`docs/operators/`](./docs/operators/) - operator runbooks for Authentik OIDC deployment, identity linking, break-glass, the no-mail profile, and auth outage and rollback
 
 ## Orchestration Modes
 
@@ -212,7 +218,7 @@ npm test
 ```
 
 Current tests cover the governed casefile command surface (save, submit, withdraw, request changes, approve, reopen, export), capabilities and access grants, assignment semantics and admin action mode, work-inbox read models, auth and bootstrap, resumable ingest, the internal queue lifecycle, and orchestration behavior.
-The browser suites cover governed-casefile flows end to end, responsive and phone-safety behavior, mobile review regressions, and axe accessibility checks across auth, work inbox, casefile, export, and administration surfaces.
+The browser suites cover governed-casefile flows end to end, responsive and phone-safety behavior, mobile review regressions, and axe accessibility checks across auth, work inbox, casefile, export, and administration surfaces. Dual-auth OIDC sign-in, session revocation, and the break-glass ceremony run against a canonical fake OIDC provider that also runs as a network-namespace sidecar in the container suite.
 
 For the browser path against the real single-image appliance:
 
@@ -223,7 +229,7 @@ npm run e2e:container
 
 The container-backed E2E runner deliberately builds a lightweight test image with model prefetch disabled, then starts the worker in explicit stub-fallback mode. That keeps the browser suite deterministic while still exercising the real Docker entrypoint, Next.js server, SQLite volume, upload pipeline, internal queue, and Python worker contract in one image.
 
-Before starting, the runner probes `/api/health` on the app port (`SUPERSCRIBER_E2E_PORT`, default 3105) and refuses to proceed if anything already answers: a foreign server on that port - for example a leftover `npm run dev` - silently vacates the whole suite, because the health probe, browser, and DB helpers would all talk to it instead of the container. Stop the other server or set `SUPERSCRIBER_E2E_PORT` to a free port. Each run gets a fresh data dir under `.tmp/e2e-data.XXXXXX` that the runner removes on exit (a caller-supplied `SUPERSCRIBER_E2E_DATA_DIR` is preserved). Suite helpers that touch the database (`assignmentRows`, `auditRows`, `expireUploadSession`, `expireActionMode`) execute inside the running container via `docker exec`, because host-side access to the bind-mounted database is blocked by file ownership on Linux runners and cannot see the app's WAL commits through macOS VM file sharing.
+Before starting, the runner probes `/api/health` on the app port (`SUPERSCRIBER_E2E_PORT`, default 3105) and refuses to proceed if anything already answers: a foreign server on that port - for example a leftover `npm run dev` - silently vacates the whole suite, because the health probe, browser, and DB helpers would all talk to it instead of the container. Stop the other server or set `SUPERSCRIBER_E2E_PORT` to a free port. The runner also refuses to start when the fake-OIDC sidecar port (`SUPERSCRIBER_E2E_OIDC_PORT`, default 4105) is already occupied; the container suite runs in `dual` auth mode against that sidecar. Each run gets a fresh data dir under `.tmp/e2e-data.XXXXXX` that the runner removes on exit (a caller-supplied `SUPERSCRIBER_E2E_DATA_DIR` is preserved). Suite helpers that touch the database (`assignmentRows`, `auditRows`, `expireUploadSession`, `expireActionMode`) execute inside the running container via `docker exec`, because host-side access to the bind-mounted database is blocked by file ownership on Linux runners and cannot see the app's WAL commits through macOS VM file sharing.
 
 ## License
 

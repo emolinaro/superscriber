@@ -49,10 +49,10 @@ test.describe.serial("mock appliance auth, ingest, and administration", () => {
       await expect(page.getByRole("heading", { name: "Sign in" })).toBeVisible();
     }
 
-    await expect(page.getByRole("button", { name: "Sign in" })).toBeEnabled();
+    await expect(page.getByRole("button", { name: "Sign in", exact: true })).toBeEnabled();
     await page.getByLabel("Email").fill(adminUser.email);
     await page.getByLabel("Password").fill("wrong-password");
-    await page.getByRole("button", { name: "Sign in" }).click();
+    await page.getByRole("button", { name: "Sign in", exact: true }).click();
     await expect(page.getByRole("heading", { name: "Sign in" })).toBeVisible();
     await expect(page.getByLabel("Password")).toHaveValue("");
     await expect(page.getByRole("navigation", { name: "Primary" })).toHaveCount(0);
