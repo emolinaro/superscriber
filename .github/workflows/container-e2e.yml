@@ -37,5 +37,21 @@ jobs:
       - name: Production build
         run: npm run build
 
+      - name: Log pinned base image digest
+        run: |
+          base_image="$(sed -n 's/^ARG NODE_BASE_IMAGE=//p' Dockerfile | head -n1)"
+          echo "Dockerfile base image ref: ${base_image}"
+          docker pull "${base_image}"
+          docker inspect "${base_image}" --format 'Resolved digest: {{index .RepoDigests 0}}'
+
       - name: Single-image browser E2E
         run: npm run e2e:container
+
+      - name: Upload Playwright failure artifacts
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: playwright-test-results
+          path: test-results/
+          retention-days: 14
+          if-no-files-found: ignore
