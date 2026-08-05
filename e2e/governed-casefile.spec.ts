@@ -30,6 +30,21 @@ async function confirmDialog(page: Parameters<typeof openCasefile>[0], name: str
   await dialog.getByRole("button", { name }).last().click();
 }
 
+async function openCompletedSnapshot(page: Parameters<typeof openCasefile>[0], recordingId: string) {
+  // Anchor the client-side navigation from the completed tab into the
+  // snapshot before asserting content: under runner contention the commit can
+  // stall well past the default expect budget (see README troubleshooting),
+  // so mirror openCasefile's URL + h1 anchor with an explicit budget and give
+  // callers a matching budget for the text assertions.
+  await page.goto("/workspace?tab=completed");
+  await page
+    .getByRole("table", { name: "Work recordings" })
+    .getByRole("link", { name: "Governed conflict casefile" })
+    .click();
+  await expect(page).toHaveURL(new RegExp(`/recordings/${recordingId}`), { timeout: 15_000 });
+  await expect(page.getByRole("heading", { level: 1 })).toBeVisible({ timeout: 30_000 });
+}
+
 async function submitForApproval(page: Parameters<typeof openCasefile>[0]) {
   await page.getByRole("button", { name: "Submit for approval" }).click();
   await confirmDialog(page, "Submit for approval");
@@ -287,12 +302,8 @@ test.describe.serial("governed casefile workflows", () => {
     await approveRevision(page);
 
     await login(page, reviewerUser);
-    await page.goto("/workspace?tab=completed");
-    await page
-      .getByRole("table", { name: "Work recordings" })
-      .getByRole("link", { name: "Governed conflict casefile" })
-      .click();
-    await expect(page.getByText("Approved snapshot source text.")).toBeVisible();
+    await openCompletedSnapshot(page, recordingId);
+    await expect(page.getByText("Approved snapshot source text.")).toBeVisible({ timeout: 30_000 });
 
     await login(page, approverUser);
     await openCasefile(page, recordingId);
@@ -300,13 +311,9 @@ test.describe.serial("governed casefile workflows", () => {
     await completeReasonDialog(page, "Governed reopening creates a new active cycle.");
 
     await login(page, reviewerUser);
-    await page.goto("/workspace?tab=completed");
-    await page
-      .getByRole("table", { name: "Work recordings" })
-      .getByRole("link", { name: "Governed conflict casefile" })
-      .click();
-    await expect(page.getByText("Historical snapshot")).toBeVisible();
-    await expect(page.getByText("Approved snapshot source text.")).toBeVisible();
+    await openCompletedSnapshot(page, recordingId);
+    await expect(page.getByText("Historical snapshot")).toBeVisible({ timeout: 30_000 });
+    await expect(page.getByText("Approved snapshot source text.")).toBeVisible({ timeout: 30_000 });
   });
 });
 
