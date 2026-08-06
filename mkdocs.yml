@@ -1,0 +1,90 @@
+# GitHub Pages documentation site for Superscriber.
+#
+# Sources are staged into .docs-site/ by scripts/stage-docs.sh so the real
+# documents can live in their normal locations (README.md, DESIGN.md,
+# docs/operators/, ...) without being moved or edited. Build with:
+#   npm run docs:build     # strict build -> site/
+#   npm run docs:serve     # local preview with live reload
+#
+# Generator choice: MkDocs + Material. The content is plain Markdown in
+# GitHub-flavored locations, the operators already read it on GitHub, and
+# MkDocs mirrors those paths verbatim (no front matter, no rewrites), while
+# Material gives search, dark mode, and mobile rendering for the runbooks.
+
+site_name: Superscriber
+site_description: Documentation for the Superscriber governed transcription appliance
+site_url: https://emolinaro.github.io/superscriber/
+repo_url: https://github.com/emolinaro/superscriber
+
+docs_dir: .docs-site
+
+theme:
+  name: material
+  favicon: app/icon.svg
+  logo: app/icon.svg
+  font:
+    text: Inter
+  palette:
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      primary: blue grey
+      accent: blue
+      toggle:
+        icon: material/brightness-7
+        name: Switch to dark mode
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      primary: blue grey
+      accent: blue
+      toggle:
+        icon: material/brightness-4
+        name: Switch to light mode
+  features:
+    - navigation.instant
+    - navigation.top
+    - navigation.sections
+    - content.action.edit
+    - content.action.view
+    - search.suggest
+    - search.highlight
+
+nav:
+  - Home: README.md
+  # Future user guide: the demo lane ships docs/USER-GUIDE.md. The staging
+  # script picks it up automatically; uncomment this entry when it lands.
+  # - User guide: docs/USER-GUIDE.md
+  - Design record: DESIGN.md
+  - Operator runbooks:
+      - 'Deployment: Authentik OIDC': docs/operators/authentik-oidc.md
+      - Identity linking: docs/operators/identity-linking.md
+      - Key and certificate rotation: docs/operators/key-and-certificate-rotation.md
+      - No-mail profile: docs/operators/no-mail-profile.md
+      - Auth outage: docs/operators/auth-outage.md
+      - Auth rollback: docs/operators/auth-rollback.md
+      - Break-glass emergency access: docs/operators/break-glass.md
+      - OIDC acceptance 2026-08: docs/operators/oidc-acceptance-2026-08.md
+  - Changes:
+      - Changelog: CHANGELOG.md
+      - Deferred work: TODOS.md
+
+plugins:
+  - search
+
+markdown_extensions:
+  - admonition
+  - attr_list
+  - md_in_html
+  - tables
+  - footnotes
+  - toc:
+      permalink: true
+  - pymdownx.highlight
+  - pymdownx.superfences
+  - pymdownx.details
+
+validation:
+  # README's repository-layout section links into source directories
+  # (./app/, ./src/, ...) that exist on GitHub, not on the docs site.
+  # Those links intentionally still point at the repo tree.
+  unrecognized_links: info
+  anchors: ignore

@@ -25,3 +25,8 @@ data/*.secret
 
 .gstack/
 .superpowers/
+
+# GitHub Pages docs site (mkdocs)
+.docs-site/
+site/
+.venv-docs/
