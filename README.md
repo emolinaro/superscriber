@@ -231,6 +231,14 @@ The container-backed E2E runner deliberately builds a lightweight test image wit
 
 Before starting, the runner probes `/api/health` on the app port (`SUPERSCRIBER_E2E_PORT`, default 3105) and refuses to proceed if anything already answers: a foreign server on that port - for example a leftover `npm run dev` - silently vacates the whole suite, because the health probe, browser, and DB helpers would all talk to it instead of the container. Stop the other server or set `SUPERSCRIBER_E2E_PORT` to a free port. The runner also refuses to start when the fake-OIDC sidecar port (`SUPERSCRIBER_E2E_OIDC_PORT`, default 4105) is already occupied; the container suite runs in `dual` auth mode against that sidecar. Each run gets a fresh data dir under `.tmp/e2e-data.XXXXXX` that the runner removes on exit (a caller-supplied `SUPERSCRIBER_E2E_DATA_DIR` is preserved). Suite helpers that touch the database (`assignmentRows`, `auditRows`, `expireUploadSession`, `expireActionMode`) execute inside the running container via `docker exec`, because host-side access to the bind-mounted database is blocked by file ownership on Linux runners and cannot see the app's WAL commits through macOS VM file sharing.
 
+Known slow-runner flake classes seen on loaded macOS/CI hosts in the container lane:
+
+- runtime-root discovery ("No fresh Superscriber runtime root")
+- readonly-db host writes to the bind-mounted SQLite database
+- navigation-commit stalls (server answers 200 but the page segment never materializes after a client-side navigation)
+
+These are contention flakes, not content bugs; re-run with artifacts attached (CI uploads Playwright `test-results/` on every failing run).
+
 ## License
 
 This project is licensed under the MIT License. See [LICENSE](./LICENSE).

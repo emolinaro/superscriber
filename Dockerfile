@@ -1,4 +1,8 @@
-FROM node:24-bookworm-slim AS base
+# Node base image pinned by digest (node:24-bookworm-slim at Node 24.18.1,
+# multi-arch index digest). The CI workflow logs the resolved digest on every
+# run; move both the tag and the digest deliberately when upgrading Node.
+ARG NODE_BASE_IMAGE=node:24.18.1-bookworm-slim@sha256:235600a8101ab264e117b1768e925532262668dc9b581ef1dd7d96ced463b8e7
+FROM ${NODE_BASE_IMAGE} AS base
 ENV NEXT_TELEMETRY_DISABLED=1
 WORKDIR /app
 
@@ -11,7 +15,7 @@ COPY --from=deps /app/node_modules ./node_modules
 COPY . .
 RUN npm run build
 
-FROM node:24-bookworm-slim AS runtime
+FROM ${NODE_BASE_IMAGE} AS runtime
 ENV NODE_ENV=production
 ENV NEXT_TELEMETRY_DISABLED=1
 ENV PORT=3000
