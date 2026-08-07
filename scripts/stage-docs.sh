@@ -1,37 +1,49 @@
 #!/usr/bin/env bash
-# Stage the MkDocs docs directory for the GitHub Pages site.
+# Stage the Docusaurus docs content for the GitHub Pages site.
 #
 # The project docs intentionally stay where they are (README.md, DESIGN.md,
-# docs/operators/, ...). MkDocs needs one docs_dir, so this script mirrors the
-# tracked documentation into .docs-site/ with the exact same relative paths,
-# which keeps every relative link (./CHANGELOG.md, ./docs/operators/, the
-# logo at ./app/icon.svg) resolving identically on the built site.
-#
-# The staging directory is generated - never edit files inside it.
+# docs/operators/, ...). Docusaurus needs one docs root, so this script
+# derives website/content/ from the tracked sources: files are copied
+# verbatim except for link retargeting in the DERIVED copies only, so repo
+# browsing (directory links to ./app/, ./src/, ...) keeps working while the
+# published site points those links at GitHub. Never edit website/content/
+# directly - it is regenerated.
 set -euo pipefail
 
 repo_root="$(git rev-parse --show-toplevel)"
 cd "$repo_root"
 
-staging="$repo_root/.docs-site"
-rm -rf "$staging"
-mkdir -p "$staging/docs" "$staging/app"
+github_tree="https://github.com/emolinaro/superscriber/tree/main"
+github_blob="https://github.com/emolinaro/superscriber/blob/main"
 
-# Top-level documents.
-cp README.md DESIGN.md CHANGELOG.md TODOS.md LICENSE "$staging/"
+content="$repo_root/website/content"
+rm -rf "$content"
+mkdir -p "$content/operators"
 
-# Operator runbooks (docs/superpowers/ is gitignored working state and is
-# deliberately not published).
-cp -R docs/operators "$staging/docs/operators"
-
-# Logo referenced by README.md. <img src="./app/icon.svg"> (HTML, so MkDocs
-# cannot rewrite it; mirroring the path keeps it working).
-cp app/icon.svg "$staging/app/icon.svg"
+# Landing page: the README becomes the site index.
+cp README.md "$content/index.md"
+cp DESIGN.md CHANGELOG.md TODOS.md "$content/"
+cp docs/operators/*.md "$content/operators/"
 
 # Future user guide: once the demo lane lands docs/USER-GUIDE.md it is staged
-# automatically; enable its nav entry in mkdocs.yml at the same time.
+# automatically; add it to website/sidebars.ts at the same time.
 if [ -f docs/USER-GUIDE.md ]; then
-  cp docs/USER-GUIDE.md "$staging/docs/USER-GUIDE.md"
+  cp docs/USER-GUIDE.md "$content/USER-GUIDE.md"
 fi
 
-echo "Staged docs site sources into $staging"
+cd "$content"
+
+# Retarget links in the staged copies (sources are never touched):
+#  - operator runbook links: ./docs/operators/x.md -> operators/x.md
+perl -pi -e 's{\]\(\./docs/operators/([A-Za-z0-9_.-]+\.md)\)}{](operators/$1)}g' *.md
+#  - the ./docs/operators/ directory link points at the repo tree
+perl -pi -e "s{\\]\\(\\./docs/operators/\\)}{]($github_tree/docs/operators)}g" *.md
+#  - repository-layout directory links (README) point at the repo tree
+perl -pi -e "s{\\]\\(\\./(app|src/components|src/domain|src/server|data|worker|scripts)/\\)}{]($github_tree/\$1)}g" index.md
+#  - the LICENSE file link points at the repo blob
+perl -pi -e "s{\\]\\(\\./LICENSE\\)}{]($github_blob/LICENSE)}g" *.md
+#  - the README logo (raw HTML, cannot be rewritten by the renderer) uses the
+#    static asset staged into website/static/img/
+perl -pi -e 's{src="\./app/icon\.svg"}{src="/superscriber/img/icon.svg"}g' index.md
+
+echo "Staged Docusaurus docs content into $content"

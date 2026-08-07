@@ -23,8 +23,8 @@
     "worker:prefetch": "bash scripts/run-worker-python.sh worker/prefetch_model.py",
     "worker:python": "bash scripts/run-worker-python.sh worker/main.py",
     "docs:stage": "bash scripts/stage-docs.sh",
-    "docs:build": "bash scripts/stage-docs.sh && mkdocs build --strict",
-    "docs:serve": "bash scripts/stage-docs.sh && mkdocs serve"
+    "docs:build": "bash scripts/stage-docs.sh && npm --prefix website run build",
+    "docs:start": "bash scripts/stage-docs.sh && npm --prefix website run start"
   },
   "dependencies": {
     "@fontsource-variable/newsreader": "5.3.0",

@@ -1,6 +1,0 @@
-# Toolchain for the GitHub Pages docs site (mkdocs + Material).
-# Installed by .github/workflows/docs-pages.yml and used for local preview:
-#   python3 -m venv .venv-docs && . .venv-docs/bin/activate
-#   pip install -r requirements-docs.txt
-mkdocs==1.6.1
-mkdocs-material==9.6.14
