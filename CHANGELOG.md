@@ -2,6 +2,21 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.4.0] - 2026-08-06
+
+### Added
+- Added Authentik OIDC integration as a central identity provider with a revocable session registry, strength-scaled authorization, and external identity links with strict role mapping (PR #4).
+- Added an identity mode contract (local / dual-run / authentik-primary) enforced by startup invariants, with operator tooling, runbooks, and documentation (PR #4).
+- Added break-glass access: a designated emergency local admin protected by a WebAuthn ceremony and one-time codes (PR #4).
+- Added container E2E failure-artifact uploads for CI debugging (PR #5).
+
+### Changed
+- Aligned README, AGENTS, DESIGN, and TODOS with the v0.3.0.0 reality and untracked the superpowers specs (PR #3).
+- Hardened container E2E with navigation anchors and a pinned base image digest (PR #5).
+
+### Notes
+- No live-target changes: all integration delivery qualified locally (unit and container E2E lanes).
+
 ## [0.3.0.0] - 2026-08-02
 
 ### Added
