@@ -572,7 +572,7 @@ export function AccountsSection({
             </thead>
             <tbody>
               {users.map((user) => (
-                <tr key={user.id}>
+                <tr data-testid={`account-facts-${user.id}`} key={user.id}>
                   <th scope="row">
                     <span id={`account-row-${user.id}`} tabIndex={-1}>
                       {user.displayName}
@@ -608,7 +608,10 @@ export function AccountsSection({
         <ul className="administration-card-list">
           {users.map((user) => (
             <li className="administration-card-list__item" key={user.id}>
-              <article className="administration-card stack-tight">
+              <article
+                className="administration-card stack-tight"
+                data-testid={`account-facts-${user.id}`}
+              >
                 <h3 className="card-title">{user.displayName}</h3>
                 <p className="body-copy">{user.email}</p>
                 <dl className="administration-fact-list">
