@@ -53,6 +53,18 @@ UUIDs and must name the same issuer byte-for-byte:
 5. Record the issuer, client id; mount the client secret to
    `SUPERSCRIBER_OIDC_CLIENT_SECRET_FILE` mode 0400, owned appropriately.
 
+## Changing a linked account's role
+
+Coordinate both systems deliberately. For an OIDC-linked account, change direct Authentik group membership first:
+
+1. Remove the old direct role group and add the target direct role group. The identity must belong to exactly one configured role group.
+2. Immediately open **Administration > Accounts** in Superscriber, choose the matching target role, enter the required reason, and select **Save role**.
+3. Have the affected person sign in again. The Superscriber role save revokes all existing sessions, so no previous session remains usable.
+
+The coordination window fails closed. If the Authentik claim and local Superscriber role do not match, institutional sign-in shows only the generic denial and records the redacted `role_mismatch` reason, described operationally as a role mismatch. Superscriber never rewrites the local role from an OIDC claim and never changes the identity link during a role save.
+
+In `dual` mode, an account with a local credential may use that credential with the new Superscriber role while institutional membership is being coordinated. In `authentik-primary` mode, normal local credentials remain disabled; institutional sign-in is unavailable until the direct group and local role match, while the designated break-glass procedure remains separate.
+
 ## Verify
 
 1. Open the appliance first-run or administration surface; the **Authentication**

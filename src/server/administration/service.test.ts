@@ -5,9 +5,11 @@ import { listAdministration } from "@/server/administration/service";
 import { openAppDatabase, type AppDatabase } from "@/server/db/client";
 import {
   authControl,
+  externalIdentities,
   recordingAssignments,
   recordings,
   revisions,
+  users,
   workspaces,
 } from "@/server/db/schema";
 
@@ -207,6 +209,161 @@ describe("listAdministration", () => {
           createdAtLabel: "01 Aug 2026, 12:00 UTC",
         }),
       ]);
+    } finally {
+      bundle.sqlite.close();
+    }
+  });
+
+  it("returns non-authoritative role management facts for every account kind", async () => {
+    const bundle = openAppDatabase(":memory:");
+    insertWorkspace(bundle);
+
+    try {
+      const admin = await createPrincipal(bundle.db, {
+        displayName: "Admin",
+        email: "facts-admin@example.com",
+        role: "admin",
+      });
+      const reviewer = await createPrincipal(bundle.db, {
+        displayName: "Linked Reviewer",
+        email: "facts-reviewer@example.com",
+        role: "reviewer",
+      });
+      const approver = await createPrincipal(bundle.db, {
+        displayName: "Approver",
+        email: "facts-approver@example.com",
+        role: "approver",
+      });
+      bundle.db.insert(users).values({
+        id: "shadow-inactive",
+        email: "shadow@example.com",
+        displayName: "Inactive Shadow",
+        passwordHash: null,
+        role: "uploader",
+        isActive: false,
+        authVersion: 1,
+        createdAt: FIXED_NOW,
+        updatedAt: FIXED_NOW,
+      }).run();
+      bundle.db.insert(externalIdentities).values([
+        {
+          id: "identity-reviewer",
+          userId: reviewer.userId,
+          issuer: "https://issuer.example/",
+          subject: "reviewer-subject",
+          status: "active",
+          linkedAt: FIXED_NOW,
+          linkedByUserId: admin.userId,
+          changeReason: "Reviewer link.",
+        },
+        {
+          id: "identity-shadow",
+          userId: "shadow-inactive",
+          issuer: "https://issuer.example/",
+          subject: "shadow-subject",
+          status: "active",
+          linkedAt: FIXED_NOW,
+          linkedByUserId: admin.userId,
+          changeReason: "Shadow link.",
+        },
+      ]).run();
+      bundle.db.insert(authControl).values({
+        id: 1,
+        breakGlassUserId: admin.userId,
+        updatedAt: FIXED_NOW,
+        updatedByUserId: admin.userId,
+        changeReason: "Initial custodian.",
+      }).run();
+
+      insertRecording(bundle, {
+        recordingId: "rec-reviewer-facts",
+        title: "Reviewer facts",
+        uploadedByUserId: admin.userId,
+        updatedAt: FIXED_NOW,
+      });
+      insertRecording(bundle, {
+        recordingId: "rec-approver-facts",
+        title: "Approver facts",
+        uploadedByUserId: admin.userId,
+        updatedAt: FIXED_NOW,
+      });
+      insertRecording(bundle, {
+        recordingId: "rec-history-facts",
+        title: "Historical facts",
+        uploadedByUserId: admin.userId,
+        updatedAt: FIXED_NOW,
+      });
+      insertAssignment(bundle, {
+        id: "assignment-reviewer-facts",
+        recordingId: "rec-reviewer-facts",
+        userId: reviewer.userId,
+        assignedByUserId: admin.userId,
+        role: "reviewer",
+        status: "active",
+        updatedAt: FIXED_NOW,
+      });
+      insertAssignment(bundle, {
+        id: "assignment-approver-facts",
+        recordingId: "rec-approver-facts",
+        userId: approver.userId,
+        assignedByUserId: admin.userId,
+        role: "approver",
+        status: "active",
+        updatedAt: FIXED_NOW,
+      });
+      insertAssignment(bundle, {
+        id: "assignment-history-facts",
+        recordingId: "rec-history-facts",
+        userId: reviewer.userId,
+        assignedByUserId: admin.userId,
+        role: "reviewer",
+        status: "removed",
+        updatedAt: FIXED_NOW,
+      });
+
+      const view = listAdministration(admin, { section: "accounts" }, bundle.db);
+      if (view.section !== "accounts") {
+        throw new Error("Expected accounts section.");
+      }
+      expect(view.users.find((user) => user.id === admin.userId)).toMatchObject({
+        activeAssignments: { reviewer: 0, approver: 0 },
+        hasActiveOidcIdentity: false,
+        isBreakGlassAdministrator: true,
+        isSoleActiveAdministrator: true,
+      });
+      expect(view.users.find((user) => user.id === reviewer.userId)).toMatchObject({
+        activeAssignmentCount: 1,
+        activeAssignments: { reviewer: 1, approver: 0 },
+        hasActiveOidcIdentity: true,
+        isBreakGlassAdministrator: false,
+        isSoleActiveAdministrator: false,
+      });
+      expect(view.users.find((user) => user.id === approver.userId)).toMatchObject({
+        activeAssignments: { reviewer: 0, approver: 1 },
+      });
+      expect(view.users.find((user) => user.id === "shadow-inactive")).toMatchObject({
+        hasActiveOidcIdentity: true,
+        activeAssignments: { reviewer: 0, approver: 0 },
+      });
+
+      await createPrincipal(bundle.db, {
+        displayName: "Second Admin",
+        email: "facts-admin-2@example.com",
+        role: "admin",
+      });
+      const multiAdminView = listAdministration(
+        admin,
+        { section: "accounts" },
+        bundle.db,
+      );
+      if (multiAdminView.section !== "accounts") {
+        throw new Error("Expected accounts section.");
+      }
+      expect(
+        multiAdminView.users
+          .filter((user) => user.role === "admin")
+          .every((user) => !user.isSoleActiveAdministrator),
+      ).toBe(true);
     } finally {
       bundle.sqlite.close();
     }

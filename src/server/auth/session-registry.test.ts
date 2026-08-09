@@ -242,6 +242,29 @@ describe("session registry", () => {
     expect(validateAuthSession(other.id, { now: at }, db).ok).toBe(true);
   });
 
+  it("uses the caller's timestamp for role-change revocations and diagnostics", () => {
+    const { db, sqlite } = setup();
+    const created = createAuthSession({ userId: "user-1", authSource: "local", now: T0 }, db);
+    const revokedAt = new Date("2026-08-03T12:05:00.000Z");
+
+    expect(
+      revokeUserSessions("user-1", "account_role_changed", db, { now: revokedAt }),
+    ).toBe(1);
+    expect(authSessionRow(sqlite, created.id)).toMatchObject({
+      status: "revoked",
+      revoked_at: revokedAt.toISOString(),
+      revoked_reason: "account_role_changed",
+    });
+    expect(
+      sqlite
+        .prepare(
+          `SELECT created_at AS createdAt FROM security_events
+           WHERE type = 'auth.session.revoked' AND session_id = ?`,
+        )
+        .get(created.id),
+    ).toEqual({ createdAt: revokedAt.toISOString() });
+  });
+
   it("retires a user's sessions and bumps their auth version in one step", () => {
     const { db, sqlite } = setup();
     const created = createAuthSession({ userId: "user-1", authSource: "local", now: T0 }, db);

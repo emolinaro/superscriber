@@ -13,7 +13,7 @@ type Migration = {
   rebuildsTables?: boolean;
 };
 
-export const LATEST_SCHEMA_VERSION = 7;
+export const LATEST_SCHEMA_VERSION = 8;
 
 const migrations: Migration[] = [
   { version: 1, name: "baseline-appliance", up: createBaselineSchema },
@@ -23,6 +23,7 @@ const migrations: Migration[] = [
   { version: 5, name: "oidc-backchannel-replays", up: addOidcBackchannelReplaySchema },
   { version: 6, name: "break-glass-controls", up: addBreakGlassControlsSchema },
   { version: 7, name: "break-glass-ceremonies", up: addBreakGlassCeremoniesSchema },
+  { version: 8, name: "account-role-guards", up: addAccountRoleGuards },
 ];
 
 const LEGACY_AUDIT_METADATA_JSON = serializeAuditMetadata(LEGACY_AUDIT_METADATA);
@@ -881,6 +882,61 @@ function addBreakGlassCeremoniesSchema(sqlite: Database.Database) {
       ON break_glass_ceremonies(user_id);
     `);
   }
+}
+
+function addAccountRoleGuards(sqlite: Database.Database) {
+  sqlite.exec(`
+    CREATE TRIGGER IF NOT EXISTS users_last_active_admin_role_guard
+    BEFORE UPDATE OF role ON users
+    WHEN OLD.role = 'admin'
+      AND OLD.is_active = 1
+      AND NEW.role != 'admin'
+      AND NOT EXISTS (
+        SELECT 1 FROM users
+        WHERE id != OLD.id AND role = 'admin' AND is_active = 1
+      )
+    BEGIN
+      SELECT RAISE(ABORT, 'at least one active administrator must remain');
+    END;
+
+    CREATE TRIGGER IF NOT EXISTS users_active_assignment_role_guard
+    BEFORE UPDATE OF role ON users
+    WHEN EXISTS (
+      SELECT 1 FROM recording_assignments
+      WHERE user_id = OLD.id
+        AND status = 'active'
+        AND assignment_role != NEW.role
+    )
+    BEGIN
+      SELECT RAISE(ABORT, 'active assignments must match the user''s role');
+    END;
+
+    CREATE TRIGGER IF NOT EXISTS recording_assignments_role_guard_insert
+    BEFORE INSERT ON recording_assignments
+    WHEN NEW.status = 'active'
+      AND NOT EXISTS (
+        SELECT 1 FROM users
+        WHERE id = NEW.user_id
+          AND role = NEW.assignment_role
+          AND role IN ('reviewer', 'approver')
+      )
+    BEGIN
+      SELECT RAISE(ABORT, 'active assignment role must match the assigned user''s role');
+    END;
+
+    CREATE TRIGGER IF NOT EXISTS recording_assignments_role_guard_update
+    BEFORE UPDATE OF user_id, assignment_role, status ON recording_assignments
+    WHEN NEW.status = 'active'
+      AND NOT EXISTS (
+        SELECT 1 FROM users
+        WHERE id = NEW.user_id
+          AND role = NEW.assignment_role
+          AND role IN ('reviewer', 'approver')
+      )
+    BEGIN
+      SELECT RAISE(ABORT, 'active assignment role must match the assigned user''s role');
+    END;
+  `);
 }
 
 export function runMigrations(

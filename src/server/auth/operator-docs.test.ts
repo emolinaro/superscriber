@@ -57,6 +57,23 @@ describe("operator runbooks", () => {
     expect(packageJson).not.toMatch(/nodemailer|smtp|sendmail|mailgun/i);
   });
 
+  it("documents coordinated OIDC and break-glass role changes", () => {
+    const authentik = readDocs().find((doc) => doc.file === "authentik-oidc.md");
+    for (const phrase of [
+      "change direct Authentik group membership first",
+      "exactly one",
+      "role mismatch",
+      "Superscriber role",
+    ]) {
+      expect(authentik?.content).toContain(phrase);
+    }
+
+    const breakGlass = readDocs().find((doc) => doc.file === "break-glass.md");
+    expect(breakGlass?.content).toContain(
+      "Transfer the designation before changing the custodian's role",
+    );
+  });
+
   it("documents the drill record format without credential material", () => {
     const breakGlass = readDocs().find((doc) => doc.file === "break-glass.md");
     for (const field of ["date_utc", "custodian_roles", "result", "session_id", "corrective_action"]) {

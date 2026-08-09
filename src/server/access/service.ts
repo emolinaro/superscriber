@@ -21,7 +21,10 @@ import {
 } from "@/server/db/client";
 import { toAppUser, toRecordingAssignment } from "@/server/db/mappers";
 import { recordingAssignments, recordings, users } from "@/server/db/schema";
-import { runGovernedTransaction } from "@/server/db/transaction";
+import {
+  runGovernedTransaction,
+  runImmediateGovernedTransaction,
+} from "@/server/db/transaction";
 
 export type AssignmentSummary = {
   id: string;
@@ -310,18 +313,17 @@ export function assignRecordingToUser(
   params: { recordingId: string; userId: string; assignedBy: Principal },
   bundle: AppDatabaseBundle = getAppDbBundle(),
 ): { assignment: RecordingAssignment; alreadyActive: boolean } {
-  const user = bundle.db.select().from(users).where(eq(users.id, params.userId)).get();
-  if (!user || !user.isActive) {
-    throw new Error("Choose an active user before assigning a recording.");
-  }
+  return runImmediateGovernedTransaction((db, now) => {
+    const user = db.select().from(users).where(eq(users.id, params.userId)).get();
+    if (!user || !user.isActive) {
+      throw new Error("Choose an active user before assigning a recording.");
+    }
 
-  if (user.role !== "reviewer" && user.role !== "approver") {
-    throw new Error("Only reviewer and approver accounts can receive recording assignments.");
-  }
+    if (user.role !== "reviewer" && user.role !== "approver") {
+      throw new Error("Only reviewer and approver accounts can receive recording assignments.");
+    }
 
-  const assignmentRole = user.role as AssignmentRole;
-
-  return runGovernedTransaction((db, now) => {
+    const assignmentRole: AssignmentRole = user.role;
     const active = findActiveAssignment(db, params.userId, params.recordingId, assignmentRole);
     if (active) {
       return { assignment: toRecordingAssignment(active), alreadyActive: true };

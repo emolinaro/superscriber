@@ -8,6 +8,57 @@ import type { SourceZone } from "@/server/auth/management-network";
  * - dual and authentik-primary: the emergency local administrator disclosure
  *   renders only through the trusted management boundary
  */
+export type AuthNotice = {
+  tone: "ok" | "danger";
+  message: string;
+  focusHeading: boolean;
+};
+
+export function buildAuthNotice(
+  reason: string | undefined,
+  notice: string | undefined,
+  error: string | undefined,
+): AuthNotice | null {
+  if (error) {
+    return {
+      tone: "danger",
+      message:
+        "Access is not provisioned for this account, or sign-in could not be completed. Contact an administrator.",
+      focusHeading: true,
+    };
+  }
+  if (notice === "bootstrap-complete") {
+    return {
+      tone: "ok",
+      message:
+        "First-run setup is complete. Sign in with the admin account you just created.",
+      focusHeading: true,
+    };
+  }
+  if (reason === "logged-out") {
+    return {
+      tone: "ok",
+      message: "Your session ended safely.",
+      focusHeading: true,
+    };
+  }
+  if (reason === "session-expired") {
+    return {
+      tone: "danger",
+      message: "Session expired. Sign in again to continue.",
+      focusHeading: true,
+    };
+  }
+  if (reason === "role-changed") {
+    return {
+      tone: "ok",
+      message: "Your account role changed. Sign in again to continue.",
+      focusHeading: true,
+    };
+  }
+  return null;
+}
+
 export type AuthSurfaceModel = {
   showLocalCredentialsForm: boolean;
   showOidcSignIn: boolean;

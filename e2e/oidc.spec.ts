@@ -1,5 +1,12 @@
 import { expect, test } from "@playwright/test";
-import { login } from "./support/appliance";
+import {
+  accountRoleAuditRows,
+  accountRoleFactsForEmail,
+  adminUser,
+  bootstrapAndLogin,
+  login,
+  queryRuntimeRows,
+} from "./support/appliance";
 import {
   E2E_OIDC_GROUPS,
   E2E_OIDC_ISSUER,
@@ -20,6 +27,14 @@ const reviewer = {
   password: "Superscriber!123",
 };
 
+const linkedRoleUser = {
+  email: "oidc-role-change@example.com",
+  displayName: "OIDC Role Reviewer",
+  role: "reviewer" as const,
+  subject: "e2e-oidc-role-change-sub",
+  password: "Superscriber!123",
+};
+
 test.describe.serial("authentik oidc dual login", () => {
   // In container mode the suite's sidecar serves the same issuer; locally an
   // in-process fake is started on the same port. Behavior is identical.
@@ -33,6 +48,107 @@ test.describe.serial("authentik oidc dual login", () => {
   });
   test.afterAll(async () => {
     await closeControl?.();
+  });
+
+  test("a linked identity follows the governed local role after an administrator change", async ({
+    page,
+  }) => {
+    await bootstrapAndLogin(page, adminUser);
+    const { userId } = seedOidcLinkedUser(linkedRoleUser);
+    const identityBefore = queryRuntimeRows<{
+      id: string;
+      userId: string;
+      issuer: string;
+      subject: string;
+    }>(
+      `select id, user_id as userId, issuer, subject from external_identities
+       where user_id = ? and status = 'active'`,
+      [userId],
+    )[0]!;
+
+    await control.setUser({
+      sub: linkedRoleUser.subject,
+      name: linkedRoleUser.displayName,
+      groups: [E2E_OIDC_GROUPS.reviewer],
+    });
+    await oidcSignIn(page);
+    await expect(page).toHaveURL(/\/workspace$/);
+
+    await login(page, adminUser);
+    await page.goto("/administration?section=accounts");
+    await page.getByRole("searchbox", { name: "Search accounts" }).fill(linkedRoleUser.email);
+    await page.getByRole("button", { name: "Search" }).click();
+    const role = page.getByRole("combobox", {
+      name: `Role for ${linkedRoleUser.displayName}`,
+    });
+    await expect(role).toHaveValue("reviewer");
+    await role.selectOption("approver");
+    await page
+      .getByRole("textbox", { name: `Change reason for ${linkedRoleUser.displayName}` })
+      .fill("OIDC approver duties changed safely.");
+    await page.getByRole("button", { name: "Save role" }).click();
+    await expect(page.getByRole("status")).toContainText("changed from Reviewer to Approver");
+
+    expect(accountRoleFactsForEmail(linkedRoleUser.email)).toMatchObject({
+      id: userId,
+      role: "approver",
+    });
+    const identityAfter = queryRuntimeRows<{
+      id: string;
+      userId: string;
+      issuer: string;
+      subject: string;
+    }>(
+      `select id, user_id as userId, issuer, subject from external_identities
+       where user_id = ? and status = 'active'`,
+      [userId],
+    )[0]!;
+    expect(identityAfter).toEqual(identityBefore);
+
+    await control.setUser({
+      sub: linkedRoleUser.subject,
+      name: linkedRoleUser.displayName,
+      groups: [E2E_OIDC_GROUPS.reviewer],
+    });
+    await oidcSignIn(page);
+    await expect(page.locator("p.banner")).toContainText("Access is not provisioned");
+    const denial = queryRuntimeRows<{ metadata: string }>(
+      `select metadata from security_events
+       where type = 'oidc.admission.denied' and user_id = ?
+       order by created_at desc, id desc limit 1`,
+      [userId],
+    )[0]!;
+    expect(JSON.parse(denial.metadata)).toMatchObject({
+      data: { reason: "role_mismatch" },
+    });
+    expect(denial.metadata).not.toContain(linkedRoleUser.subject);
+    expect(denial.metadata).not.toContain(E2E_OIDC_GROUPS.reviewer);
+
+    await control.setUser({
+      sub: linkedRoleUser.subject,
+      name: linkedRoleUser.displayName,
+      groups: [E2E_OIDC_GROUPS.approver],
+    });
+    await oidcSignIn(page);
+    await expect(page).toHaveURL(/\/workspace$/);
+    const oidcSession = (await (await page.request.get("/api/auth/session")).json()) as {
+      user: { id: string; role?: string };
+    };
+    expect(oidcSession.user.id).toBe(userId);
+    expect(JSON.stringify(oidcSession)).not.toContain(linkedRoleUser.subject);
+    expect(JSON.stringify(oidcSession)).not.toContain(E2E_OIDC_GROUPS.approver);
+
+    const roleAudit = accountRoleAuditRows(userId).at(-1)!;
+    expect(roleAudit.metadata).toContain('"newRole":"approver"');
+    expect(roleAudit.metadata).not.toContain(linkedRoleUser.subject);
+    expect(roleAudit.metadata).not.toContain(E2E_OIDC_GROUPS.approver);
+
+    await login(page, { ...linkedRoleUser, role: "approver" });
+    const localSession = (await (await page.request.get("/api/auth/session")).json()) as {
+      user: { id: string; role?: string };
+    };
+    expect(localSession.user.id).toBe(userId);
+    expect(localSession.user.role).toBe("approver");
   });
 
   test("a linked user signs in through the provider and lands in the workspace", async ({
