@@ -6,15 +6,28 @@ import { USER_ROLES, type UserRole } from "@/domain/models";
 import { ErrorSummary } from "@/components/ui/error-summary";
 import { Modal } from "@/components/ui/modal";
 import type { CommandResult } from "@/lib/command-result";
+import {
+  ACCOUNT_ROLE_CHANGE_COPY,
+  changeAccountRoleInputSchema,
+  type AccountRoleChangeFailure,
+  type ChangeAccountRoleInput,
+} from "@/lib/account-role-management";
 import { formatDateTimeIso, formatDateTimeUtc, formatRoleLabel } from "@/lib/format";
 import type { AccountDirectoryEntry } from "@/server/access/service";
 import type { AdministrationAccountsViewModel } from "@/server/administration/service";
 import {
+  changeAccountRoleAction as defaultChangeAccountRoleAction,
   createUserAction as defaultCreateUserAction,
   type AdministrationMutationResult,
+  type ChangeAccountRoleActionResult,
   type CreateUserInput,
 } from "@/server/actions/administration-actions";
 import { localUserSchema } from "@/server/auth/validation";
+import {
+  AccountRoleEditor,
+  emptyRoleEditorState,
+  type RoleEditorState,
+} from "./account-role-editor";
 
 const FIELD_CONFIG = {
   displayName: { id: "account-display-name", label: "Name" },
@@ -76,16 +89,26 @@ function mergeAccountRows(modelUsers: AccountRow[], addedUsers: AccountRow[]) {
   return [...addedUsers, ...modelUsers.filter((user) => !addedUserIds.has(user.id))];
 }
 
+const defaultNavigateToSignIn = (href: string) => window.location.assign(href);
+
+type RoleFocusTarget = "select" | "reason" | "alert";
+
 export function AccountsSection({
   model,
   phoneSafetyMode,
   createUserAction = defaultCreateUserAction,
+  changeAccountRoleAction = defaultChangeAccountRoleAction,
+  navigateToSignIn = defaultNavigateToSignIn,
 }: {
   model: AdministrationAccountsViewModel;
   phoneSafetyMode: boolean;
   createUserAction?: (
     input: CreateUserInput,
   ) => Promise<CommandResult<AdministrationMutationResult>>;
+  changeAccountRoleAction?: (
+    input: ChangeAccountRoleInput,
+  ) => Promise<ChangeAccountRoleActionResult>;
+  navigateToSignIn?: (href: string) => void;
 }) {
   const router = useRouter();
   const [open, setOpen] = useState(false);
@@ -96,6 +119,17 @@ export function AccountsSection({
   const [notice, setNotice] = useState<string | null>(null);
   const [focusUserId, setFocusUserId] = useState<string | null>(null);
   const [addedUsers, setAddedUsers] = useState<AccountRow[]>([]);
+  const [roleEditorStates, setRoleEditorStates] = useState<
+    Record<string, RoleEditorState>
+  >({});
+  const [roleOverrides, setRoleOverrides] = useState<
+    Partial<Record<string, UserRole>>
+  >({});
+  const [pendingRoleUserId, setPendingRoleUserId] = useState<string | null>(null);
+  const [roleFocusRequest, setRoleFocusRequest] = useState<{
+    userId: string;
+    target: RoleFocusTarget;
+  } | null>(null);
   const queryRef = useRef(model.query);
 
   const summaryErrors = useMemo(
@@ -120,7 +154,74 @@ export function AccountsSection({
     setAddedUsers((current) => current.filter((user) => !model.users.some((modelUser) => modelUser.id === user.id)));
   }, [model.query, model.users]);
 
-  const users = useMemo(() => mergeAccountRows(model.users, addedUsers), [addedUsers, model.users]);
+  const users = useMemo(
+    () =>
+      mergeAccountRows(model.users, addedUsers).map((user) => {
+        const role = roleOverrides[user.id];
+        return role
+          ? { ...user, role, roleLabel: formatRoleLabel(role) }
+          : user;
+      }),
+    [addedUsers, model.users, roleOverrides],
+  );
+
+  useEffect(() => {
+    setRoleOverrides((current) => {
+      const next = { ...current };
+      let changed = false;
+      for (const user of model.users) {
+        if (next[user.id] === user.role) {
+          delete next[user.id];
+          changed = true;
+        }
+      }
+      return changed ? next : current;
+    });
+  }, [model.users]);
+
+  useEffect(() => {
+    if (!phoneSafetyMode) {
+      return;
+    }
+    setRoleEditorStates((current) => {
+      if (pendingRoleUserId && current[pendingRoleUserId]) {
+        return { [pendingRoleUserId]: current[pendingRoleUserId] };
+      }
+      return {};
+    });
+  }, [pendingRoleUserId, phoneSafetyMode]);
+
+  useEffect(() => {
+    if (!roleFocusRequest) {
+      return;
+    }
+
+    const attribute = {
+      select: "data-account-role-select",
+      reason: "data-account-role-reason",
+      alert: "data-account-role-alert",
+    }[roleFocusRequest.target];
+    let attempts = 0;
+    const intervalId = window.setInterval(() => {
+      const matches = Array.from(
+        document.querySelectorAll<HTMLElement>(`[${attribute}]`),
+      ).filter(
+        (element) => element.dataset.accountUserId === roleFocusRequest.userId,
+      );
+      const target =
+        matches.find((element) => element.getClientRects().length > 0) ?? matches[0];
+      if (target) {
+        target.focus();
+      }
+      attempts += 1;
+      if (target === document.activeElement || attempts >= 10) {
+        window.clearInterval(intervalId);
+        setRoleFocusRequest(null);
+      }
+    }, 30);
+
+    return () => window.clearInterval(intervalId);
+  }, [roleFocusRequest, users]);
 
   useEffect(() => {
     if (!focusUserId || !users.some((user) => user.id === focusUserId)) {
@@ -148,14 +249,14 @@ export function AccountsSection({
   }, [focusUserId, users]);
 
   const closeDrawer = useCallback(() => {
-    if (pending) {
+    if (pending || pendingRoleUserId) {
       return;
     }
 
     setOpen(false);
     setFieldErrors({});
     setFormError(null);
-  }, [pending]);
+  }, [pending, pendingRoleUserId]);
 
   function updateValue(field: FieldName, value: string) {
     setValues((current) => ({
@@ -168,9 +269,206 @@ export function AccountsSection({
     return fieldErrors[field] ? `${field}-error` : undefined;
   }
 
+  function roleStateFor(user: AccountRow) {
+    return roleEditorStates[user.id] ?? emptyRoleEditorState(user.role);
+  }
+
+  function changeSelectedRole(user: AccountRow, selectedRole: UserRole) {
+    if (selectedRole === user.role) {
+      setRoleEditorStates((current) => {
+        const next = { ...current };
+        delete next[user.id];
+        return next;
+      });
+      return;
+    }
+
+    setRoleEditorStates((current) => {
+      const existing = current[user.id] ?? emptyRoleEditorState(user.role);
+      return {
+        ...current,
+        [user.id]: {
+          ...existing,
+          selectedRole,
+          phase: "dirty",
+          fieldError: null,
+          operationError: null,
+        },
+      };
+    });
+  }
+
+  function changeRoleReason(user: AccountRow, reason: string) {
+    setRoleEditorStates((current) => {
+      const existing = current[user.id] ?? emptyRoleEditorState(user.role);
+      return {
+        ...current,
+        [user.id]: {
+          ...existing,
+          reason,
+          phase: "dirty",
+          fieldError: null,
+          operationError: null,
+        },
+      };
+    });
+  }
+
+  function cancelRoleChange(userId: string) {
+    setRoleEditorStates((current) => {
+      const next = { ...current };
+      delete next[userId];
+      return next;
+    });
+    setRoleFocusRequest({ userId, target: "select" });
+  }
+
+  function setRoleFailure(
+    userId: string,
+    state: RoleEditorState,
+    operationError: AccountRoleChangeFailure,
+    target: "reason" | "alert",
+  ) {
+    setPendingRoleUserId(null);
+    setRoleEditorStates((current) => ({
+      ...current,
+      [userId]: {
+        ...state,
+        phase: "error",
+        fieldError:
+          operationError.fieldErrors?.reason ??
+          (operationError.code === "VALIDATION_ERROR"
+            ? operationError.message
+            : null),
+        operationError: target === "alert" ? operationError : null,
+      },
+    }));
+    setRoleFocusRequest({ userId, target });
+  }
+
+  async function submitRoleChange(user: AccountRow) {
+    if (pendingRoleUserId || pending) {
+      return;
+    }
+    const state = roleStateFor(user);
+    const parsed = changeAccountRoleInputSchema.safeParse({
+      userId: user.id,
+      expectedRole: user.role,
+      newRole: state.selectedRole,
+      reason: state.reason,
+    });
+    if (!parsed.success) {
+      const reasonError = parsed.error.flatten().fieldErrors.reason?.[0];
+      setRoleFailure(
+        user.id,
+        state,
+        {
+          code: "VALIDATION_ERROR",
+          message: reasonError ?? ACCOUNT_ROLE_CHANGE_COPY.VALIDATION_ERROR,
+          fieldErrors: {
+            reason: reasonError ?? ACCOUNT_ROLE_CHANGE_COPY.VALIDATION_ERROR,
+          },
+        },
+        "reason",
+      );
+      return;
+    }
+
+    setNotice(null);
+    setPendingRoleUserId(user.id);
+    setRoleEditorStates((current) => ({
+      ...current,
+      [user.id]: { ...state, reason: parsed.data.reason, phase: "pending" },
+    }));
+
+    let result: ChangeAccountRoleActionResult;
+    try {
+      result = await changeAccountRoleAction(parsed.data);
+    } catch {
+      setRoleFailure(
+        user.id,
+        { ...state, reason: parsed.data.reason },
+        {
+          code: "INTERNAL_ERROR",
+          message: ACCOUNT_ROLE_CHANGE_COPY.INTERNAL_ERROR,
+        },
+        "alert",
+      );
+      return;
+    }
+
+    if (result.ok) {
+      setPendingRoleUserId(null);
+      setRoleEditorStates((current) => {
+        const next = { ...current };
+        delete next[user.id];
+        return next;
+      });
+      setRoleOverrides((current) => ({
+        ...current,
+        [user.id]: result.data.newRole,
+      }));
+      if (result.data.actorMustRelogin) {
+        navigateToSignIn("/?reason=role-changed");
+        return;
+      }
+      setNotice(result.notice);
+      setRoleFocusRequest({ userId: user.id, target: "select" });
+      router.refresh();
+      return;
+    }
+
+    if (result.code === "AUTH_EXPIRED") {
+      setPendingRoleUserId(null);
+      navigateToSignIn(
+        "/?reason=session-expired&returnTo=%2Fadministration%3Fsection%3Daccounts",
+      );
+      return;
+    }
+
+    if (result.code === "NOT_FOUND") {
+      setPendingRoleUserId(null);
+      setRoleEditorStates((current) => {
+        const next = { ...current };
+        delete next[user.id];
+        return next;
+      });
+      router.refresh();
+      return;
+    }
+
+    if (result.code === "STATE_CHANGED" && result.currentRole) {
+      setPendingRoleUserId(null);
+      setRoleOverrides((current) => ({
+        ...current,
+        [user.id]: result.currentRole!,
+      }));
+      if (result.currentRole === state.selectedRole) {
+        setRoleEditorStates((current) => {
+          const next = { ...current };
+          delete next[user.id];
+          return next;
+        });
+        setNotice(`${user.displayName}'s role is now ${formatRoleLabel(result.currentRole)}.`);
+        setRoleFocusRequest({ userId: user.id, target: "select" });
+      } else {
+        setRoleFailure(user.id, state, result, "alert");
+      }
+      router.refresh();
+      return;
+    }
+
+    setRoleFailure(
+      user.id,
+      { ...state, reason: parsed.data.reason },
+      result,
+      result.fieldErrors?.reason ? "reason" : "alert",
+    );
+  }
+
   async function submitAccount(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (pending) {
+    if (pending || pendingRoleUserId) {
       return;
     }
 
@@ -225,6 +523,7 @@ export function AccountsSection({
           {!phoneSafetyMode ? (
             <button
               className="button button-primary interactive-target"
+              disabled={Boolean(pendingRoleUserId)}
               onClick={() => {
                 setOpen(true);
                 setFormError(null);
@@ -280,7 +579,22 @@ export function AccountsSection({
                     </span>
                   </th>
                   <td>{user.email}</td>
-                  <td>{user.roleLabel}</td>
+                  <td>
+                    {phoneSafetyMode ? (
+                      user.roleLabel
+                    ) : (
+                      <AccountRoleEditor
+                        mutationsDisabled={pending || Boolean(pendingRoleUserId)}
+                        onCancel={() => cancelRoleChange(user.id)}
+                        onReasonChange={(reason) => changeRoleReason(user, reason)}
+                        onSelectedRoleChange={(role) => changeSelectedRole(user, role)}
+                        onSubmit={() => void submitRoleChange(user)}
+                        presentationId={`table-${user.id}`}
+                        state={roleStateFor(user)}
+                        user={user}
+                      />
+                    )}
+                  </td>
                   <td>{user.activeAssignmentCount}</td>
                   <td>
                     <time dateTime={user.createdAtIso}>{user.createdAtLabel}</time>
@@ -300,7 +614,22 @@ export function AccountsSection({
                 <dl className="administration-fact-list">
                   <div>
                     <dt>Role</dt>
-                    <dd>{user.roleLabel}</dd>
+                    <dd>
+                      {phoneSafetyMode ? (
+                        user.roleLabel
+                      ) : (
+                        <AccountRoleEditor
+                          mutationsDisabled={pending || Boolean(pendingRoleUserId)}
+                          onCancel={() => cancelRoleChange(user.id)}
+                          onReasonChange={(reason) => changeRoleReason(user, reason)}
+                          onSelectedRoleChange={(role) => changeSelectedRole(user, role)}
+                          onSubmit={() => void submitRoleChange(user)}
+                          presentationId={`card-${user.id}`}
+                          state={roleStateFor(user)}
+                          user={user}
+                        />
+                      )}
+                    </dd>
                   </div>
                   <div>
                     <dt>Active assignments</dt>
@@ -322,7 +651,7 @@ export function AccountsSection({
       <Modal
         backdropClassName="administration-drawer-backdrop"
         onClose={closeDrawer}
-        open={open && !phoneSafetyMode}
+        open={open && !phoneSafetyMode && !pendingRoleUserId}
         surfaceClassName="administration-drawer"
         title="Create local account"
       >

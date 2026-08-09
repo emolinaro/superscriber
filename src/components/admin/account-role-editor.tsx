@@ -87,7 +87,10 @@ export function AccountRoleEditor({
   const alertId = `account-role-alert-${presentationId}`;
   const dirty = state.phase !== "persisted";
   const pending = state.phase === "pending";
-  const disabled = mutationsDisabled || pending;
+  const controlsDisabled = mutationsDisabled || pending;
+  const retryBlocked =
+    state.operationError?.code === "INTERNAL_ERROR" ||
+    state.operationError?.code === "ACCESS_DENIED";
   const guidance = dirty ? knownGuidance(user, state.selectedRole) : [];
 
   return (
@@ -103,7 +106,7 @@ export function AccountRoleEditor({
       }}
       onSubmit={(event) => {
         event.preventDefault();
-        if (!disabled && dirty) {
+        if (!controlsDisabled && !retryBlocked && dirty) {
           onSubmit();
         }
       }}
@@ -118,7 +121,7 @@ export function AccountRoleEditor({
         ])}
         data-account-role-select
         data-account-user-id={user.id}
-        disabled={disabled}
+        disabled={controlsDisabled}
         id={selectId}
         name="newRole"
         onChange={(event) => onSelectedRoleChange(event.target.value as UserRole)}
@@ -156,7 +159,7 @@ export function AccountRoleEditor({
               aria-invalid={state.fieldError ? true : undefined}
               data-account-role-reason
               data-account-user-id={user.id}
-              disabled={disabled}
+              disabled={controlsDisabled}
               id={reasonId}
               name="reason"
               onChange={(event) => onReasonChange(event.target.value)}
@@ -220,14 +223,14 @@ export function AccountRoleEditor({
           <div className="button-row account-role-editor__controls">
             <button
               className="button button-primary"
-              disabled={disabled}
+              disabled={controlsDisabled || retryBlocked}
               type="submit"
             >
               {pending ? "Saving role..." : "Save role"}
             </button>
             <button
               className="button button-secondary"
-              disabled={disabled}
+              disabled={controlsDisabled}
               onClick={onCancel}
               type="button"
             >

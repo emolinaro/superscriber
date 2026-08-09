@@ -6,8 +6,10 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { CommandResult } from "@/lib/command-result";
 import type {
   AdministrationMutationResult,
+  ChangeAccountRoleActionResult,
   CreateUserInput,
 } from "@/server/actions/administration-actions";
+import type { ChangeAccountRoleInput } from "@/lib/account-role-management";
 import type { AdministrationAccountsViewModel } from "@/server/administration/service";
 import { AccountsSection } from "./accounts-section";
 
@@ -179,7 +181,9 @@ describe("AccountsSection", () => {
       throw new Error("Expected the new account row to render.");
     }
     expect(within(newRow).getByRole("cell", { name: "reviewer2@example.com" })).toBeVisible();
-    expect(within(newRow).getByRole("cell", { name: "Reviewer" })).toBeVisible();
+    expect(
+      within(newRow).getByRole("combobox", { name: "Role for Reviewer Two" }),
+    ).toHaveValue("reviewer");
     expect(within(newRow).getByRole("cell", { name: "0" })).toBeVisible();
     expect(within(newRow).getByText("01 Aug 2026, 12:10 UTC")).toBeVisible();
     expect(screen.queryByRole("dialog", { name: "Create local account" })).not.toBeInTheDocument();
@@ -223,6 +227,269 @@ describe("AccountsSection", () => {
     expect(within(resetDialog).getByLabelText("Email")).toHaveValue("");
     expect(within(resetDialog).getByLabelText("Password")).toHaveValue("");
     expect(within(resetDialog).getByLabelText("Role")).toHaveValue("reviewer");
+  });
+
+  it("shares one dirty role state across table and card presentations and Cancel restores focus", async () => {
+    const user = userEvent.setup();
+    const changeAccountRoleAction = vi.fn(
+      async (_input: ChangeAccountRoleInput): Promise<ChangeAccountRoleActionResult> => {
+        throw new Error("Role action was not expected during Cancel coverage.");
+      },
+    );
+
+    render(
+      <AccountsSection
+        changeAccountRoleAction={changeAccountRoleAction}
+        model={createModel()}
+        phoneSafetyMode={false}
+      />,
+    );
+
+    const selects = screen.getAllByRole("combobox", {
+      name: "Role for Reviewer One",
+    });
+    expect(selects).toHaveLength(2);
+    expect(new Set(selects.map((select) => select.id)).size).toBe(2);
+
+    await user.selectOptions(selects[0]!, "approver");
+    expect(selects[0]).toHaveValue("approver");
+    expect(selects[1]).toHaveValue("approver");
+    expect(
+      screen.getAllByRole("textbox", {
+        name: "Change reason for Reviewer One",
+      }),
+    ).toHaveLength(2);
+
+    await user.click(screen.getAllByRole("button", { name: "Cancel" })[0]!);
+    await waitFor(() => {
+      expect(
+        screen.queryByRole("textbox", {
+          name: "Change reason for Reviewer One",
+        }),
+      ).not.toBeInTheDocument();
+      expect(selects[0]).toHaveValue("reviewer");
+      expect(selects[0]).toHaveFocus();
+    });
+    expect(changeAccountRoleAction).not.toHaveBeenCalled();
+  });
+
+  it("validates reason, submits once, disables all mutations, and focuses successful role", async () => {
+    const user = userEvent.setup();
+    let resolveAction: ((result: ChangeAccountRoleActionResult) => void) | undefined;
+    const changeAccountRoleAction: (
+      input: ChangeAccountRoleInput,
+    ) => Promise<ChangeAccountRoleActionResult> = vi.fn(
+      () =>
+        new Promise<ChangeAccountRoleActionResult>((resolve) => {
+          resolveAction = resolve;
+        }),
+    );
+
+    render(
+      <AccountsSection
+        changeAccountRoleAction={changeAccountRoleAction}
+        model={createModel()}
+        phoneSafetyMode={false}
+      />,
+    );
+
+    const select = screen.getAllByRole("combobox", {
+      name: "Role for Reviewer One",
+    })[0]!;
+    await user.selectOptions(select, "approver");
+    const reason = screen.getAllByRole("textbox", {
+      name: "Change reason for Reviewer One",
+    })[0]!;
+    await user.type(reason, "too short");
+    await user.click(screen.getAllByRole("button", { name: "Save role" })[0]!);
+    await waitFor(() => expect(reason).toHaveFocus());
+    expect(changeAccountRoleAction).not.toHaveBeenCalled();
+
+    await user.clear(reason);
+    await user.type(reason, "Duties changed for coverage.");
+    await user.click(screen.getAllByRole("button", { name: "Save role" })[0]!);
+    await user.keyboard("{Enter}{Enter}");
+
+    expect(changeAccountRoleAction).toHaveBeenCalledTimes(1);
+    expect(changeAccountRoleAction).toHaveBeenCalledWith({
+      userId: "user-1",
+      expectedRole: "reviewer",
+      newRole: "approver",
+      reason: "Duties changed for coverage.",
+    });
+    expect(screen.getAllByRole("button", { name: "Saving role..." })).toHaveLength(2);
+    expect(
+      screen.getByRole("button", { name: "Create account" }),
+    ).toBeDisabled();
+    for (const roleSelect of screen.getAllByRole("combobox", {
+      name: "Role for Reviewer One",
+    })) {
+      expect(roleSelect).toBeDisabled();
+    }
+
+    resolveAction?.({
+      ok: true,
+      notice:
+        "Reviewer One's role changed from Reviewer to Approver. Active sessions were revoked; they must sign in again.",
+      data: {
+        user: {
+          id: "user-1",
+          displayName: "Reviewer One",
+          email: "reviewer1@example.com",
+          role: "approver",
+          isActive: true,
+          activeAssignmentCount: 0,
+          createdAt: "2026-08-01T12:00:00.000Z",
+          updatedAt: "2026-08-01T12:30:00.000Z",
+        },
+        oldRole: "reviewer",
+        newRole: "approver",
+        revokedSessionCount: 1,
+        actorMustRelogin: false,
+        resultingAuthVersion: 2,
+      },
+    });
+
+    await waitFor(() => {
+      expect(screen.getByRole("status")).toHaveTextContent(
+        "Reviewer One's role changed from Reviewer to Approver",
+      );
+      expect(
+        screen.getAllByRole("combobox", { name: "Role for Reviewer One" })[0],
+      ).toHaveValue("approver");
+      expect(
+        screen.getAllByRole("combobox", { name: "Role for Reviewer One" })[0],
+      ).toHaveFocus();
+    });
+    expect(routerRefreshMock).toHaveBeenCalled();
+  });
+
+  it("retains governance input and focuses an actionable server error", async () => {
+    const user = userEvent.setup();
+    const changeAccountRoleAction = vi.fn().mockResolvedValue({
+      ok: false,
+      code: "ASSIGNMENTS_INCOMPATIBLE",
+      message:
+        "Remove the listed active assignments before changing this account to Approver.",
+      assignmentBlockers: {
+        total: 1,
+        byRole: [
+          { role: "reviewer", count: 1, recordingTitles: ["Record one"] },
+        ],
+        managementHref:
+          "/administration?section=assignments&status=active&userId=user-1",
+      },
+    } satisfies ChangeAccountRoleActionResult);
+
+    render(
+      <AccountsSection
+        changeAccountRoleAction={changeAccountRoleAction}
+        model={createModel()}
+        phoneSafetyMode={false}
+      />,
+    );
+    await user.selectOptions(
+      screen.getAllByRole("combobox", { name: "Role for Reviewer One" })[0]!,
+      "approver",
+    );
+    const reason = screen.getAllByRole("textbox", {
+      name: "Change reason for Reviewer One",
+    })[0]!;
+    await user.type(reason, "Duties changed for coverage.");
+    await user.click(screen.getAllByRole("button", { name: "Save role" })[0]!);
+
+    await waitFor(() => {
+      expect(screen.getAllByRole("alert")[0]).toHaveFocus();
+    });
+    expect(
+      screen.getAllByRole("textbox", {
+        name: "Change reason for Reviewer One",
+      })[0],
+    ).toHaveValue("Duties changed for coverage.");
+    expect(screen.getAllByText("Record one").length).toBeGreaterThan(0);
+  });
+
+  it("navigates immediately after self-role success", async () => {
+    const user = userEvent.setup();
+    const navigateToSignIn = vi.fn();
+    const changeAccountRoleAction = vi.fn().mockResolvedValue({
+      ok: true,
+      notice: "Self role changed.",
+      data: {
+        user: {
+          id: "user-1",
+          displayName: "Reviewer One",
+          email: "reviewer1@example.com",
+          role: "uploader",
+          isActive: true,
+          activeAssignmentCount: 0,
+          createdAt: "2026-08-01T12:00:00.000Z",
+          updatedAt: "2026-08-01T12:30:00.000Z",
+        },
+        oldRole: "reviewer",
+        newRole: "uploader",
+        revokedSessionCount: 1,
+        actorMustRelogin: true,
+        resultingAuthVersion: 2,
+      },
+    } satisfies ChangeAccountRoleActionResult);
+
+    render(
+      <AccountsSection
+        changeAccountRoleAction={changeAccountRoleAction}
+        model={createModel()}
+        navigateToSignIn={navigateToSignIn}
+        phoneSafetyMode={false}
+      />,
+    );
+    await user.selectOptions(
+      screen.getAllByRole("combobox", { name: "Role for Reviewer One" })[0]!,
+      "uploader",
+    );
+    await user.type(
+      screen.getAllByRole("textbox", {
+        name: "Change reason for Reviewer One",
+      })[0]!,
+      "Self duties changed safely.",
+    );
+    await user.click(screen.getAllByRole("button", { name: "Save role" })[0]!);
+
+    await waitFor(() => {
+      expect(navigateToSignIn).toHaveBeenCalledWith("/?reason=role-changed");
+    });
+  });
+
+  it("discards an unsaved role draft when phone safety begins", async () => {
+    const user = userEvent.setup();
+    const { rerender } = render(
+      <AccountsSection model={createModel()} phoneSafetyMode={false} />,
+    );
+    await user.selectOptions(
+      screen.getAllByRole("combobox", { name: "Role for Reviewer One" })[0]!,
+      "approver",
+    );
+    await user.type(
+      screen.getAllByRole("textbox", {
+        name: "Change reason for Reviewer One",
+      })[0]!,
+      "Unsaved duties changed.",
+    );
+
+    rerender(<AccountsSection model={createModel()} phoneSafetyMode />);
+    expect(
+      screen.queryByRole("combobox", { name: "Role for Reviewer One" }),
+    ).not.toBeInTheDocument();
+    expect(screen.getAllByText("Reviewer").length).toBeGreaterThan(0);
+
+    rerender(<AccountsSection model={createModel()} phoneSafetyMode={false} />);
+    expect(
+      screen.queryByRole("textbox", {
+        name: "Change reason for Reviewer One",
+      }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.getAllByRole("combobox", { name: "Role for Reviewer One" })[0],
+    ).toHaveValue("reviewer");
   });
 
   it("keeps account facts visible on phone while hiding the create drawer", () => {

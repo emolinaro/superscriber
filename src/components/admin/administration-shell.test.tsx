@@ -3,14 +3,29 @@
 import { render, screen } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-const phoneSafetyModeMock = vi.fn(() => false);
+const { phoneSafetyModeMock, accountsSectionMock, breakGlassPanelMock } =
+  vi.hoisted(() => ({
+    phoneSafetyModeMock: vi.fn(() => false),
+    accountsSectionMock: vi.fn(),
+    breakGlassPanelMock: vi.fn(),
+  }));
 
 vi.mock("@/components/ui/phone-safety", () => ({
   usePhoneSafetyMode: () => phoneSafetyModeMock(),
 }));
 
 vi.mock("./accounts-section", () => ({
-  AccountsSection: () => <div>Accounts section</div>,
+  AccountsSection: (props: { phoneSafetyMode: boolean }) => {
+    accountsSectionMock(props);
+    return <div>Accounts section</div>;
+  },
+}));
+
+vi.mock("./break-glass-panel", () => ({
+  BreakGlassPanel: (props: { phoneSafetyMode: boolean }) => {
+    breakGlassPanelMock(props);
+    return <div>Break-glass panel</div>;
+  },
 }));
 
 vi.mock("./assignments-section", () => ({
@@ -25,6 +40,7 @@ import { AdministrationShell } from "./administration-shell";
 
 describe("AdministrationShell", () => {
   beforeEach(() => {
+    vi.clearAllMocks();
     phoneSafetyModeMock.mockReturnValue(false);
   });
 
@@ -45,7 +61,12 @@ describe("AdministrationShell", () => {
   it("shows the exact wider-screen phone notice while keeping inspection available", () => {
     phoneSafetyModeMock.mockReturnValue(true);
 
-    render(<AdministrationShell model={{ section: "accounts" } as never} section="accounts" />);
+    render(
+      <AdministrationShell
+        model={{ section: "accounts", breakGlass: {} } as never}
+        section="accounts"
+      />,
+    );
 
     expect(
       screen.getByText(
@@ -53,5 +74,11 @@ describe("AdministrationShell", () => {
       ),
     ).toBeVisible();
     expect(screen.getByText("Accounts section")).toBeVisible();
+    expect(accountsSectionMock).toHaveBeenCalledWith(
+      expect.objectContaining({ phoneSafetyMode: true }),
+    );
+    expect(breakGlassPanelMock).toHaveBeenCalledWith(
+      expect.objectContaining({ phoneSafetyMode: true }),
+    );
   });
 });
