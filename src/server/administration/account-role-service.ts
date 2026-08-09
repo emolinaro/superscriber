@@ -23,6 +23,7 @@ import {
 } from "@/server/db/client";
 import {
   authControl,
+  authSessions,
   recordingAssignments,
   recordings,
   users,
@@ -147,8 +148,52 @@ function safeRecordDenial(
   }
 }
 
+function revalidateActorAuthority(
+  db: AppDatabase,
+  params: { actorUserId: string; actorAuthSessionId: string },
+  now: string,
+) {
+  const row = db
+    .select({
+      session: authSessions,
+      actor: users,
+    })
+    .from(authSessions)
+    .innerJoin(users, eq(authSessions.userId, users.id))
+    .where(eq(authSessions.id, params.actorAuthSessionId))
+    .get();
+
+  const nowMs = Date.parse(now);
+  const idleExpiresAt = row ? Date.parse(row.session.idleExpiresAt) : NaN;
+  const absoluteExpiresAt = row ? Date.parse(row.session.absoluteExpiresAt) : NaN;
+
+  if (
+    !row ||
+    row.session.userId !== params.actorUserId ||
+    row.session.status !== "active" ||
+    row.session.authVersion !== row.actor.authVersion ||
+    !Number.isFinite(idleExpiresAt) ||
+    !Number.isFinite(absoluteExpiresAt) ||
+    nowMs >= idleExpiresAt ||
+    nowMs >= absoluteExpiresAt ||
+    !row.actor.isActive ||
+    row.actor.role !== "admin"
+  ) {
+    fail({
+      code: "ACCESS_DENIED",
+      message: ACCOUNT_ROLE_CHANGE_COPY.ACCESS_DENIED,
+    });
+  }
+
+  return row.actor;
+}
+
 export function changeAccountRole(
-  params: { actorUserId: string; input: ChangeAccountRoleInput },
+  params: {
+    actorUserId: string;
+    actorAuthSessionId: string;
+    input: ChangeAccountRoleInput;
+  },
   bundle: AppDatabaseBundle = getAppDbBundle(),
 ): ChangeAccountRoleServiceSuccess {
   let stage = "validation";
@@ -159,17 +204,7 @@ export function changeAccountRole(
       const input = validationFailure(params.input);
 
       stage = "actor";
-      const actor = db
-        .select()
-        .from(users)
-        .where(eq(users.id, params.actorUserId))
-        .get();
-      if (!actor || !actor.isActive || actor.role !== "admin") {
-        fail({
-          code: "ACCESS_DENIED",
-          message: ACCOUNT_ROLE_CHANGE_COPY.ACCESS_DENIED,
-        });
-      }
+      const actor = revalidateActorAuthority(db, params, now);
 
       stage = "target";
       const target = db

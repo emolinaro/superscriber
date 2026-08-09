@@ -6,6 +6,7 @@ import { CasefileCommandError } from "@/server/casefile/errors";
 
 const {
   getActivePrincipalMock,
+  getActiveSessionMock,
   saveDraftCommandMock,
   submitRevisionCommandMock,
   withdrawRevisionCommandMock,
@@ -24,6 +25,7 @@ const {
   revalidatePathMock,
 } = vi.hoisted(() => ({
   getActivePrincipalMock: vi.fn(),
+  getActiveSessionMock: vi.fn(),
   saveDraftCommandMock: vi.fn(),
   submitRevisionCommandMock: vi.fn(),
   withdrawRevisionCommandMock: vi.fn(),
@@ -52,6 +54,7 @@ vi.mock("next/navigation", () => ({
 
 vi.mock("@/server/session", () => ({
   getActivePrincipal: getActivePrincipalMock,
+  getActiveSession: getActiveSessionMock,
 }));
 
 vi.mock("@/server/casefile/commands", () => ({
@@ -124,6 +127,12 @@ const adminPrincipal = {
   email: "admin@example.com",
   displayName: "Admin",
   role: "admin",
+} as const;
+
+const adminActiveSession = {
+  user: adminPrincipal,
+  expiresAt: "2099-01-01T00:00:00.000Z",
+  authSessionId: "auth-session-admin-1",
 } as const;
 
 const casefile = {
@@ -432,6 +441,7 @@ describe("typed administration actions", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     getActivePrincipalMock.mockResolvedValue(adminPrincipal);
+    getActiveSessionMock.mockResolvedValue(adminActiveSession);
   });
 
   it("creates accounts without redirect query strings", async () => {
@@ -508,7 +518,7 @@ describe("typed administration actions", () => {
     });
   });
 
-  it("changes a role using only the live actor id and returns forced re-login copy", async () => {
+  it("changes a role using the live actor session and returns forced re-login copy", async () => {
     changeAccountRoleMock.mockReturnValue({
       user: {
         id: "user-2",
@@ -546,6 +556,7 @@ describe("typed administration actions", () => {
     });
     expect(changeAccountRoleMock).toHaveBeenCalledWith({
       actorUserId: "admin-1",
+      actorAuthSessionId: "auth-session-admin-1",
       input: {
         userId: "user-2",
         expectedRole: "reviewer",
@@ -558,7 +569,7 @@ describe("typed administration actions", () => {
   });
 
   it("rejects expired and malformed requests before service invocation", async () => {
-    getActivePrincipalMock.mockResolvedValueOnce(null);
+    getActiveSessionMock.mockResolvedValueOnce(null);
     await expect(
       changeAccountRoleAction({
         userId: "user-2",
@@ -572,7 +583,7 @@ describe("typed administration actions", () => {
       message: "Session expired. Sign in again to continue.",
     });
 
-    getActivePrincipalMock.mockResolvedValue(adminPrincipal);
+    getActiveSessionMock.mockResolvedValue(adminActiveSession);
     await expect(
       changeAccountRoleAction({
         userId: "user-2",

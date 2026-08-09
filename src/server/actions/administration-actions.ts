@@ -26,7 +26,7 @@ import {
   changeAccountRole,
   type ChangeAccountRoleServiceSuccess,
 } from "@/server/administration/account-role-service";
-import { getActivePrincipal } from "@/server/session";
+import { getActivePrincipal, getActiveSession } from "@/server/session";
 
 export type AdministrationMutationResult = {
   href: string;
@@ -170,14 +170,15 @@ function revalidateCommittedRoleChange(actorUserId: string, targetUserId: string
 export async function changeAccountRoleAction(
   input: ChangeAccountRoleInput,
 ): Promise<ChangeAccountRoleActionResult> {
-  const principal = await getActivePrincipal();
-  if (!principal) {
+  const activeSession = await getActiveSession();
+  if (!activeSession) {
     return {
       ok: false,
       code: "AUTH_EXPIRED",
       message: ACCOUNT_ROLE_CHANGE_COPY.AUTH_EXPIRED,
     };
   }
+  const principal = activeSession.user;
 
   const parsed = changeAccountRoleInputSchema.safeParse(input);
   if (!parsed.success) {
@@ -187,6 +188,7 @@ export async function changeAccountRoleAction(
   try {
     const data = changeAccountRole({
       actorUserId: principal.userId,
+      actorAuthSessionId: activeSession.authSessionId,
       input: parsed.data,
     });
     revalidateCommittedRoleChange(principal.userId, parsed.data.userId);

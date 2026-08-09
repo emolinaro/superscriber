@@ -20,6 +20,9 @@ import {
 } from "@/server/db/schema";
 
 const NOW = "2026-08-08T12:00:00.000Z";
+const ACTIVE_SESSION_EXPIRY = "2099-01-01T00:00:00.000Z";
+const ADMIN_1_SESSION_ID = "auth-session-admin-1";
+const ADMIN_2_SESSION_ID = "auth-session-admin-2";
 type Bundle = ReturnType<typeof openAppDatabase>;
 
 function insertUser(
@@ -44,6 +47,33 @@ function insertUser(
   }).run();
 }
 
+function insertAuthSession(
+  bundle: Bundle,
+  input: {
+    id: string;
+    userId: string;
+    status?: "active" | "revoked" | "expired";
+    authVersion?: number;
+  },
+) {
+  bundle.db.insert(authSessions).values({
+    id: input.id,
+    userId: input.userId,
+    authSource: "local",
+    authVersion: input.authVersion ?? 1,
+    providerSid: null,
+    externalIdentityId: null,
+    status: input.status ?? "active",
+    createdAt: NOW,
+    lastSeenAt: NOW,
+    idleExpiresAt: ACTIVE_SESSION_EXPIRY,
+    absoluteExpiresAt: ACTIVE_SESSION_EXPIRY,
+    revokedAt: input.status === "revoked" ? NOW : null,
+    revokedReason: input.status === "revoked" ? "test" : null,
+    emergencyActivationId: null,
+  }).run();
+}
+
 function setup(options: { secondAdmin?: boolean } = {}) {
   const bundle = openAppDatabase(":memory:");
   bundle.db.insert(workspaces).values({
@@ -57,11 +87,19 @@ function setup(options: { secondAdmin?: boolean } = {}) {
     role: "admin",
     displayName: "Admin One",
   });
+  insertAuthSession(bundle, {
+    id: ADMIN_1_SESSION_ID,
+    userId: "admin-1",
+  });
   if (options.secondAdmin ?? true) {
     insertUser(bundle, {
       id: "admin-2",
       role: "admin",
       displayName: "Admin Two",
+    });
+    insertAuthSession(bundle, {
+      id: ADMIN_2_SESSION_ID,
+      userId: "admin-2",
     });
   }
   insertUser(bundle, {
@@ -225,7 +263,11 @@ describe("changeAccountRole", () => {
     }
 
     const result = changeAccountRole(
-      { actorUserId: "admin-1", input: roleInput({ reason: "  Operational duties changed.  " }) },
+      {
+        actorUserId: "admin-1",
+        actorAuthSessionId: ADMIN_1_SESSION_ID,
+        input: roleInput({ reason: "  Operational duties changed.  " }),
+      },
       bundle,
     );
 
@@ -305,6 +347,7 @@ describe("changeAccountRole", () => {
     const result = changeAccountRole(
       {
         actorUserId: "admin-1",
+        actorAuthSessionId: ADMIN_1_SESSION_ID,
         input: roleInput({
           userId: "admin-1",
           expectedRole: "admin",
@@ -333,6 +376,7 @@ describe("changeAccountRole", () => {
         changeAccountRole(
           {
             actorUserId: "admin-1",
+            actorAuthSessionId: ADMIN_1_SESSION_ID,
             input: roleInput({
               userId: "admin-1",
               expectedRole: "admin",
@@ -376,6 +420,7 @@ describe("changeAccountRole", () => {
         changeAccountRole(
           {
             actorUserId: "admin-1",
+            actorAuthSessionId: ADMIN_1_SESSION_ID,
             input: roleInput({ expectedRole: "admin", newRole: "reviewer" }),
           },
           bundle,
@@ -393,6 +438,7 @@ describe("changeAccountRole", () => {
       changeAccountRole(
         {
           actorUserId: "admin-1",
+          actorAuthSessionId: ADMIN_1_SESSION_ID,
           input: roleInput({ expectedRole: "admin", newRole: "reviewer" }),
         },
         bundle,
@@ -423,7 +469,11 @@ describe("changeAccountRole", () => {
     const denied = failure(
       () =>
         changeAccountRole(
-          { actorUserId: "admin-1", input: roleInput({ newRole: "admin" }) },
+          {
+            actorUserId: "admin-1",
+            actorAuthSessionId: ADMIN_1_SESSION_ID,
+            input: roleInput({ newRole: "admin" }),
+          },
           bundle,
         ),
       "ASSIGNMENTS_INCOMPATIBLE",
@@ -475,6 +525,7 @@ describe("changeAccountRole", () => {
           changeAccountRole(
             {
               actorUserId: "admin-1",
+              actorAuthSessionId: ADMIN_1_SESSION_ID,
               input: roleInput({ expectedRole: currentRole, newRole }),
             },
             bundle,
@@ -499,6 +550,7 @@ describe("changeAccountRole", () => {
     const result = changeAccountRole(
       {
         actorUserId: "admin-1",
+        actorAuthSessionId: ADMIN_1_SESSION_ID,
         input: roleInput({ expectedRole: "uploader", newRole: "reviewer" }),
       },
       bundle,
@@ -514,7 +566,11 @@ describe("changeAccountRole", () => {
     failure(
       () =>
         changeAccountRole(
-          { actorUserId: "admin-1", input: roleInput({ userId: "missing" }) },
+          {
+            actorUserId: "admin-1",
+            actorAuthSessionId: ADMIN_1_SESSION_ID,
+            input: roleInput({ userId: "missing" }),
+          },
           bundle,
         ),
       "NOT_FOUND",
@@ -523,7 +579,11 @@ describe("changeAccountRole", () => {
     const stale = failure(
       () =>
         changeAccountRole(
-          { actorUserId: "admin-1", input: roleInput() },
+          {
+            actorUserId: "admin-1",
+            actorAuthSessionId: ADMIN_1_SESSION_ID,
+            input: roleInput(),
+          },
           bundle,
         ),
       "STATE_CHANGED",
@@ -534,7 +594,11 @@ describe("changeAccountRole", () => {
     failure(
       () =>
         changeAccountRole(
-          { actorUserId: "admin-1", input: roleInput() },
+          {
+            actorUserId: "admin-1",
+            actorAuthSessionId: ADMIN_1_SESSION_ID,
+            input: roleInput(),
+          },
           bundle,
         ),
       "ACCESS_DENIED",
@@ -543,7 +607,11 @@ describe("changeAccountRole", () => {
     failure(
       () =>
         changeAccountRole(
-          { actorUserId: "admin-1", input: roleInput() },
+          {
+            actorUserId: "admin-1",
+            actorAuthSessionId: ADMIN_1_SESSION_ID,
+            input: roleInput(),
+          },
           bundle,
         ),
       "ACCESS_DENIED",
@@ -553,6 +621,7 @@ describe("changeAccountRole", () => {
         changeAccountRole(
           {
             actorUserId: "admin-2",
+            actorAuthSessionId: ADMIN_2_SESSION_ID,
             input: roleInput({ reason: "short" }),
           },
           bundle,
@@ -562,13 +631,69 @@ describe("changeAccountRole", () => {
     bundle.sqlite.close();
   });
 
+  it.each([
+    {
+      label: "revoked",
+      prepare: (bundle: Bundle) => {
+        bundle.db
+          .update(authSessions)
+          .set({
+            status: "revoked",
+            revokedAt: NOW,
+            revokedReason: "test",
+          })
+          .where(eq(authSessions.id, ADMIN_1_SESSION_ID))
+          .run();
+      },
+    },
+    {
+      label: "auth-version-stale",
+      prepare: (bundle: Bundle) => {
+        bundle.db
+          .update(users)
+          .set({ authVersion: 2 })
+          .where(eq(users.id, "admin-1"))
+          .run();
+      },
+    },
+  ])("rejects $label actor authority before governed writes", ({ prepare }) => {
+    const bundle = setup();
+    const before = governedSnapshot(bundle);
+    prepare(bundle);
+
+    failure(
+      () =>
+        changeAccountRole(
+          {
+            actorUserId: "admin-1",
+            actorAuthSessionId: ADMIN_1_SESSION_ID,
+            input: roleInput(),
+          },
+          bundle,
+        ),
+      "ACCESS_DENIED",
+    );
+
+    const after = governedSnapshot(bundle);
+    expect(after.target).toEqual(before.target);
+    expect(after.sessions).toEqual(before.sessions);
+    expect(after.auditCount).toBe(before.auditCount);
+    expect(after.stateVersion).toBe(before.stateVersion);
+    bundle.sqlite.close();
+  });
+
   it("allows changing an inactive target and does not count it for final-admin protection", () => {
     const bundle = setup();
-    bundle.db.update(users).set({ role: "admin", isActive: false }).where(eq(users.id, "target-1")).run();
+    bundle.db
+      .update(users)
+      .set({ role: "admin", isActive: false })
+      .where(eq(users.id, "target-1"))
+      .run();
 
     const result = changeAccountRole(
       {
         actorUserId: "admin-1",
+        actorAuthSessionId: ADMIN_1_SESSION_ID,
         input: roleInput({ expectedRole: "admin", newRole: "uploader" }),
       },
       bundle,
@@ -583,14 +708,22 @@ describe("changeAccountRole", () => {
 
     expect(
       changeAccountRole(
-        { actorUserId: "admin-1", input: roleInput({ newRole: "approver" }) },
+        {
+          actorUserId: "admin-1",
+          actorAuthSessionId: ADMIN_1_SESSION_ID,
+          input: roleInput({ newRole: "approver" }),
+        },
         bundle,
       ).newRole,
     ).toBe("approver");
     const loser = failure(
       () =>
         changeAccountRole(
-          { actorUserId: "admin-1", input: roleInput({ newRole: "uploader" }) },
+          {
+            actorUserId: "admin-1",
+            actorAuthSessionId: ADMIN_1_SESSION_ID,
+            input: roleInput({ newRole: "uploader" }),
+          },
           bundle,
         ),
       "STATE_CHANGED",
@@ -631,7 +764,11 @@ describe("changeAccountRole", () => {
     failure(
       () =>
         changeAccountRole(
-          { actorUserId: "admin-1", input: roleInput() },
+          {
+            actorUserId: "admin-1",
+            actorAuthSessionId: ADMIN_1_SESSION_ID,
+            input: roleInput(),
+          },
           bundle,
         ),
       "INTERNAL_ERROR",
@@ -655,6 +792,7 @@ describe("changeAccountRole", () => {
         changeAccountRole(
           {
             actorUserId: "admin-1",
+            actorAuthSessionId: ADMIN_1_SESSION_ID,
             input: roleInput({
               userId: "admin-1",
               expectedRole: "admin",
@@ -682,7 +820,11 @@ describe("changeAccountRole", () => {
     const denied = failure(
       () =>
         changeAccountRole(
-          { actorUserId: "admin-1", input: roleInput() },
+          {
+            actorUserId: "admin-1",
+            actorAuthSessionId: ADMIN_1_SESSION_ID,
+            input: roleInput(),
+          },
           bundle,
         ),
       "INTERNAL_ERROR",
