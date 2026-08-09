@@ -6,7 +6,10 @@ import { BootstrapSetupForm } from "@/components/auth/bootstrap-setup-form";
 import { LoginForm } from "@/components/auth/login-form";
 import { OidcSignInButton } from "@/components/auth/oidc-sign-in-button";
 import { sanitizeReturnTo } from "@/lib/safe-return-to";
-import { resolveAuthSurfaceModel } from "@/lib/auth-surface-model";
+import {
+  buildAuthNotice,
+  resolveAuthSurfaceModel,
+} from "@/lib/auth-surface-model";
 import { loadAuthConfig } from "@/server/auth/auth-config";
 import {
   evaluateSourceZone,
@@ -24,48 +27,6 @@ type SearchParams = Promise<Record<string, string | string[] | undefined>>;
 
 function firstValue(value: string | string[] | undefined) {
   return Array.isArray(value) ? value[0] : value;
-}
-
-function buildNotice(
-  reason: string | undefined,
-  notice: string | undefined,
-  error: string | undefined,
-) {
-  // Every Auth.js/OAuth error code maps to one generic denial; the page must
-  // never reveal whether an email, subject, user, or group exists (6.3).
-  if (error) {
-    return {
-      tone: "danger" as const,
-      message:
-        "Access is not provisioned for this account, or sign-in could not be completed. Contact an administrator.",
-      focusHeading: true,
-    };
-  }
-  if (notice === "bootstrap-complete") {
-    return {
-      tone: "ok" as const,
-      message: "First-run setup is complete. Sign in with the admin account you just created.",
-      focusHeading: true,
-    };
-  }
-
-  if (reason === "logged-out") {
-    return {
-      tone: "ok" as const,
-      message: "Your session ended safely.",
-      focusHeading: true,
-    };
-  }
-
-  if (reason === "session-expired") {
-    return {
-      tone: "danger" as const,
-      message: "Session expired. Sign in again to continue.",
-      focusHeading: true,
-    };
-  }
-
-  return null;
 }
 
 export default async function LandingPage({
@@ -96,7 +57,7 @@ export default async function LandingPage({
     }
   }
   const surface = resolveAuthSurfaceModel({ mode: authMode, zone });
-  const notice = buildNotice(
+  const notice = buildAuthNotice(
     firstValue(params.reason),
     firstValue(params.notice),
     firstValue(params.error),

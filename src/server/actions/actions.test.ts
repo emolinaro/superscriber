@@ -16,6 +16,7 @@ const {
   createLocalUserMock,
   assignRecordingToUserMock,
   removeRecordingAssignmentMock,
+  changeAccountRoleMock,
   enterActionModeMock,
   exitActionModeMock,
   hasAnyUsersMock,
@@ -33,6 +34,7 @@ const {
   createLocalUserMock: vi.fn(),
   assignRecordingToUserMock: vi.fn(),
   removeRecordingAssignmentMock: vi.fn(),
+  changeAccountRoleMock: vi.fn(),
   enterActionModeMock: vi.fn(),
   exitActionModeMock: vi.fn(),
   hasAnyUsersMock: vi.fn(),
@@ -76,6 +78,13 @@ vi.mock("@/server/access/service", () => ({
   removeRecordingAssignment: removeRecordingAssignmentMock,
 }));
 
+vi.mock("@/server/administration/account-role-service", async (importOriginal) => ({
+  ...(await importOriginal<
+    typeof import("@/server/administration/account-role-service")
+  >()),
+  changeAccountRole: changeAccountRoleMock,
+}));
+
 vi.mock("@/server/casefile/action-mode", () => ({
   enterActionMode: enterActionModeMock,
   exitActionMode: exitActionModeMock,
@@ -92,9 +101,11 @@ import {
 } from "@/server/actions/casefile-actions";
 import {
   assignRecordingAction,
+  changeAccountRoleAction,
   createUserAction,
   unassignRecordingAction,
 } from "@/server/actions/administration-actions";
+import { AccountRoleChangeServiceError } from "@/server/administration/account-role-service";
 import {
   enterAdminActionModeAction,
   exitAdminActionModeAction,
@@ -495,6 +506,193 @@ describe("typed administration actions", () => {
         assignmentId: "assign-1",
       },
     });
+  });
+
+  it("changes a role using only the live actor id and returns forced re-login copy", async () => {
+    changeAccountRoleMock.mockReturnValue({
+      user: {
+        id: "user-2",
+        displayName: "Reviewer 2",
+        email: "reviewer2@example.com",
+        role: "approver",
+        isActive: true,
+        createdAt: "2026-08-01T12:10:00.000Z",
+        updatedAt: "2026-08-01T12:20:00.000Z",
+        activeAssignmentCount: 0,
+      },
+      oldRole: "reviewer",
+      newRole: "approver",
+      revokedSessionCount: 2,
+      actorMustRelogin: false,
+      resultingAuthVersion: 2,
+    });
+
+    await expect(
+      changeAccountRoleAction({
+        userId: "user-2",
+        expectedRole: "reviewer",
+        newRole: "approver",
+        reason: "  Duties changed for coverage.  ",
+      }),
+    ).resolves.toEqual({
+      ok: true,
+      notice:
+        "Reviewer 2's role changed from Reviewer to Approver. Active sessions were revoked; they must sign in again.",
+      data: expect.objectContaining({
+        oldRole: "reviewer",
+        newRole: "approver",
+        actorMustRelogin: false,
+      }),
+    });
+    expect(changeAccountRoleMock).toHaveBeenCalledWith({
+      actorUserId: "admin-1",
+      input: {
+        userId: "user-2",
+        expectedRole: "reviewer",
+        newRole: "approver",
+        reason: "Duties changed for coverage.",
+      },
+    });
+    expect(revalidatePathMock).toHaveBeenCalledWith("/administration");
+    expect(revalidatePathMock).toHaveBeenCalledWith("/workspace");
+  });
+
+  it("rejects expired and malformed requests before service invocation", async () => {
+    getActivePrincipalMock.mockResolvedValueOnce(null);
+    await expect(
+      changeAccountRoleAction({
+        userId: "user-2",
+        expectedRole: "reviewer",
+        newRole: "approver",
+        reason: "Duties changed for coverage.",
+      }),
+    ).resolves.toEqual({
+      ok: false,
+      code: "AUTH_EXPIRED",
+      message: "Session expired. Sign in again to continue.",
+    });
+
+    getActivePrincipalMock.mockResolvedValue(adminPrincipal);
+    await expect(
+      changeAccountRoleAction({
+        userId: "user-2",
+        expectedRole: "reviewer",
+        newRole: "reviewer",
+        reason: "short",
+        actorRole: "admin",
+      } as never),
+    ).resolves.toMatchObject({
+      ok: false,
+      code: "VALIDATION_ERROR",
+    });
+    expect(changeAccountRoleMock).not.toHaveBeenCalled();
+  });
+
+  it("preserves typed role failures and their recovery payload", async () => {
+    changeAccountRoleMock.mockImplementation(() => {
+      throw new AccountRoleChangeServiceError({
+        code: "ASSIGNMENTS_INCOMPATIBLE",
+        message: "Remove the listed active assignments before changing this account to Admin.",
+        assignmentBlockers: {
+          total: 1,
+          byRole: [
+            { role: "reviewer", count: 1, recordingTitles: ["Record one"] },
+          ],
+          managementHref:
+            "/administration?section=assignments&status=active&userId=user-2",
+        },
+      });
+    });
+
+    await expect(
+      changeAccountRoleAction({
+        userId: "user-2",
+        expectedRole: "reviewer",
+        newRole: "admin",
+        reason: "Duties changed for coverage.",
+      }),
+    ).resolves.toEqual({
+      ok: false,
+      code: "ASSIGNMENTS_INCOMPATIBLE",
+      message: "Remove the listed active assignments before changing this account to Admin.",
+      assignmentBlockers: {
+        total: 1,
+        byRole: [
+          { role: "reviewer", count: 1, recordingTitles: ["Record one"] },
+        ],
+        managementHref:
+          "/administration?section=assignments&status=active&userId=user-2",
+      },
+    });
+  });
+
+  it("keeps a committed success when either cache revalidation fails", async () => {
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    changeAccountRoleMock.mockReturnValue({
+      user: {
+        id: "admin-1",
+        displayName: "Admin",
+        email: "admin@example.com",
+        role: "reviewer",
+        isActive: true,
+        createdAt: "2026-08-01T12:00:00.000Z",
+        updatedAt: "2026-08-01T12:20:00.000Z",
+        activeAssignmentCount: 0,
+      },
+      oldRole: "admin",
+      newRole: "reviewer",
+      revokedSessionCount: 1,
+      actorMustRelogin: true,
+      resultingAuthVersion: 2,
+    });
+    revalidatePathMock.mockImplementationOnce(() => {
+      throw new Error("cache unavailable");
+    });
+
+    await expect(
+      changeAccountRoleAction({
+        userId: "admin-1",
+        expectedRole: "admin",
+        newRole: "reviewer",
+        reason: "Self duties changed safely.",
+      }),
+    ).resolves.toMatchObject({
+      ok: true,
+      data: { actorMustRelogin: true },
+    });
+    expect(revalidatePathMock).toHaveBeenCalledWith("/administration");
+    expect(revalidatePathMock).toHaveBeenCalledWith("/workspace");
+    expect(consoleError).toHaveBeenCalledWith(
+      "account role change committed but cache revalidation failed",
+      expect.objectContaining({ targetUserId: "admin-1" }),
+    );
+  });
+
+  it("maps raw failures to correlation-only internal errors", async () => {
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    changeAccountRoleMock.mockImplementation(() => {
+      throw new Error("SQLITE path /secret/database failed");
+    });
+
+    const result = await changeAccountRoleAction({
+      userId: "user-2",
+      expectedRole: "reviewer",
+      newRole: "approver",
+      reason: "Duties changed for coverage.",
+    });
+
+    expect(result).toMatchObject({
+      ok: false,
+      code: "INTERNAL_ERROR",
+      message:
+        "The role change could not be confirmed. Refresh the account list before trying again.",
+      correlationId: expect.stringMatching(/^[0-9a-f-]{36}$/),
+    });
+    expect(JSON.stringify(result)).not.toContain("SQLITE");
+    expect(consoleError).toHaveBeenCalledWith(
+      "account role change action failed",
+      expect.objectContaining({ actorUserId: "admin-1", targetUserId: "user-2" }),
+    );
   });
 
   it("surfaces forged assignment compatibility denials without redirecting", async () => {
