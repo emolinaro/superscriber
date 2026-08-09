@@ -145,6 +145,7 @@ export const authOptions: NextAuthOptions = {
           claims: (profile ?? {}) as Record<string, unknown>,
           config,
           recordEvent: false,
+          recordDeniedEvent: true,
         });
         return admission.ok;
       } catch {

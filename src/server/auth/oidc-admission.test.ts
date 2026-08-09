@@ -216,6 +216,41 @@ describe("OIDC admission", () => {
     });
   });
 
+  it("records only a redacted denial during the pre-mint admission check", () => {
+    const { db, sqlite } = setup();
+    const link = linkReviewer(db);
+    sqlite.prepare(`UPDATE users SET role = 'approver' WHERE id = 'user-reviewer'`).run();
+
+    const result = resolveOidcAdmission(
+      {
+        claims: claims(),
+        config: CONFIG,
+        recordEvent: false,
+        recordDeniedEvent: true,
+        now: NOW,
+      },
+      db,
+    );
+
+    expect(result).toEqual({ ok: false, reason: "role_mismatch" });
+    const rows = events(sqlite);
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({
+      type: "oidc.admission.denied",
+      outcome: "denied",
+      userId: "user-reviewer",
+    });
+    expect(JSON.parse(rows[0].metadata)).toMatchObject({
+      data: { reason: "role_mismatch", issuer: ISSUER },
+    });
+    expect(rows[0].metadata).not.toContain("subject-secret-1");
+    expect(rows[0].metadata).not.toContain(GROUPS.reviewer);
+    const identity = sqlite
+      .prepare(`SELECT last_login_at AS lastLoginAt FROM external_identities WHERE id = ?`)
+      .get(link.id) as { lastLoginAt: string | null };
+    expect(identity.lastLoginAt).toBeNull();
+  });
+
   it("is side-effect free when recordEvent is false", () => {
     const { db, sqlite } = setup();
     const link = linkReviewer(db);
