@@ -812,10 +812,49 @@ describe("changeAccountRole", () => {
     bundle.sqlite.close();
   });
 
+  it("creates the audit workspace inside the role transaction on a fresh governed database", () => {
+    const bundle = setup();
+    bundle.db.delete(workspaces).run();
+
+    const result = changeAccountRole(
+      {
+        actorUserId: "admin-1",
+        actorAuthSessionId: ADMIN_1_SESSION_ID,
+        input: roleInput(),
+      },
+      bundle,
+    );
+
+    const workspaceRows = bundle.db.select().from(workspaces).all();
+    const audit = bundle.db
+      .select()
+      .from(auditEvents)
+      .where(eq(auditEvents.type, "account.role_changed"))
+      .get();
+
+    expect(result.oldRole).toBe("reviewer");
+    expect(result.newRole).toBe("approver");
+    expect(workspaceRows).toHaveLength(1);
+    expect(audit?.workspaceId).toBe(workspaceRows[0]!.id);
+    expect(governedSnapshot(bundle)).toMatchObject({
+      target: { role: "approver", authVersion: 2 },
+      auditCount: 1,
+      stateVersion: 1,
+    });
+    bundle.sqlite.close();
+  });
+
   it("returns a safe correlation id and logs only identifiers and stage on unexpected failure", () => {
     const bundle = setup();
     bundle.db.delete(workspaces).run();
+    bundle.sqlite.exec(`
+      CREATE TRIGGER abort_account_role_audit
+      BEFORE INSERT ON audit_events
+      WHEN NEW.type = 'account.role_changed'
+      BEGIN SELECT RAISE(ABORT, 'audit unavailable'); END;
+    `);
     const consoleError = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const before = governedSnapshot(bundle);
 
     const denied = failure(
       () =>
@@ -830,6 +869,8 @@ describe("changeAccountRole", () => {
       "INTERNAL_ERROR",
     );
 
+    expect(bundle.db.select().from(workspaces).all()).toHaveLength(0);
+    expect(governedSnapshot(bundle)).toEqual(before);
     expect(denied.correlationId).toMatch(/^[0-9a-f-]{36}$/);
     expect(denied.message).not.toContain("workspace");
     expect(consoleError).toHaveBeenCalledWith(
@@ -838,7 +879,7 @@ describe("changeAccountRole", () => {
         correlationId: denied.correlationId,
         actorUserId: "admin-1",
         targetUserId: "target-1",
-        stage: "workspace",
+        stage: "audit",
       }),
     );
     expect(JSON.stringify(consoleError.mock.calls)).not.toContain(

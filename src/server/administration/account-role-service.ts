@@ -24,6 +24,7 @@ import {
 import {
   authControl,
   authSessions,
+  policyProfiles,
   recordingAssignments,
   recordings,
   users,
@@ -121,6 +122,34 @@ function assignmentBlockers(
     byRole,
     managementHref: `/administration?section=assignments&status=active&userId=${encodeURIComponent(targetUserId)}`,
   };
+}
+
+const DEFAULT_AUDIT_POLICY_PROFILE = {
+  id: "strict" as const,
+  label: "Strict regulated mode",
+  description: "Raw media never downloads. Approved exports stay policy-gated.",
+};
+
+const DEFAULT_AUDIT_WORKSPACE = {
+  id: "workspace-regulated",
+  name: "Regulated Review Workspace",
+  slug: "regulated-review-workspace",
+  policyProfileId: DEFAULT_AUDIT_POLICY_PROFILE.id,
+};
+
+function ensureAuditWorkspace(db: AppDatabase) {
+  const existing = db.select({ id: workspaces.id }).from(workspaces).get();
+  if (existing) {
+    return existing;
+  }
+
+  db.insert(policyProfiles)
+    .values(DEFAULT_AUDIT_POLICY_PROFILE)
+    .onConflictDoNothing()
+    .run();
+  db.insert(workspaces).values(DEFAULT_AUDIT_WORKSPACE).run();
+
+  return { id: DEFAULT_AUDIT_WORKSPACE.id };
 }
 
 function safeRecordDenial(
@@ -268,10 +297,7 @@ export function changeAccountRole(
       }
 
       stage = "workspace";
-      const workspace = db.select({ id: workspaces.id }).from(workspaces).get();
-      if (!workspace) {
-        throw new Error("The account role audit workspace is unavailable.");
-      }
+      const workspace = ensureAuditWorkspace(db);
 
       stage = "role-update";
       const update = db
