@@ -30,6 +30,8 @@ SUPERSCRIBER_DB_PATH=/path/to/superscriber.db \
 While signed in as admin, the Administration > Accounts > Emergency access
 panel also offers first designation.
 
+The designated custodian cannot be demoted in Administration. Transfer the designation before changing the custodian's role. The server rejects a role change until the transfer has committed.
+
 Transfer to a different existing admin is atomic - the old account's local
 password path is disabled and its sessions revoked before the pointer moves:
 

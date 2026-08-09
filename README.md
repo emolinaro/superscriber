@@ -59,6 +59,12 @@ http://localhost:3000
 
 For UI-only development, that is enough. For the default internal transcription path on a local non-Docker deployment, you also need the Python worker setup below.
 
+### Account role administration
+
+On a tablet or desktop, an administrator can open **Administration > Accounts** and choose a role from any account row, including their own. A changed selection requires a 10-500 character reason and an explicit **Save role** or **Cancel** action. The server rejects a final-active-admin demotion, a break-glass custodian demotion, or a change that conflicts with active assignments and explains the required recovery step.
+
+A successful save atomically records the role-change audit, increments the account's authorization version, and revokes all of that account's active sessions. The affected person must sign in again. Phone safety mode keeps the same account facts visible but does not render role or other administration mutation controls.
+
 ## Local Non-Docker Runtime
 
 The default appliance mode uses a separate Python worker process. On a local host, install its dependencies into a `uv`-managed virtual environment and run it alongside the Next.js app.
