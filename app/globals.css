@@ -1,5 +1,6 @@
 @import "../src/styles/tokens.css";
 @import "../src/styles/base.css";
+@import "../src/styles/brand.css";
 @import "../src/styles/shell.css";
 @import "../src/styles/auth.css";
 @import "../src/styles/inbox.css";
