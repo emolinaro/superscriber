@@ -57,16 +57,18 @@ export function resolveOidcAdmission(
     claims: Record<string, unknown>;
     config: OidcAuthConfig;
     recordEvent?: boolean;
+    recordDeniedEvent?: boolean;
     now?: Date;
   },
   db: AppDatabase = getAppDb(),
 ): OidcAdmission {
   const { claims, config } = input;
   const recordEvent = input.recordEvent ?? true;
+  const recordDeniedEvent = input.recordDeniedEvent ?? recordEvent;
   const now = input.now ?? new Date();
 
   const deny = (reason: OidcDenialReason, userId: string | null = null): OidcAdmission => {
-    if (recordEvent) {
+    if (recordDeniedEvent) {
       try {
         recordSecurityEvent(
           {

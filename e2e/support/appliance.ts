@@ -388,6 +388,36 @@ conn.close()
   });
 }
 
+export function accountRoleFactsForEmail(email: string) {
+  return queryRuntimeRows<{
+    id: string;
+    role: string;
+    isActive: number;
+    authVersion: number;
+  }>(
+    `select id, role, is_active as isActive, auth_version as authVersion
+     from users where email = ?`,
+    [email],
+  )[0];
+}
+
+export function accountRoleAuditRows(userId: string) {
+  return queryRuntimeRows<{
+    actorUserId: string | null;
+    actorRole: string;
+    createdAt: string;
+    metadata: string;
+  }>(
+    `select actor_user_id as actorUserId, actor_role as actorRole,
+            created_at as createdAt, metadata
+     from audit_events
+     where type = 'account.role_changed'
+       and json_extract(metadata, '$.data.targetUserId') = ?
+     order by created_at`,
+    [userId],
+  );
+}
+
 export function authSessionRowsForEmail(email: string) {
   const sql = `select auth_sessions.id, auth_sessions.status, auth_sessions.auth_source as authSource, auth_sessions.revoked_reason as revokedReason from auth_sessions join users on users.id = auth_sessions.user_id where users.email = ? order by auth_sessions.created_at`;
   if (e2eContainerName()) {
@@ -495,7 +525,7 @@ async function accountVisible(page: Page, user: LocalUser) {
   return cell.isVisible().catch(() => false);
 }
 
-async function createLocalAccount(page: Page, user: LocalUser) {
+export async function ensureLocalAccount(page: Page, user: LocalUser) {
   if (await accountVisible(page, user)) {
     return;
   }
@@ -636,7 +666,7 @@ async function assignRecording(page: Page, recordingTitle: string, user: LocalUs
 export async function createAndAssignUsers(page: Page, recordingId: string): Promise<void> {
   await page.goto("/administration?section=accounts");
   for (const user of [uploaderUser, reviewerUser, approverUser, outsiderUser]) {
-    await createLocalAccount(page, user);
+    await ensureLocalAccount(page, user);
   }
 
   await assignRecording(page, sharedRecordingTitle, reviewerUser);

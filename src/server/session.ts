@@ -15,6 +15,7 @@ export type EmergencySessionContext = {
 export type ActiveSession = {
   user: Principal;
   expiresAt: string;
+  authSessionId: string;
   /** Present only for break-glass sessions (plan section 8.4). */
   emergency?: EmergencySessionContext;
 };
@@ -71,6 +72,7 @@ export async function getActiveSession(): Promise<ActiveSession | null> {
       role: session.user.role,
     },
     expiresAt: session.expires,
+    authSessionId: session.authSessionId,
     emergency:
       session.authSource === "break_glass"
         ? (readEmergencyContext(session.authSessionId) ?? undefined)

@@ -66,7 +66,12 @@ export function AdministrationShell({
 
       {model.section === "accounts" ? (
         <>
-          {model.breakGlass ? <BreakGlassPanel model={model.breakGlass} /> : null}
+          {model.breakGlass ? (
+            <BreakGlassPanel
+              model={model.breakGlass}
+              phoneSafetyMode={phoneSafetyMode}
+            />
+          ) : null}
           <AccountsSection model={model} phoneSafetyMode={phoneSafetyMode} />
         </>
       ) : null}

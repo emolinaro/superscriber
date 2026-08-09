@@ -6,6 +6,7 @@ import {
   bootstrapAndLogin,
   completeReasonDialog,
   createAndAssignUsers,
+  ensureLocalAccount,
   firstTranscriptRow,
   login,
   openAssignedCasefile,
@@ -13,7 +14,15 @@ import {
   openCasefile,
   reviewerUser,
   uploadFixture,
+  type LocalUser,
 } from "./support/appliance";
+
+const accessibilityRoleUser: LocalUser = {
+  displayName: "Accessibility Role Reviewer",
+  email: "accessibility-role@example.com",
+  password: "Superscriber!123",
+  role: "reviewer",
+};
 
 async function expectNoViolations(page: Parameters<typeof openCasefile>[0], label: string) {
   await page.waitForLoadState("networkidle");
@@ -25,12 +34,31 @@ async function expectNoViolations(page: Parameters<typeof openCasefile>[0], labe
 
 test.describe.serial("accessibility workflows", () => {
   test("passes axe across auth, inbox, casefile, export, and administration surfaces", async ({ page }) => {
+    test.slow();
     await page.goto("/");
     await expect(page.getByRole("heading", { name: /First-run setup|Sign in/ })).toBeVisible();
     await expectNoViolations(page, "landing auth surface");
 
     await bootstrapAndLogin(page, adminUser);
     await expectNoViolations(page, "admin inbox");
+
+    await ensureLocalAccount(page, accessibilityRoleUser);
+    await page.goto("/administration?section=accounts");
+    await page.getByRole("searchbox", { name: "Search accounts" }).fill(
+      accessibilityRoleUser.email,
+    );
+    await page.getByRole("button", { name: "Search" }).click();
+    await page
+      .getByRole("combobox", {
+        name: `Role for ${accessibilityRoleUser.displayName}`,
+      })
+      .selectOption("approver");
+    await page
+      .getByRole("textbox", {
+        name: `Change reason for ${accessibilityRoleUser.displayName}`,
+      })
+      .fill("Accessibility duties changed safely.");
+    await expectNoViolations(page, "dirty account role editor");
 
     const recordingId = await uploadFixture(page, { title: "Accessible governed record" });
     await createAndAssignUsers(page, recordingId);

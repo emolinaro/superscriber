@@ -220,6 +220,7 @@ export type AuditEvent = {
     | "assignment.created"
     | "assignment.completed"
     | "assignment.removed"
+    | "account.role_changed"
     | "admin.action_mode.entered"
     | "admin.action_mode.exited"
     | "export.issued"

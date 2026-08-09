@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useTransition } from "react";
+import { useEffect, useState, useTransition } from "react";
 import type { BreakGlassPanelModel } from "@/server/administration/service";
 import {
   beginBreakGlassKeyEnrollmentAction,
@@ -62,7 +62,13 @@ function attestationToJSON(credential: PublicKeyCredential) {
   };
 }
 
-export function BreakGlassPanel({ model }: { model: BreakGlassPanelModel }) {
+export function BreakGlassPanel({
+  model,
+  phoneSafetyMode,
+}: {
+  model: BreakGlassPanelModel;
+  phoneSafetyMode: boolean;
+}) {
   const [notice, setNotice] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [designeeId, setDesigneeId] = useState("");
@@ -70,6 +76,12 @@ export function BreakGlassPanel({ model }: { model: BreakGlassPanelModel }) {
   const [keyLabel, setKeyLabel] = useState("");
   const [recoveryCodes, setRecoveryCodes] = useState<string[] | null>(null);
   const [isPending, startTransition] = useTransition();
+
+  useEffect(() => {
+    if (phoneSafetyMode) {
+      setRecoveryCodes(null);
+    }
+  }, [phoneSafetyMode]);
 
   return (
     <section aria-labelledby="break-glass-heading" className="panel">
@@ -101,7 +113,7 @@ export function BreakGlassPanel({ model }: { model: BreakGlassPanelModel }) {
           </p>
         ) : null}
 
-        {!model.designation ? (
+        {!phoneSafetyMode && !model.designation ? (
           <div className="form-grid">
             <div className="field">
               <label className="field-label" htmlFor="bg-designee">
@@ -162,7 +174,7 @@ export function BreakGlassPanel({ model }: { model: BreakGlassPanelModel }) {
           </p>
         ) : null}
 
-        {model.designation && model.viewerIsCustodian ? (
+        {!phoneSafetyMode && model.designation && model.viewerIsCustodian ? (
           <div className="form-grid">
             <div className="field">
               <label className="field-label" htmlFor="bg-key-label">
@@ -238,7 +250,7 @@ export function BreakGlassPanel({ model }: { model: BreakGlassPanelModel }) {
           </div>
         ) : null}
 
-        {recoveryCodes ? (
+        {!phoneSafetyMode && recoveryCodes ? (
           <div aria-live="polite" className="break-glass-codes" role="alert">
             <p className="field-note">
               Save these codes now under dual custody. They are shown once and never again.

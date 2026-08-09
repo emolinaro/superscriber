@@ -1,5 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { resolveAuthSurfaceModel } from "@/lib/auth-surface-model";
+import {
+  buildAuthNotice,
+  resolveAuthSurfaceModel,
+} from "@/lib/auth-surface-model";
 
 describe("auth surface model", () => {
   it("local mode shows only the credentials form", () => {
@@ -20,6 +23,14 @@ describe("auth surface model", () => {
       showLocalCredentialsForm: true,
       showOidcSignIn: true,
       showBreakGlassDisclosure: true,
+    });
+  });
+
+  it("returns the forced re-login notice for a completed account role change", () => {
+    expect(buildAuthNotice("role-changed", undefined, undefined)).toEqual({
+      tone: "ok",
+      message: "Your account role changed. Sign in again to continue.",
+      focusHeading: true,
     });
   });
 

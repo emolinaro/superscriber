@@ -25,6 +25,7 @@ import {
   approvals,
   authControl,
   breakGlassRecoveryCodes,
+  externalIdentities,
   recordingAssignments,
   recordings,
   revisions,
@@ -59,21 +60,33 @@ export type BreakGlassPanelModel = {
   adminCandidates: Array<{ id: string; displayName: string }>;
 };
 
+export type AccountRoleManagementFacts = {
+  activeAssignments: {
+    reviewer: number;
+    approver: number;
+  };
+  hasActiveOidcIdentity: boolean;
+  isBreakGlassAdministrator: boolean;
+  isSoleActiveAdministrator: boolean;
+};
+
 export type AdministrationAccountsViewModel = {
   section: "accounts";
   query: string;
   columns: Array<{ id: string; label: string }>;
-  users: Array<{
-    id: string;
-    displayName: string;
-    email: string;
-    role: Principal["role"];
-    roleLabel: string;
-    activeAssignmentCount: number;
-    createdAt: string;
-    createdAtLabel: string;
-    createdAtIso: string;
-  }>;
+  users: Array<
+    {
+      id: string;
+      displayName: string;
+      email: string;
+      role: Principal["role"];
+      roleLabel: string;
+      activeAssignmentCount: number;
+      createdAt: string;
+      createdAtLabel: string;
+      createdAtIso: string;
+    } & AccountRoleManagementFacts
+  >;
   breakGlass: BreakGlassPanelModel;
 };
 
@@ -512,7 +525,34 @@ export function listAdministration(
 
   const query = firstValue(values.query)?.trim() ?? "";
   const needle = query.toLowerCase();
-  const users = listLocalUsers(db)
+  const localUsers = listLocalUsers(db);
+  const designationRow = db.select().from(authControl).where(eq(authControl.id, 1)).get();
+  const activeAdminCount = localUsers.filter(
+    (user) => user.role === "admin" && user.isActive,
+  ).length;
+  const activeAssignmentFacts = db
+    .select({
+      userId: recordingAssignments.userId,
+      role: recordingAssignments.assignmentRole,
+    })
+    .from(recordingAssignments)
+    .where(eq(recordingAssignments.status, "active"))
+    .all()
+    .reduce<Map<string, { reviewer: number; approver: number }>>((map, row) => {
+      const counts = map.get(row.userId) ?? { reviewer: 0, approver: 0 };
+      counts[row.role] += 1;
+      map.set(row.userId, counts);
+      return map;
+    }, new Map());
+  const oidcLinkedUserIds = new Set(
+    db
+      .select({ userId: externalIdentities.userId })
+      .from(externalIdentities)
+      .where(eq(externalIdentities.status, "active"))
+      .all()
+      .map((row) => row.userId),
+  );
+  const users = localUsers
     .filter((user) => {
       if (!needle) {
         return true;
@@ -531,12 +571,20 @@ export function listAdministration(
       role: user.role,
       roleLabel: formatRoleLabel(user.role),
       activeAssignmentCount: user.activeAssignmentCount,
+      activeAssignments: activeAssignmentFacts.get(user.id) ?? {
+        reviewer: 0,
+        approver: 0,
+      },
+      hasActiveOidcIdentity: oidcLinkedUserIds.has(user.id),
+      isBreakGlassAdministrator:
+        designationRow?.breakGlassUserId === user.id,
+      isSoleActiveAdministrator:
+        user.role === "admin" && user.isActive && activeAdminCount === 1,
       createdAt: user.createdAt,
       createdAtLabel: formatDateTimeUtc(user.createdAt),
       createdAtIso: formatDateTimeIso(user.createdAt),
     }));
 
-  const designationRow = db.select().from(authControl).where(eq(authControl.id, 1)).get();
   const designee = designationRow
     ? db
         .select({ id: usersTable.id, displayName: usersTable.displayName })
@@ -576,7 +624,7 @@ export function listAdministration(
           )
           .get()!.count
       : 0,
-    adminCandidates: listLocalUsers(db)
+    adminCandidates: localUsers
       .filter((user) => user.role === "admin" && user.isActive)
       .map((user) => ({ id: user.id, displayName: user.displayName })),
   };
