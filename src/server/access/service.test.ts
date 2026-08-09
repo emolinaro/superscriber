@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { eq } from "drizzle-orm";
 import type { Principal, RecordingAssignment } from "@/domain/models";
 import * as accessService from "@/server/access/service";
@@ -384,6 +384,109 @@ describe("access service", () => {
           message: "Review work cannot be assigned until ingest recovers.",
         }),
       );
+    } finally {
+      bundle.sqlite.close();
+    }
+  });
+
+  it("reloads the assignee role only after acquiring the assignment write transaction", async () => {
+    const bundle = openAppDatabase(":memory:");
+
+    try {
+      const admin = await createLocalUser({
+        displayName: "Admin",
+        email: "admin-freshness@example.com",
+        password: "correct horse battery staple",
+        role: "admin",
+      }, bundle.db);
+      const reviewer = await createLocalUser({
+        displayName: "Reviewer",
+        email: "reviewer-freshness@example.com",
+        password: "correct horse battery staple",
+        role: "reviewer",
+      }, bundle.db);
+      insertRecordingFixture(bundle, {
+        recordingId: "rec-role-freshness",
+        currentRevisionId: "rev-role-freshness",
+      });
+
+      const originalTransaction = bundle.sqlite.transaction.bind(bundle.sqlite);
+      vi.spyOn(bundle.sqlite, "transaction").mockImplementation((operation) => {
+        bundle.sqlite
+          .prepare("UPDATE users SET role = 'approver' WHERE id = ?")
+          .run(reviewer.id);
+        return originalTransaction(operation);
+      });
+
+      const result = accessService.assignRecordingToUser(
+        {
+          recordingId: "rec-role-freshness",
+          userId: reviewer.id,
+          assignedBy: toPrincipal(admin),
+        },
+        bundle,
+      );
+
+      expect(result.assignment.assignmentRole).toBe("approver");
+      expect(
+        bundle.db
+          .select({ role: recordingAssignments.assignmentRole })
+          .from(recordingAssignments)
+          .where(eq(recordingAssignments.id, result.assignment.id))
+          .get(),
+      ).toEqual({ role: "approver" });
+    } finally {
+      bundle.sqlite.close();
+    }
+  });
+
+  it("returns the procedural assignment error when the role becomes non-assignable before insertion", async () => {
+    const bundle = openAppDatabase(":memory:");
+
+    try {
+      const admin = await createLocalUser({
+        displayName: "Admin",
+        email: "admin-nonassignable@example.com",
+        password: "correct horse battery staple",
+        role: "admin",
+      }, bundle.db);
+      const reviewer = await createLocalUser({
+        displayName: "Reviewer",
+        email: "reviewer-nonassignable@example.com",
+        password: "correct horse battery staple",
+        role: "reviewer",
+      }, bundle.db);
+      insertRecordingFixture(bundle, {
+        recordingId: "rec-role-nonassignable",
+        currentRevisionId: "rev-role-nonassignable",
+      });
+
+      const originalTransaction = bundle.sqlite.transaction.bind(bundle.sqlite);
+      vi.spyOn(bundle.sqlite, "transaction").mockImplementation((operation) => {
+        bundle.sqlite
+          .prepare("UPDATE users SET role = 'uploader' WHERE id = ?")
+          .run(reviewer.id);
+        return originalTransaction(operation);
+      });
+
+      expect(() =>
+        accessService.assignRecordingToUser(
+          {
+            recordingId: "rec-role-nonassignable",
+            userId: reviewer.id,
+            assignedBy: toPrincipal(admin),
+          },
+          bundle,
+        ),
+      ).toThrow("Only reviewer and approver accounts can receive recording assignments.");
+      expect(bundle.db.select().from(recordingAssignments).all()).toEqual([]);
+      expect(
+        bundle.db
+          .select()
+          .from(auditEvents)
+          .where(eq(auditEvents.type, "assignment.created"))
+          .all(),
+      ).toEqual([]);
     } finally {
       bundle.sqlite.close();
     }
