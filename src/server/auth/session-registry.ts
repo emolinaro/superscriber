@@ -320,9 +320,9 @@ export function revokeUserSessions(
   userId: string,
   reason: string,
   db: AppDatabase = getAppDb(),
-  options: { exceptSessionId?: string } = {},
+  options: { exceptSessionId?: string; now?: Date } = {},
 ): number {
-  const now = new Date();
+  const now = options.now ?? new Date();
   const active = db
     .select({ id: authSessions.id })
     .from(authSessions)
