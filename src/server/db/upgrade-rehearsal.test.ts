@@ -110,7 +110,7 @@ function invariants(sqlite: Database.Database) {
 }
 
 describe("migration rehearsal on production-shaped copies", () => {
-  it("stages v2 through v7 preserving every id and reference count; backup stays restorable", () => {
+  it("stages v2 through v8 preserving every id and reference count; backup stays restorable", () => {
     const production = new Database(":memory:");
     production.pragma("foreign_keys = ON");
     runMigrations(production, 2);
@@ -121,7 +121,7 @@ describe("migration rehearsal on production-shaped copies", () => {
     const backup = Buffer.from(production.serialize());
 
     // Staged migration, one version at a time, as runbooks describe.
-    for (const stage of [3, 4, 5, 6, 7]) {
+    for (const stage of [3, 4, 5, 6, 7, 8]) {
       runMigrations(production, stage);
       expect(invariants(production)).toEqual(before);
       expect(production.prepare(`PRAGMA foreign_key_check`).all()).toEqual([]);
@@ -152,7 +152,7 @@ describe("migration rehearsal on production-shaped copies", () => {
         .prepare(`SELECT version FROM schema_migrations ORDER BY version`)
         .all()
         .map((row) => (row as { version: number }).version),
-    ).toEqual([1, 2, 3, 4, 5, 6, 7]);
+    ).toEqual([1, 2, 3, 4, 5, 6, 7, 8]);
 
     production.close();
     restored.close();

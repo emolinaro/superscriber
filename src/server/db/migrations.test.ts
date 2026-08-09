@@ -102,6 +102,7 @@ describe("migrations", () => {
       { version: 5 },
       { version: 6 },
       { version: 7 },
+      { version: 8 },
     ]);
   });
 
@@ -201,6 +202,121 @@ describe("migrations", () => {
         ) VALUES ('link-2', 'user-a', 'https://issuer/', 'sub-1', 'active', '${now}', 'test');
       `),
     ).toThrow(/UNIQUE/);
+  });
+
+  it("upgrades v7 with final-admin and assignment-role direct-writer guards", () => {
+    const sqlite = new Database(":memory:");
+    sqlite.pragma("foreign_keys = ON");
+    runMigrations(sqlite, 7);
+    const now = "2026-08-08T00:00:00.000Z";
+
+    sqlite.exec(`
+      INSERT INTO policy_profiles (id, label, description)
+        VALUES ('strict', 'Strict regulated mode', 'Strict regulated mode.');
+      INSERT INTO workspaces (id, name, slug, policy_profile_id)
+        VALUES ('workspace-role-guards', 'Workspace', 'workspace-role-guards', 'strict');
+      INSERT INTO users (
+        id, email, display_name, password_hash, role, is_active, auth_version,
+        created_at, updated_at
+      ) VALUES
+        ('admin-1', 'admin-1@example.com', 'Admin One', 'hash', 'admin', 1, 1, '${now}', '${now}'),
+        ('admin-2', 'admin-2@example.com', 'Admin Two', 'hash', 'admin', 1, 1, '${now}', '${now}'),
+        ('assigned-reviewer', 'reviewer@example.com', 'Reviewer', 'hash', 'reviewer', 1, 1, '${now}', '${now}'),
+        ('repair-user', 'repair@example.com', 'Repair User', 'hash', 'uploader', 1, 1, '${now}', '${now}');
+      INSERT INTO recordings (
+        id, workspace_id, title, source, media_kind, mime_type, media_path,
+        original_file_name, language_hint, uploaded_by_role, uploaded_by_user_id,
+        ingestion_session_id, transcript_job_id, integrity_state, transcript_job_state,
+        current_revision_id, approved_revision_id, pending_revision_id,
+        verification_summary, created_at, updated_at, automation_cursor
+      ) VALUES (
+        'rec-role-guards', 'workspace-role-guards', 'Role guard recording', 'upload',
+        'audio', 'audio/wav', NULL, 'role-guard.wav', 'english', 'uploader', NULL,
+        NULL, NULL, 'verified', 'completed', NULL, NULL, NULL, 'Ready',
+        '${now}', '${now}', NULL
+      );
+      INSERT INTO recording_assignments (
+        id, recording_id, user_id, assigned_by_user_id, assignment_role, status,
+        is_active, created_at, updated_at
+      ) VALUES
+        ('assignment-reviewer', 'rec-role-guards', 'assigned-reviewer', 'admin-1',
+          'reviewer', 'active', 1, '${now}', '${now}'),
+        ('assignment-repair', 'rec-role-guards', 'repair-user', 'admin-1',
+          'reviewer', 'active', 1, '${now}', '${now}');
+    `);
+
+    runMigrations(sqlite);
+    runMigrations(sqlite);
+
+    expect(
+      sqlite.prepare("select version from schema_migrations order by version").all(),
+    ).toContainEqual({ version: 8 });
+    expect(
+      sqlite
+        .prepare(
+          "select count(*) as count from sqlite_master where type = 'trigger' and name like '%role_guard%'",
+        )
+        .get(),
+    ).toEqual({ count: 4 });
+
+    sqlite.prepare("update users set is_active = 0 where id = 'admin-2'").run();
+    expect(() =>
+      sqlite.prepare("update users set role = 'reviewer' where id = 'admin-1'").run(),
+    ).toThrow(/at least one active administrator must remain/);
+    sqlite.prepare("update users set is_active = 1 where id = 'admin-2'").run();
+
+    expect(() =>
+      sqlite
+        .prepare("update users set role = 'uploader' where id = 'assigned-reviewer'")
+        .run(),
+    ).toThrow(/active assignments must match the user's role/);
+
+    expect(() =>
+      sqlite
+        .prepare(
+          `INSERT INTO recording_assignments (
+            id, recording_id, user_id, assigned_by_user_id, assignment_role, status,
+            is_active, created_at, updated_at
+          ) VALUES (?, ?, ?, ?, 'approver', 'active', 1, ?, ?)`,
+        )
+        .run(
+          "bad-assignment",
+          "rec-role-guards",
+          "assigned-reviewer",
+          "admin-2",
+          now,
+          now,
+        ),
+    ).toThrow(/active assignment role must match the assigned user's role/);
+
+    sqlite
+      .prepare(
+        `INSERT INTO recording_assignments (
+          id, recording_id, user_id, assigned_by_user_id, assignment_role, status,
+          is_active, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, 'approver', 'removed', 0, ?, ?)`,
+      )
+      .run(
+        "historical-assignment",
+        "rec-role-guards",
+        "assigned-reviewer",
+        "admin-2",
+        now,
+        now,
+      );
+    expect(() =>
+      sqlite
+        .prepare(
+          "update recording_assignments set status = 'active', is_active = 1 where id = 'historical-assignment'",
+        )
+        .run(),
+    ).toThrow(/active assignment role must match the assigned user's role/);
+
+    expect(() =>
+      sqlite.prepare("update users set role = 'reviewer' where id = 'repair-user'").run(),
+    ).not.toThrow();
+    expect(sqlite.prepare("PRAGMA foreign_key_check").all()).toEqual([]);
+    sqlite.close();
   });
 
   it("preserves legacy rows and normalizes approved assignments and reopened pointers", () => {
