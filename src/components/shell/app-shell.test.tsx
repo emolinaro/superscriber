@@ -69,6 +69,23 @@ describe("AppShell", () => {
     expect(screen.getByRole("link", { name: "Work" })).not.toHaveAttribute("aria-current");
   });
 
+  it("keeps Superscriber as one accessible workspace link around the small hidden mark", () => {
+    const { container } = render(
+      <AppShell principal={principal("admin")}>
+        <div>Workspace body</div>
+      </AppShell>,
+    );
+
+    const brand = screen.getByRole("link", { name: "Superscriber" });
+    expect(brand).toHaveAttribute("href", "/workspace");
+    expect(brand).toHaveClass("app-shell__brand");
+    expect(brand.querySelector(".superscriber-logo")).toHaveClass("superscriber-logo-sm");
+    expect(container.querySelector("svg.superscriber-logo-mark")).toHaveAttribute(
+      "aria-hidden",
+      "true",
+    );
+  });
+
   it("renders a skip link, 44 px target class hooks, and account details", async () => {
     const user = userEvent.setup();
 

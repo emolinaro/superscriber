@@ -1,0 +1,141 @@
+.superscriber-logo {
+  --logo-backdrop: rgba(255, 252, 246, 0.74);
+  --logo-backdrop-line: rgba(20, 36, 33, 0.08);
+  --logo-primary: #173b38;
+  --logo-secondary: #28544f;
+  --logo-fold-right: #d36b3e;
+  --logo-fold-left: #b85c37;
+  --logo-prefix: rgba(20, 36, 33, 0.62);
+  --logo-wordmark: #112a28;
+  --logo-descriptor: rgba(20, 36, 33, 0.56);
+  display: inline-grid;
+  gap: 10px;
+}
+
+.superscriber-logo-lockup {
+  display: inline-flex;
+  align-items: center;
+  gap: 14px;
+}
+
+.superscriber-logo-mark {
+  width: 62px;
+  height: 62px;
+  flex: 0 0 auto;
+  overflow: visible;
+  filter: drop-shadow(0 8px 18px rgba(14, 31, 29, 0.12));
+}
+
+.superscriber-logo-mark-backing {
+  fill: var(--logo-backdrop);
+  stroke: var(--logo-backdrop-line);
+  stroke-width: 1;
+}
+
+.superscriber-logo-ribbon-primary {
+  fill: var(--logo-primary);
+}
+
+.superscriber-logo-ribbon-secondary {
+  fill: var(--logo-secondary);
+}
+
+.superscriber-logo-fold-right {
+  fill: var(--logo-fold-right);
+}
+
+.superscriber-logo-fold-left {
+  fill: var(--logo-fold-left);
+}
+
+.superscriber-logo-wordmark {
+  display: grid;
+  gap: 4px;
+}
+
+.superscriber-logo-name {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 0;
+  font-family: var(--font-display);
+  font-size: 32px;
+  letter-spacing: -0.035em;
+  line-height: 0.94;
+  text-transform: none;
+  white-space: nowrap;
+}
+
+.superscriber-logo-name-prefix {
+  color: var(--logo-prefix);
+  font-weight: 360;
+}
+
+.superscriber-logo-name-core {
+  margin-inline-start: -0.03em;
+  color: var(--logo-wordmark);
+  font-weight: 650;
+}
+
+.superscriber-logo-descriptor {
+  margin: 0;
+  color: var(--logo-descriptor);
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+}
+
+.superscriber-logo-sm .superscriber-logo-lockup {
+  gap: 12px;
+}
+
+.superscriber-logo-sm .superscriber-logo-mark {
+  width: 48px;
+  height: 48px;
+}
+
+.superscriber-logo-sm .superscriber-logo-name {
+  font-size: 23.5px;
+  letter-spacing: -0.035em;
+}
+
+.superscriber-logo-md .superscriber-logo-mark {
+  width: 62px;
+  height: 62px;
+}
+
+.superscriber-logo-lg .superscriber-logo-mark {
+  width: 84px;
+  height: 84px;
+}
+
+.superscriber-logo-lg .superscriber-logo-name {
+  font-size: 52px;
+  letter-spacing: -0.04em;
+}
+
+.superscriber-logo-lg .superscriber-logo-descriptor {
+  font-size: 0.76rem;
+}
+
+.superscriber-logo-inverse {
+  --logo-backdrop: rgba(255, 250, 243, 0.08);
+  --logo-backdrop-line: rgba(255, 255, 255, 0.1);
+  --logo-primary: #f2f7f3;
+  --logo-secondary: #d7e7de;
+  --logo-fold-right: #df875c;
+  --logo-fold-left: #c96d4a;
+  --logo-prefix: rgba(238, 246, 242, 0.72);
+  --logo-wordmark: #f6fbf8;
+  --logo-descriptor: rgba(238, 246, 242, 0.64);
+}
+
+@media (max-width: 760px) {
+  .superscriber-logo-lg .superscriber-logo-lockup {
+    align-items: flex-start;
+  }
+
+  .superscriber-logo-lg .superscriber-logo-name {
+    font-size: 35.2px;
+  }
+}

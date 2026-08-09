@@ -144,7 +144,7 @@ JSON
     --env NEXTAUTH_URL="${APP_URL}" \
     --env AUTH_URL="${APP_URL}" \
     --env SUPERSCRIBER_AUTH_MODE=dual \
-    --env SUPERSCRIBER_OIDC_ISSUER="http://127.0.0.1:4105/" \
+    --env SUPERSCRIBER_OIDC_ISSUER="http://127.0.0.1:${OIDC_PORT}/" \
     --env SUPERSCRIBER_OIDC_CLIENT_ID="superscriber" \
     --env SUPERSCRIBER_OIDC_CLIENT_SECRET_FILE="/run/oidc/client-secret" \
     --env SUPERSCRIBER_OIDC_ROLE_MAP_FILE="/run/oidc/role-map.json" \
