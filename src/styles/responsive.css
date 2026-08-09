@@ -109,6 +109,14 @@
     padding: var(--space-4);
   }
 
+  .administration-table-wrap {
+    display: none;
+  }
+
+  .administration-card-list {
+    display: grid;
+  }
+
   .casefile-page {
     margin-top: calc(var(--space-6) * -1);
   }
