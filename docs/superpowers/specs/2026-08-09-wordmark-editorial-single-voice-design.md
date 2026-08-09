@@ -2,7 +2,7 @@
 
 **Date:** 2026-08-09
 
-**Status:** Proposed for captain written-spec review
+**Status:** Approved and implemented in `8d2039f`
 
 **Approved direction:** B - Editorial single voice, with no additional notes
 
@@ -26,7 +26,7 @@ The change must preserve the product's existing mark, shell, accessibility, offl
 
 `src/components/brand/superscriber-logo.tsx` still renders the complete folded-ribbon SVG and the historical `.superscriber-logo*` hooks. `src/components/shell/app-shell.tsx` still places the small logo inside a link to `/workspace`. Newsreader remains bundled and imported locally by `app/layout.tsx`.
 
-The complete logo stylesheet introduced in `b8e38fb` was removed when `2ef883b` split `app/globals.css`, but it was not restored in any tracked stylesheet. Consequently, the component structure and established live/demo appearance disagree with a clean build from current `main`. This work will add the minimum dedicated tracked brand stylesheet and import it from `app/globals.css`. The stylesheet will restore the historical non-typographic logo contract and replace only the approved wordmark typography.
+The complete logo stylesheet introduced in `b8e38fb` was removed when `2ef883b` split `app/globals.css`, but it was not restored in any tracked stylesheet. Consequently, the component structure and established live/demo appearance disagree with a clean build from current `main`. The implementation adds the minimum dedicated tracked brand stylesheet and imports it from `app/globals.css`. The stylesheet restores the historical non-typographic logo contract and replaces only the approved wordmark typography.
 
 No account-role or recording-lifecycle code, styles, tests, documentation, or in-flight branch work will be copied or modified.
 

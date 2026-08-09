@@ -1,5 +1,42 @@
-import { expect, test, type Page } from "@playwright/test";
+import { mkdir, writeFile } from "node:fs/promises";
+import { join } from "node:path";
+import {
+  expect,
+  test,
+  type Locator,
+  type Page,
+  type TestInfo,
+} from "@playwright/test";
 import { adminUser, bootstrapAndLogin } from "./support/appliance";
+
+async function attachScreenshot(
+  testInfo: TestInfo,
+  name: string,
+  locator: Locator,
+) {
+  const evidenceDirectory = process.env.WORDMARK_EVIDENCE_DIR?.trim();
+  const path = evidenceDirectory
+    ? join(evidenceDirectory, `${name}.png`)
+    : undefined;
+  if (evidenceDirectory) await mkdir(evidenceDirectory, { recursive: true });
+  const body = await locator.screenshot(path ? { path } : undefined);
+  await testInfo.attach(name, { body, contentType: "image/png" });
+  return body;
+}
+
+async function attachJsonEvidence(
+  testInfo: TestInfo,
+  name: string,
+  value: unknown,
+) {
+  const body = Buffer.from(`${JSON.stringify(value, null, 2)}\n`);
+  const evidenceDirectory = process.env.WORDMARK_EVIDENCE_DIR?.trim();
+  if (evidenceDirectory) {
+    await mkdir(evidenceDirectory, { recursive: true });
+    await writeFile(join(evidenceDirectory, `${name}.json`), body);
+  }
+  await testInfo.attach(name, { body, contentType: "application/json" });
+}
 
 async function waitForLocalFonts(page: Page) {
   await page.evaluate(() => document.fonts.ready);
@@ -70,10 +107,7 @@ test.describe.serial("Superscriber editorial single-voice wordmark", () => {
     const core = logo.locator(".superscriber-logo-name-core");
     const header = page.locator(".app-shell__header");
 
-    await testInfo.attach("wordmark-desktop", {
-      body: await header.screenshot(),
-      contentType: "image/png",
-    });
+    await attachScreenshot(testInfo, "wordmark-desktop", header);
 
     await expect(brand).toHaveAttribute("href", "/workspace");
     await expect(brand).toHaveAccessibleName("Superscriber");
@@ -81,6 +115,12 @@ test.describe.serial("Superscriber editorial single-voice wordmark", () => {
     await expect(prefix).toHaveText("Super");
     await expect(core).toHaveText("scriber");
     await expect(mark).toHaveAttribute("aria-hidden", "true");
+    const semantics = {
+      href: await brand.getAttribute("href"),
+      visibleText: await name.textContent(),
+      ariaLabel: await name.getAttribute("aria-label"),
+      markAriaHidden: await mark.getAttribute("aria-hidden"),
+    };
 
     const computed = await logo.evaluate((element) => {
       const pick = (selector: string) => {
@@ -225,21 +265,62 @@ test.describe.serial("Superscriber editorial single-voice wordmark", () => {
       descriptor: "rgba(238, 246, 242, 0.64)",
     });
 
+    await page.evaluate(() => {
+      const panel = document.createElement("section");
+      panel.id = "wordmark-enlarged-inspection";
+      panel.setAttribute("aria-label", "Enlarged implemented wordmark inspection");
+      panel.style.cssText =
+        "position:fixed;z-index:99999;left:50%;top:96px;transform:translateX(-50%);background:#fffcf6;border:1px solid #d8d8cf;border-radius:18px;padding:32px 40px;box-shadow:0 18px 50px rgba(14,31,29,.18)";
+      const label = document.createElement("p");
+      label.textContent = "ENLARGED IMPLEMENTED WORDMARK";
+      label.style.cssText =
+        "margin:0 0 22px;color:#465651;font:700 12px Public Sans,sans-serif;letter-spacing:.12em";
+      const enlargedLogo = document.querySelector(".superscriber-logo")!.cloneNode(true) as HTMLElement;
+      enlargedLogo.classList.remove("superscriber-logo-sm");
+      enlargedLogo.classList.add("superscriber-logo-lg");
+      panel.append(label, enlargedLogo);
+      document.body.append(panel);
+    });
+    const enlargedInspection = page.locator("#wordmark-enlarged-inspection");
+    await expect(enlargedInspection.locator(".superscriber-logo-name")).toHaveCSS(
+      "font-size",
+      "52px",
+    );
+    await expect(enlargedInspection.locator(".superscriber-logo-mark")).toHaveCSS(
+      "width",
+      "84px",
+    );
+    const enlarged = await enlargedInspection.evaluate((element) => ({
+      fontSize: getComputedStyle(element.querySelector(".superscriber-logo-name")!).fontSize,
+      markWidth: getComputedStyle(element.querySelector(".superscriber-logo-mark")!).width,
+    }));
+    await attachScreenshot(testInfo, "wordmark-enlarged-lg", enlargedInspection);
+    await enlargedInspection.evaluate((element) => element.remove());
+
     await brand.focus();
     await expect(brand).toBeFocused();
-    expect(
-      await brand.evaluate((node) => {
-        const style = getComputedStyle(node);
-        return {
-          color: style.outlineColor,
-          offset: style.outlineOffset,
-          style: style.outlineStyle,
-          width: style.outlineWidth,
-        };
-      }),
-    ).toEqual({ color: "rgb(11, 111, 100)", offset: "2px", style: "solid", width: "2px" });
+    const focus = await brand.evaluate((node) => {
+      const style = getComputedStyle(node);
+      return {
+        color: style.outlineColor,
+        offset: style.outlineOffset,
+        style: style.outlineStyle,
+        width: style.outlineWidth,
+      };
+    });
+    expect(focus).toEqual({
+      color: "rgb(11, 111, 100)",
+      offset: "2px",
+      style: "solid",
+      width: "2px",
+    });
+    await attachScreenshot(testInfo, "wordmark-keyboard-focus", header);
 
     const network = await page.evaluate(() => ({
+      fontResources: performance
+        .getEntriesByType("resource")
+        .map((entry) => entry.name)
+        .filter((url) => /\.(woff2?|ttf|otf)(\?|$)/.test(url)),
       externalFonts: performance
         .getEntriesByType("resource")
         .map((entry) => entry.name)
@@ -247,14 +328,13 @@ test.describe.serial("Superscriber editorial single-voice wordmark", () => {
         .filter((url) => new URL(url).origin !== location.origin),
       newsreaderLoaded: document.fonts.check('23.5px "Newsreader Variable"'),
     }));
-    expect(network).toEqual({ externalFonts: [], newsreaderLoaded: true });
+    expect(network).toMatchObject({ externalFonts: [], newsreaderLoaded: true });
+    expect(network.fontResources.some((url) => url.includes("newsreader"))).toBe(true);
 
+    await page.evaluate(() => (document.activeElement as HTMLElement | null)?.blur());
     await page.setViewportSize({ width: 390, height: 844 });
     await waitForLocalFonts(page);
-    await testInfo.attach("wordmark-narrow", {
-      body: await page.locator(".app-shell__header").screenshot(),
-      contentType: "image/png",
-    });
+    await attachScreenshot(testInfo, "wordmark-narrow", page.locator(".app-shell__header"));
     const narrow = await page.evaluate(() => ({
       clientWidth: document.documentElement.clientWidth,
       scrollWidth: document.documentElement.scrollWidth,
@@ -287,6 +367,7 @@ test.describe.serial("Superscriber editorial single-voice wordmark", () => {
     expect(zoom.brandRight).toBeLessThanOrEqual(zoom.clientWidth);
     expect(zoom.nameRight).toBeLessThanOrEqual(zoom.clientWidth);
     expect(zoom.oneLine).toBe(true);
+    await attachScreenshot(testInfo, "wordmark-zoom-200", brand);
 
     const shifts = await page.evaluate(
       () =>
@@ -294,6 +375,19 @@ test.describe.serial("Superscriber editorial single-voice wordmark", () => {
           .__superscriberBrandShifts ?? [],
     );
     expect(shifts).toEqual([]);
+    await attachJsonEvidence(testInfo, "wordmark-computed-proof", {
+      semantics,
+      typographyAndMark: computed,
+      desktopGeometry,
+      shellColors,
+      toneColors,
+      enlarged,
+      focus,
+      network,
+      narrow,
+      zoom,
+      brandLayoutShifts: shifts,
+    });
   });
 
   test("keeps unvisited and visited link rendering distinct under the locked CSS rules", async ({
@@ -306,11 +400,7 @@ test.describe.serial("Superscriber editorial single-voice wordmark", () => {
     await waitForLocalFonts(page);
 
     const brand = page.locator(".app-shell__brand");
-    const unvisited = await brand.screenshot();
-    await testInfo.attach("wordmark-unvisited", {
-      body: unvisited,
-      contentType: "image/png",
-    });
+    const unvisited = await attachScreenshot(testInfo, "wordmark-unvisited", brand);
 
     const anchorRules = await page.evaluate(() =>
       [...document.styleSheets].flatMap((sheet) => {
@@ -337,13 +427,19 @@ test.describe.serial("Superscriber editorial single-voice wordmark", () => {
     // Chromium's visited-link partitioning applies :visited only when the link
     // URL equals the current top-level URL, so the brand renders the rust
     // visited color on /workspace itself (matching the captain reference crop).
-    const visited = await page.locator(".app-shell__brand").screenshot();
-    await testInfo.attach("wordmark-visited", {
-      body: visited,
-      contentType: "image/png",
-    });
+    const visited = await attachScreenshot(
+      testInfo,
+      "wordmark-visited",
+      page.locator(".app-shell__brand"),
+    );
 
-    expect(unvisited.equals(visited)).toBe(false);
+    const differs = !unvisited.equals(visited);
+    expect(differs).toBe(true);
+    await attachJsonEvidence(testInfo, "wordmark-link-state-proof", {
+      anchorRules,
+      unvisitedAndVisitedScreenshotsDiffer: differs,
+      destination: await page.locator(".app-shell__brand").getAttribute("href"),
+    });
     await context.close();
   });
 });
