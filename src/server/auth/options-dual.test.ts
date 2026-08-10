@@ -201,6 +201,52 @@ describe("auth options in dual mode", () => {
     ).toBeNull();
   });
 
+  it("authentik-primary still denies credentials after a reset installs a fresh hash", async () => {
+    const dbPath = join(dir, "primary-post-reset.db");
+    stubEnv(dbPath, "authentik-primary");
+
+    const { openAppDatabase } = await import("@/server/db/client");
+    const bundle = openAppDatabase(dbPath);
+    const { createLocalUser } = await import("@/server/auth/service");
+    const user = await createLocalUser(
+      {
+        displayName: "Reset Reviewer",
+        email: "reset@example.com",
+        password: "Superscriber!123",
+        role: "reviewer",
+      },
+      bundle.db,
+    );
+
+    const { issueResetToken } = await import("@/server/auth/password-reset-tokens");
+    const issued = issueResetToken(
+      { userId: user.id, source: "admin", delivery: "operator_handoff" },
+      bundle.db,
+    );
+    const { completePasswordReset } = await import("@/server/auth/password-reset");
+    const completed = await completePasswordReset(
+      { rawToken: issued.rawToken, password: "RotatedSuperscriber!456", ip: "127.0.0.1" },
+      bundle,
+    );
+    expect(completed.ok).toBe(true);
+
+    vi.resetModules();
+    stubEnv(dbPath, "authentik-primary");
+    const { authOptions } = await import("@/server/auth/options");
+    const credentials = authOptions.providers.find(
+      (provider: { id: string }) => provider.id === "credentials",
+    ) as { options: { authorize: (input: unknown) => Promise<unknown> } };
+
+    // A post-reset credential still admits nobody in primary mode: only the
+    // emergency ceremony enters locally.
+    expect(
+      await credentials.options.authorize({
+        email: "reset@example.com",
+        password: "RotatedSuperscriber!456",
+      }),
+    ).toBeNull();
+  });
+
   it("jwt denies an identity whose admission fails at mint time", async () => {
     const dbPath = join(dir, "dual2.db");
     stubEnv(dbPath, "dual");

@@ -13,7 +13,7 @@ type Migration = {
   rebuildsTables?: boolean;
 };
 
-export const LATEST_SCHEMA_VERSION = 9;
+export const LATEST_SCHEMA_VERSION = 10;
 
 const migrations: Migration[] = [
   { version: 1, name: "baseline-appliance", up: createBaselineSchema },
@@ -25,6 +25,7 @@ const migrations: Migration[] = [
   { version: 7, name: "break-glass-ceremonies", up: addBreakGlassCeremoniesSchema },
   { version: 8, name: "account-role-guards", up: addAccountRoleGuards },
   { version: 9, name: "user-theme-preference", up: addUserThemePreferenceSchema },
+  { version: 10, name: "password-reset-tokens", up: addPasswordResetTokensSchema },
 ];
 
 const LEGACY_AUDIT_METADATA_JSON = serializeAuditMetadata(LEGACY_AUDIT_METADATA);
@@ -946,6 +947,28 @@ function addUserThemePreferenceSchema(sqlite: Database.Database) {
   // setting decide. localStorage stays the no-flash first-paint copy; this
   // row is the durable source of truth synced on session resume.
   ensureColumn(sqlite, "users", "theme_preference", "theme_preference TEXT");
+}
+
+function addPasswordResetTokensSchema(sqlite: Database.Database) {
+  sqlite.exec(`
+    CREATE TABLE IF NOT EXISTS password_reset_tokens (
+      id TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL REFERENCES users(id) ON DELETE RESTRICT,
+      token_hash TEXT NOT NULL,
+      source TEXT NOT NULL CHECK (source IN ('self_service', 'admin')),
+      delivery TEXT NOT NULL CHECK (delivery IN ('email', 'operator_handoff')),
+      requested_by_user_id TEXT REFERENCES users(id) ON DELETE SET NULL,
+      created_at TEXT NOT NULL,
+      expires_at TEXT NOT NULL,
+      used_at TEXT,
+      invalidated_at TEXT,
+      invalidated_reason TEXT
+    );
+    CREATE UNIQUE INDEX IF NOT EXISTS password_reset_tokens_hash_unique
+      ON password_reset_tokens (token_hash);
+    CREATE INDEX IF NOT EXISTS password_reset_tokens_user_idx
+      ON password_reset_tokens (user_id);
+  `);
 }
 
 export function runMigrations(

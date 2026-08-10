@@ -16,6 +16,7 @@ It runs as a single-institution deployment with local accounts, SQLite persisten
 
 - Bootstrap admin setup plus local accounts for `uploader`, `reviewer`, `approver`, and `admin`
 - Optional institutional sign-in via Authentik OIDC (local, dual, or authentik-primary deployment modes) with live-revocable server-side sessions and a management-boundary break-glass account - operator runbooks in [`docs/operators/`](./docs/operators/)
+- Password reset for lost local credentials: self-service reset links and an audited administrator reset - reset mail is opt-in (`SUPERSCRIBER_RESET_MAIL_MODE`), otherwise resets run operator-assisted ([`docs/operators/password-reset.md`](./docs/operators/password-reset.md))
 - Role-aware work inbox ledgers (tabbed per role) and a transcript-first casefile for review
 - Governed decision commands - save draft, submit, withdraw submission, request changes, approve, reopen - with the submitter barred from deciding their own revision
 - Admin read-only oversight by default, plus an explicit, record-bound, audited reviewer/approver action mode for casefile work
@@ -183,7 +184,7 @@ The default build prefetches the configured model into the image. Runtime downlo
 - [`CHANGELOG.md`](./CHANGELOG.md) — release history and shipped behavior notes
 - [`DESIGN.md`](./DESIGN.md) — design record and behavioral contract for the governed casefile workspace
 - [`TODOS.md`](./TODOS.md) — deferred follow-on work after the current appliance release
-- [`docs/operators/`](./docs/operators/) - operator runbooks for Authentik OIDC deployment, identity linking, break-glass, the no-mail profile, and auth outage and rollback
+- [`docs/operators/`](./docs/operators/) - operator runbooks for Authentik OIDC deployment, identity linking, break-glass, the no-mail profile, password reset, and auth outage and rollback
 
 ## Orchestration Modes
 
@@ -224,7 +225,7 @@ npm test
 ```
 
 Current tests cover the governed casefile command surface (save, submit, withdraw, request changes, approve, reopen, export), capabilities and access grants, assignment semantics and admin action mode, work-inbox read models, auth and bootstrap, resumable ingest, the internal queue lifecycle, and orchestration behavior.
-The browser suites cover governed-casefile flows end to end, responsive and phone-safety behavior, mobile review regressions, and axe accessibility checks across auth, work inbox, casefile, export, and administration surfaces. Dual-auth OIDC sign-in, session revocation, and the break-glass ceremony run against a canonical fake OIDC provider that also runs as a network-namespace sidecar in the container suite.
+The browser suites cover governed-casefile flows end to end, responsive and phone-safety behavior, mobile review regressions, password reset, and axe accessibility checks across auth, work inbox, casefile, export, and administration surfaces. Dual-auth OIDC sign-in, session revocation, and the break-glass ceremony run against a canonical fake OIDC provider that also runs as a network-namespace sidecar in the container suite. Setting `SUPERSCRIBER_E2E_RESET_MAIL=smtp` additionally starts a fake-SMTP sidecar on the same pattern and enables the password-reset mail suite; the default run keeps the reset-mail seam off and exercises the operator-assisted path.
 
 For the browser path against the real single-image appliance:
 
@@ -235,7 +236,7 @@ npm run e2e:container
 
 The container-backed E2E runner deliberately builds a lightweight test image with model prefetch disabled, then starts the worker in explicit stub-fallback mode. That keeps the browser suite deterministic while still exercising the real Docker entrypoint, Next.js server, SQLite volume, upload pipeline, internal queue, and Python worker contract in one image.
 
-Before starting, the runner probes `/api/health` on the app port (`SUPERSCRIBER_E2E_PORT`, default 3105) and refuses to proceed if anything already answers: a foreign server on that port - for example a leftover `npm run dev` - silently vacates the whole suite, because the health probe, browser, and DB helpers would all talk to it instead of the container. Stop the other server or set `SUPERSCRIBER_E2E_PORT` to a free port. The runner also refuses to start when the fake-OIDC sidecar port (`SUPERSCRIBER_E2E_OIDC_PORT`, default 4105) is already occupied; the container suite runs in `dual` auth mode against that sidecar. Each run gets a fresh data dir under `.tmp/e2e-data.XXXXXX` that the runner removes on exit (a caller-supplied `SUPERSCRIBER_E2E_DATA_DIR` is preserved). Suite helpers that touch the database (`assignmentRows`, `auditRows`, `expireUploadSession`, `expireActionMode`) execute inside the running container via `docker exec`, because host-side access to the bind-mounted database is blocked by file ownership on Linux runners and cannot see the app's WAL commits through macOS VM file sharing.
+Before starting, the runner probes `/api/health` on the app port (`SUPERSCRIBER_E2E_PORT`, default 3105) and refuses to proceed if anything already answers: a foreign server on that port - for example a leftover `npm run dev` - silently vacates the whole suite, because the health probe, browser, and DB helpers would all talk to it instead of the container. Stop the other server or set `SUPERSCRIBER_E2E_PORT` to a free port. The runner also refuses to start when the fake-OIDC sidecar port (`SUPERSCRIBER_E2E_OIDC_PORT`, default 4105) is already occupied; the container suite runs in `dual` auth mode against that sidecar. With `SUPERSCRIBER_E2E_RESET_MAIL=smtp`, the runner likewise refuses to start when the fake-SMTP control port (`SUPERSCRIBER_E2E_SMTP_CONTROL_PORT`, default 4206) is already occupied. Each run gets a fresh data dir under `.tmp/e2e-data.XXXXXX` that the runner removes on exit (a caller-supplied `SUPERSCRIBER_E2E_DATA_DIR` is preserved). Suite helpers that touch the database (`assignmentRows`, `auditRows`, `expireUploadSession`, `expireActionMode`) execute inside the running container via `docker exec`, because host-side access to the bind-mounted database is blocked by file ownership on Linux runners and cannot see the app's WAL commits through macOS VM file sharing.
 
 Known slow-runner flake classes seen on loaded macOS/CI hosts in the container lane:
 

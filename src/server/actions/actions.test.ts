@@ -23,6 +23,9 @@ const {
   hasAnyUsersMock,
   createBootstrapAdminMock,
   revalidatePathMock,
+  adminIssuePasswordResetMock,
+  sendPasswordResetEmailMock,
+  headersMock,
 } = vi.hoisted(() => ({
   getActivePrincipalMock: vi.fn(),
   getActiveSessionMock: vi.fn(),
@@ -42,6 +45,29 @@ const {
   hasAnyUsersMock: vi.fn(),
   createBootstrapAdminMock: vi.fn(),
   revalidatePathMock: vi.fn(),
+  adminIssuePasswordResetMock: vi.fn(),
+  sendPasswordResetEmailMock: vi.fn(),
+  headersMock: vi.fn(() => new Map([["origin", "https://app.test"]])),
+}));
+
+vi.mock("next/headers", () => ({
+  headers: headersMock,
+}));
+
+vi.mock("@/server/administration/password-reset-service", () => {
+  class AdminPasswordResetServiceError extends Error {
+    constructor(readonly failure: { code: string; message: string }) {
+      super(failure.message);
+    }
+  }
+  return {
+    adminIssuePasswordReset: adminIssuePasswordResetMock,
+    AdminPasswordResetServiceError,
+  };
+});
+
+vi.mock("@/server/auth/reset-mailer", () => ({
+  sendPasswordResetEmail: sendPasswordResetEmailMock,
 }));
 
 vi.mock("next/cache", () => ({
@@ -103,6 +129,7 @@ import {
   withdrawRevisionAction,
 } from "@/server/actions/casefile-actions";
 import {
+  adminResetAccountPasswordAction,
   assignRecordingAction,
   changeAccountRoleAction,
   createUserAction,
@@ -817,5 +844,126 @@ describe("bootstrap auth action", () => {
         email: "admin@example.com",
       },
     });
+  });
+});
+
+describe("adminResetAccountPasswordAction", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    getActiveSessionMock.mockResolvedValue(adminActiveSession);
+  });
+
+  it("returns AUTH_EXPIRED without a live session", async () => {
+    getActiveSessionMock.mockResolvedValue(null);
+    const result = await adminResetAccountPasswordAction({
+      userId: "user-2",
+      reason: "User forgot their password at the front desk.",
+      delivery: "operator_handoff",
+    });
+    expect(result.ok).toBe(false);
+    expect(result.ok ? null : result.code).toBe("AUTH_EXPIRED");
+    expect(adminIssuePasswordResetMock).not.toHaveBeenCalled();
+  });
+
+  it("validates the reason before touching the service", async () => {
+    const result = await adminResetAccountPasswordAction({
+      userId: "user-2",
+      reason: "short",
+      delivery: "operator_handoff",
+    });
+    expect(result.ok).toBe(false);
+    expect(result.ok ? null : result.code).toBe("VALIDATION_ERROR");
+    expect(adminIssuePasswordResetMock).not.toHaveBeenCalled();
+  });
+
+  it("returns the one-time reveal URL for handoff delivery", async () => {
+    adminIssuePasswordResetMock.mockReturnValue({
+      userId: "user-2",
+      targetDisplayName: "Reviewer One",
+      targetEmail: "reviewer1@example.com",
+      rawToken: "raw-token-value",
+      recordId: "record-1",
+      expiresAt: "2026-08-10T13:00:00.000Z",
+      delivery: "operator_handoff",
+      revokedSessionCount: 2,
+      resultingAuthVersion: 3,
+      actorMustRelogin: false,
+    });
+
+    const result = await adminResetAccountPasswordAction({
+      userId: "user-2",
+      reason: "User forgot their password at the front desk.",
+      delivery: "operator_handoff",
+    });
+
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.notice).toContain("Reviewer One");
+      expect(result.data.resetUrl).toBe("https://app.test/reset/raw-token-value");
+      expect(result.data.expiresAt).toBe("2026-08-10T13:00:00.000Z");
+    }
+    expect(sendPasswordResetEmailMock).not.toHaveBeenCalled();
+  });
+
+  it("emails and never reveals the link for email delivery", async () => {
+    process.env.SUPERSCRIBER_RESET_MAIL_MODE = "smtp";
+    process.env.SUPERSCRIBER_RESET_MAIL_SMTP_HOST = "mail.example.test";
+    process.env.SUPERSCRIBER_RESET_MAIL_SMTP_PORT = "587";
+    process.env.SUPERSCRIBER_RESET_MAIL_FROM_ADDRESS = "reset@example.test";
+    process.env.SUPERSCRIBER_RESET_MAIL_PASSWORD_FILE = "/run/secrets/pw";
+    adminIssuePasswordResetMock.mockReturnValue({
+      userId: "user-2",
+      targetDisplayName: "Reviewer One",
+      targetEmail: "reviewer1@example.com",
+      rawToken: "raw-token-value",
+      recordId: "record-1",
+      expiresAt: "2026-08-10T13:00:00.000Z",
+      delivery: "email",
+      revokedSessionCount: 0,
+      resultingAuthVersion: 2,
+      actorMustRelogin: false,
+    });
+
+    const result = await adminResetAccountPasswordAction({
+      userId: "user-2",
+      reason: "User forgot their password at the front desk.",
+      delivery: "email",
+    });
+
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.data.resetUrl).toBeNull();
+      expect(result.notice).toContain("emailed");
+    }
+    expect(sendPasswordResetEmailMock).toHaveBeenCalledTimes(1);
+    const [, message] = sendPasswordResetEmailMock.mock.calls[0]!;
+    expect(message.to).toBe("reviewer1@example.com");
+    expect(message.resetUrl).toBe("https://app.test/reset/raw-token-value");
+
+    delete process.env.SUPERSCRIBER_RESET_MAIL_MODE;
+    delete process.env.SUPERSCRIBER_RESET_MAIL_SMTP_HOST;
+    delete process.env.SUPERSCRIBER_RESET_MAIL_SMTP_PORT;
+    delete process.env.SUPERSCRIBER_RESET_MAIL_FROM_ADDRESS;
+    delete process.env.SUPERSCRIBER_RESET_MAIL_PASSWORD_FILE;
+  });
+
+  it("maps typed service failures onto the failure result", async () => {
+    const { AdminPasswordResetServiceError } = await import(
+      "@/server/administration/password-reset-service"
+    );
+    adminIssuePasswordResetMock.mockImplementation(() => {
+      throw new AdminPasswordResetServiceError({
+        code: "BREAK_GLASS_DESIGNEE",
+        message: "The break-glass administrator's password rotates only through the emergency ceremony.",
+      });
+    });
+
+    const result = await adminResetAccountPasswordAction({
+      userId: "bg-1",
+      reason: "Trying to rotate the emergency account outside ceremony.",
+      delivery: "operator_handoff",
+    });
+    expect(result.ok).toBe(false);
+    expect(result.ok ? null : result.code).toBe("BREAK_GLASS_DESIGNEE");
   });
 });

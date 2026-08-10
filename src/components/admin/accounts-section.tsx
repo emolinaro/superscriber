@@ -28,6 +28,8 @@ import {
   emptyRoleEditorState,
   type RoleEditorState,
 } from "./account-role-editor";
+import { AccountPasswordResetModal } from "./account-password-reset";
+import { adminResetAccountPasswordAction } from "@/server/actions/administration-actions";
 
 const FIELD_CONFIG = {
   displayName: { id: "account-display-name", label: "Name" },
@@ -126,6 +128,7 @@ export function AccountsSection({
     Partial<Record<string, UserRole>>
   >({});
   const [pendingRoleUserId, setPendingRoleUserId] = useState<string | null>(null);
+  const [resetTargetId, setResetTargetId] = useState<string | null>(null);
   const [roleFocusRequest, setRoleFocusRequest] = useState<{
     userId: string;
     target: RoleFocusTarget;
@@ -568,6 +571,7 @@ export function AccountsSection({
                     {column.label}
                   </th>
                 ))}
+                <th scope="col">Password</th>
               </tr>
             </thead>
             <tbody>
@@ -598,6 +602,18 @@ export function AccountsSection({
                   <td>{user.activeAssignmentCount}</td>
                   <td>
                     <time dateTime={user.createdAtIso}>{user.createdAtLabel}</time>
+                  </td>
+                  <td>
+                    {phoneSafetyMode ? null : (
+                      <button
+                        className="button button-secondary interactive-target"
+                        disabled={pending || Boolean(pendingRoleUserId)}
+                        onClick={() => setResetTargetId(user.id)}
+                        type="button"
+                      >
+                        Reset password
+                      </button>
+                    )}
                   </td>
                 </tr>
               ))}
@@ -645,11 +661,36 @@ export function AccountsSection({
                     </dd>
                   </div>
                 </dl>
+                {phoneSafetyMode ? null : (
+                  <button
+                    className="button button-secondary interactive-target"
+                    disabled={pending || Boolean(pendingRoleUserId)}
+                    onClick={() => setResetTargetId(user.id)}
+                    type="button"
+                  >
+                    Reset password
+                  </button>
+                )}
               </article>
             </li>
           ))}
         </ul>
       </div>
+
+      {resetTargetId ? (
+        <AccountPasswordResetModal
+          account={{
+            id: resetTargetId,
+            displayName:
+              users.find((user) => user.id === resetTargetId)?.displayName ?? "",
+          }}
+          action={adminResetAccountPasswordAction}
+          currentUserId={model.currentUserId}
+          onClose={() => setResetTargetId(null)}
+          onIssued={() => router.refresh()}
+          resetMailConfigured={model.resetMailConfigured}
+        />
+      ) : null}
 
       <Modal
         backdropClassName="administration-drawer-backdrop"

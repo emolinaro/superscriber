@@ -13,6 +13,7 @@ import {
   listLocalUsers,
   type AccountDirectoryEntry,
 } from "@/server/access/service";
+import { revalidateAdminActor } from "@/server/administration/actor-authority";
 import { revokeUserSessions } from "@/server/auth/session-registry";
 import { recordSecurityEvent } from "@/server/auth/security-events";
 import { insertAuditEvent } from "@/server/casefile/audit";
@@ -137,7 +138,7 @@ const DEFAULT_AUDIT_WORKSPACE = {
   policyProfileId: DEFAULT_AUDIT_POLICY_PROFILE.id,
 };
 
-function ensureAuditWorkspace(db: AppDatabase) {
+export function ensureAuditWorkspace(db: AppDatabase) {
   const existing = db.select({ id: workspaces.id }).from(workspaces).get();
   if (existing) {
     return existing;
@@ -177,46 +178,6 @@ function safeRecordDenial(
   }
 }
 
-function revalidateActorAuthority(
-  db: AppDatabase,
-  params: { actorUserId: string; actorAuthSessionId: string },
-  now: string,
-) {
-  const row = db
-    .select({
-      session: authSessions,
-      actor: users,
-    })
-    .from(authSessions)
-    .innerJoin(users, eq(authSessions.userId, users.id))
-    .where(eq(authSessions.id, params.actorAuthSessionId))
-    .get();
-
-  const nowMs = Date.parse(now);
-  const idleExpiresAt = row ? Date.parse(row.session.idleExpiresAt) : NaN;
-  const absoluteExpiresAt = row ? Date.parse(row.session.absoluteExpiresAt) : NaN;
-
-  if (
-    !row ||
-    row.session.userId !== params.actorUserId ||
-    row.session.status !== "active" ||
-    row.session.authVersion !== row.actor.authVersion ||
-    !Number.isFinite(idleExpiresAt) ||
-    !Number.isFinite(absoluteExpiresAt) ||
-    nowMs >= idleExpiresAt ||
-    nowMs >= absoluteExpiresAt ||
-    !row.actor.isActive ||
-    row.actor.role !== "admin"
-  ) {
-    fail({
-      code: "ACCESS_DENIED",
-      message: ACCOUNT_ROLE_CHANGE_COPY.ACCESS_DENIED,
-    });
-  }
-
-  return row.actor;
-}
-
 export function changeAccountRole(
   params: {
     actorUserId: string;
@@ -233,7 +194,12 @@ export function changeAccountRole(
       const input = validationFailure(params.input);
 
       stage = "actor";
-      const actor = revalidateActorAuthority(db, params, now);
+      const actor = revalidateAdminActor(db, params, now, () =>
+        fail({
+          code: "ACCESS_DENIED",
+          message: ACCOUNT_ROLE_CHANGE_COPY.ACCESS_DENIED,
+        }),
+      );
 
       stage = "target";
       const target = db

@@ -122,6 +122,25 @@ export function evaluateRequestZone(headers: HeaderSource): SourceZone {
   }
 }
 
+/**
+ * Client-IP resolution for unauthenticated rate limiting. When a
+ * management-network policy is mounted, forwarding headers are honored only
+ * under its trusted-proxy semantics; anything unverifiable fails closed to
+ * null (one shared rate-limit bucket), so rotating XFF hops cannot bypass
+ * per-IP budgets. Without a policy, the raw first XFF hop is used.
+ */
+export function resolveClientIp(headers: HeaderSource): string | null {
+  const policyPath = process.env.SUPERSCRIBER_MANAGEMENT_NETWORKS_FILE?.trim();
+  if (!policyPath) {
+    return readForwardedFor(headers)?.split(",")[0]?.trim() || null;
+  }
+  try {
+    return evaluateSourceZone(headers, loadManagementNetworkPolicy(policyPath)).clientIp;
+  } catch {
+    return null;
+  }
+}
+
 export function evaluateSourceZone(
   headers: HeaderSource,
   policy: ManagementNetworkPolicy,

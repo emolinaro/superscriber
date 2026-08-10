@@ -104,6 +104,7 @@ describe("migrations", () => {
       { version: 7 },
       { version: 8 },
       { version: 9 },
+      { version: 10 },
     ]);
   });
 
@@ -380,5 +381,41 @@ describe("migrations", () => {
       sqlite.prepare("select theme_preference as themePreference from users where id = 'user-theme'").get(),
     ).toEqual({ themePreference: "dark" });
     expect(sqlite.prepare("PRAGMA foreign_key_check").all()).toEqual([]);
+  });
+
+  it("upgrades v9 with the password_reset_tokens table", () => {
+    const sqlite = new Database(":memory:");
+    sqlite.pragma("foreign_keys = ON");
+    runMigrations(sqlite, 9);
+    runMigrations(sqlite, 10);
+
+    const columns = sqlite
+      .prepare(`PRAGMA table_info(password_reset_tokens)`)
+      .all() as Array<{ name: string }>;
+    expect(columns.map((column) => column.name)).toEqual([
+      "id",
+      "user_id",
+      "token_hash",
+      "source",
+      "delivery",
+      "requested_by_user_id",
+      "created_at",
+      "expires_at",
+      "used_at",
+      "invalidated_at",
+      "invalidated_reason",
+    ]);
+
+    const indexes = sqlite
+      .prepare(
+        `SELECT name FROM sqlite_master WHERE type = 'index' AND tbl_name = 'password_reset_tokens' AND name NOT LIKE 'sqlite_autoindex%'`,
+      )
+      .all() as Array<{ name: string }>;
+    expect(indexes.map((row) => row.name).sort()).toEqual([
+      "password_reset_tokens_hash_unique",
+      "password_reset_tokens_user_idx",
+    ]);
+
+    sqlite.close();
   });
 });

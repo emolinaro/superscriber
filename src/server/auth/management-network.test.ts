@@ -1,10 +1,11 @@
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   evaluateSourceZone,
   loadManagementNetworkPolicy,
+  resolveClientIp,
 } from "@/server/auth/management-network";
 
 describe("management network policy", () => {
@@ -15,6 +16,7 @@ describe("management network policy", () => {
   });
 
   afterEach(() => {
+    vi.unstubAllEnvs();
     rmSync(dir, { recursive: true, force: true });
   });
 
@@ -72,6 +74,21 @@ describe("management network policy", () => {
     expect(
       evaluateSourceZone({ "x-forwarded-for": "192.168.50.8, 10.10.0.2" }, policy),
     ).toEqual({ zone: "public", clientIp: "192.168.50.8" });
+  });
+
+  it("resolves rate-limit client IPs under trusted-proxy semantics", () => {
+    expect(resolveClientIp({ "x-forwarded-for": "203.0.113.9, 10.10.0.2" })).toBe(
+      "203.0.113.9",
+    );
+    expect(resolveClientIp({})).toBeNull();
+
+    vi.stubEnv("SUPERSCRIBER_MANAGEMENT_NETWORKS_FILE", POLICY_PATH());
+    expect(resolveClientIp({ "x-forwarded-for": "203.0.113.9, 10.10.0.2" })).toBe(
+      "203.0.113.9",
+    );
+    // With a policy mounted, an untrusted header fails closed to one shared
+    // rate-limit bucket instead of trusting the spoofable first hop.
+    expect(resolveClientIp({ "x-forwarded-for": "10.10.4.9" })).toBeNull();
   });
 
   it("rejects malformed policy files and unknown CIDRs", () => {

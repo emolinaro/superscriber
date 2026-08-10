@@ -43,8 +43,19 @@ OIDC_SIDECAR="${CONTAINER_NAME}-oidc"
 OIDC_DIR="${TMP_ROOT}/e2e-oidc-config"
 export SUPERSCRIBER_E2E_OIDC_PORT="${OIDC_PORT}"
 
+# Reset-mail seam: SUPERSCRIBER_E2E_RESET_MAIL=smtp starts a fake SMTP
+# sidecar (same netns pattern as OIDC) and configures the app for the
+# password-reset mail spec. Default (unset) keeps the seam off, matching the
+# product default.
+RESET_MAIL_MODE="${SUPERSCRIBER_E2E_RESET_MAIL:-}"
+SMTP_PORT="${SUPERSCRIBER_E2E_SMTP_PORT:-4205}"
+SMTP_CONTROL_PORT="${SUPERSCRIBER_E2E_SMTP_CONTROL_PORT:-4206}"
+SMTP_SIDECAR="${CONTAINER_NAME}-smtp"
+export SUPERSCRIBER_E2E_RESET_MAIL="${RESET_MAIL_MODE}"
+export SUPERSCRIBER_E2E_SMTP_CONTROL_PORT="${SMTP_CONTROL_PORT}"
+
 cleanup_container() {
-  docker rm -f "${CONTAINER_NAME}" "${OIDC_SIDECAR}" >/dev/null 2>&1 || true
+  docker rm -f "${CONTAINER_NAME}" "${OIDC_SIDECAR}" "${SMTP_SIDECAR}" >/dev/null 2>&1 || true
 }
 
 cleanup_oidc_config() {
@@ -76,6 +87,13 @@ preflight_port_free() {
     echo "Refusing to start: a server already answers on OIDC port ${OIDC_PORT}." >&2
     echo "Stop it, or set SUPERSCRIBER_E2E_OIDC_PORT to a free port." >&2
     return 1
+  fi
+  if [[ "${RESET_MAIL_MODE}" == "smtp" ]]; then
+    if python3 "${REPO_ROOT}/scripts/http_probe.py" "http://127.0.0.1:${SMTP_CONTROL_PORT}/messages" >/dev/null 2>&1; then
+      echo "Refusing to start: a server already answers on SMTP control port ${SMTP_CONTROL_PORT}." >&2
+      echo "Stop it, or set SUPERSCRIBER_E2E_SMTP_CONTROL_PORT to a free port." >&2
+      return 1
+    fi
   fi
 }
 
@@ -110,6 +128,7 @@ start_container() {
   # Mounted OIDC material for the container's dual-auth configuration.
   mkdir -p "${OIDC_DIR}"
   printf 'fake-oidc-client-secret\n' > "${OIDC_DIR}/client-secret"
+  printf 'fake-smtp-password\n' > "${OIDC_DIR}/reset-mail-password"
   cat > "${OIDC_DIR}/management-networks.json" <<JSON
 {
   "managementNetworks": ["10.10.0.0/16"],
@@ -129,6 +148,23 @@ JSON
   }
 }
 JSON
+  SMTP_PUBLISH_ARGS=()
+  SMTP_ENV_ARGS=()
+  if [[ "${RESET_MAIL_MODE}" == "smtp" ]]; then
+    SMTP_PUBLISH_ARGS=(
+      --publish "${SMTP_PORT}:4205"
+      --publish "${SMTP_CONTROL_PORT}:4206"
+    )
+    SMTP_ENV_ARGS=(
+      --env "SUPERSCRIBER_RESET_MAIL_MODE=smtp"
+      --env "SUPERSCRIBER_RESET_MAIL_SMTP_HOST=127.0.0.1"
+      --env "SUPERSCRIBER_RESET_MAIL_SMTP_PORT=4205"
+      --env "SUPERSCRIBER_RESET_MAIL_FROM_ADDRESS=reset@superscriber.test"
+      --env "SUPERSCRIBER_RESET_MAIL_PASSWORD_FILE=/run/oidc/reset-mail-password"
+      --env "SUPERSCRIBER_RESET_MAIL_BASE_URL=${APP_URL}"
+    )
+  fi
+
   # The container entrypoint chowns the bind-mounted data dir to the in-image
   # user without widening its mode. Keep it traversable so the host Playwright
   # process can stat the sqlite database on stock Linux CI runners.
@@ -139,6 +175,7 @@ JSON
     --name "${CONTAINER_NAME}" \
     --publish "${PORT}:3000" \
     --publish "${OIDC_PORT}:${OIDC_PORT}" \
+    ${SMTP_PUBLISH_ARGS[@]+"${SMTP_PUBLISH_ARGS[@]}"} \
     --volume "${DATA_DIR}:/app/data" \
     --volume "${OIDC_DIR}:/run/oidc:ro" \
     --env NEXTAUTH_URL="${APP_URL}" \
@@ -149,6 +186,7 @@ JSON
     --env SUPERSCRIBER_OIDC_CLIENT_SECRET_FILE="/run/oidc/client-secret" \
     --env SUPERSCRIBER_OIDC_ROLE_MAP_FILE="/run/oidc/role-map.json" \
     --env SUPERSCRIBER_MANAGEMENT_NETWORKS_FILE="/run/oidc/management-networks.json" \
+    ${SMTP_ENV_ARGS[@]+"${SMTP_ENV_ARGS[@]}"} \
     --env SUPERSCRIBER_TRANSCRIBE_MODEL="missing-e2e-model" \
     --env SUPERSCRIBER_TRANSCRIBE_OFFLINE=1 \
     --env SUPERSCRIBER_TRANSCRIBE_ALLOW_STUB_FALLBACK=1 \
@@ -184,6 +222,35 @@ JSON
     fi
     sleep 1
   done
+
+  if [[ "${RESET_MAIL_MODE}" == "smtp" ]]; then
+    # Sidecar fake SMTP provider in the app container's network namespace,
+    # mirroring the OIDC sidecar above.
+    "${REPO_ROOT}/node_modules/.bin/esbuild" \
+      "${REPO_ROOT}/scripts/fake-smtp-sidecar-entry.ts" \
+      --format=esm --platform=node --target=node20 --bundle \
+      --outfile="${OIDC_DIR}/fake-smtp-sidecar.mjs" >/dev/null
+
+    docker run \
+      --detach \
+      --rm \
+      --name "${SMTP_SIDECAR}" \
+      --network "container:${CONTAINER_NAME}" \
+      --entrypoint node \
+      --volume "${OIDC_DIR}/fake-smtp-sidecar.mjs:/fake-smtp-sidecar.mjs:ro" \
+      "${IMAGE}" /fake-smtp-sidecar.mjs 4205 4206 >/dev/null
+
+    local smtp_attempts=0
+    until python3 "${REPO_ROOT}/scripts/http_probe.py" "http://127.0.0.1:${SMTP_CONTROL_PORT}/messages"; do
+      smtp_attempts=$((smtp_attempts + 1))
+      if [[ ${smtp_attempts} -ge 30 ]]; then
+        echo "Timed out waiting for the fake SMTP sidecar" >&2
+        docker logs "${SMTP_SIDECAR}" >&2 || true
+        return 1
+      fi
+      sleep 1
+    done
+  fi
 
   wait_for_app
 }
