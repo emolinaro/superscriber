@@ -113,6 +113,14 @@ test.describe.serial("password reset (mail unconfigured)", () => {
     });
     await expect(reviewerPage.getByRole("navigation", { name: "Primary" })).toBeVisible();
 
+    // Breadth fixture: the reviewer also holds Authentik- and break-glass-sourced rows.
+    execRuntimeSql(
+      `INSERT INTO auth_sessions (id, user_id, auth_source, auth_version, status, created_at, last_seen_at, idle_expires_at, absolute_expires_at)
+       VALUES ('e2e-reset-oidc-session', ?, 'authentik', 1, 'active', ?, ?, '2099-01-01T00:00:00.000Z', '2099-01-01T00:00:00.000Z'),
+              ('e2e-reset-bg-session', ?, 'break_glass', 1, 'active', ?, ?, '2099-01-01T00:00:00.000Z', '2099-01-01T00:00:00.000Z')`,
+      [REVIEWER.id, new Date().toISOString(), new Date().toISOString(), REVIEWER.id, new Date().toISOString(), new Date().toISOString()],
+    );
+
     const resetUrl = await issueHandoffReset(page);
 
     // The reviewer's session is retired at issuance.
@@ -121,8 +129,8 @@ test.describe.serial("password reset (mail unconfigured)", () => {
         `SELECT status, revoked_reason AS revokedReason FROM auth_sessions s JOIN users u ON u.id = s.user_id WHERE u.email = ? AND s.status = 'revoked'`,
         [REVIEWER.email],
       ) as Array<{ status: string; revokedReason: string }>;
-      expect(rows.length).toBeGreaterThan(0);
-      expect(rows.some((r) => r.revokedReason === "admin_password_reset")).toBe(true);
+      expect(rows.length).toBeGreaterThanOrEqual(3);
+      expect(rows.filter((r) => r.revokedReason === "admin_password_reset")).toHaveLength(3);
     }).toPass({ timeout: 10_000 });
 
     // Complete the reset in a fresh context.
