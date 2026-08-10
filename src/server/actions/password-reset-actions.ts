@@ -5,6 +5,7 @@ import {
   PASSWORD_RESET_COPY,
   passwordResetRequestSchema,
 } from "@/lib/password-reset";
+import { resolveClientIp } from "@/server/auth/management-network";
 import { requestPasswordReset } from "@/server/auth/password-reset";
 
 export type PasswordResetRequestActionResult =
@@ -14,10 +15,13 @@ export type PasswordResetRequestActionResult =
 /** Client IP and origin for rate limiting and reset-link construction. */
 export async function requestContext() {
   const headerList = await headers();
-  const forwarded = headerList.get("x-forwarded-for")?.split(",")[0]?.trim();
+  const configuredBase = process.env.SUPERSCRIBER_RESET_MAIL_BASE_URL?.trim();
   const host = headerList.get("host");
-  const origin = headerList.get("origin") ?? (host ? `https://${host}` : null);
-  return { ip: forwarded ?? null, origin };
+  const proto = headerList.get("x-forwarded-proto")?.split(",")[0]?.trim();
+  const scheme = proto === "http" || proto === "https" ? proto : "https";
+  const origin =
+    configuredBase || headerList.get("origin") || (host ? `${scheme}://${host}` : null);
+  return { ip: resolveClientIp(headerList), origin };
 }
 
 export async function requestPasswordResetAction(input: {
