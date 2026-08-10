@@ -64,8 +64,7 @@ export async function requestPasswordReset(
   const email = normalizeEmail(params.email);
 
   const byIp = resetRequestByIpLimiter.check(params.ip ?? "unknown");
-  const byEmail = resetRequestByEmailLimiter.check(email);
-  if (!byIp.allowed || !byEmail.allowed) {
+  if (!byIp.allowed) {
     await dummyCompare();
     safeRecord(
       {
@@ -131,6 +130,21 @@ export async function requestPasswordReset(
         userId: eligibility.userId,
         detail: "Password reset request accepted; mail seam unconfigured.",
         metadata: { delivery: "unconfigured" },
+      },
+      db,
+    );
+    return;
+  }
+
+  if (!resetRequestByEmailLimiter.check(email).allowed) {
+    await dummyCompare();
+    safeRecord(
+      {
+        type: "password.reset.requested",
+        outcome: "denied",
+        userId: eligibility.userId,
+        detail: "Password reset request rate limited.",
+        metadata: { reason: "rate_limited" },
       },
       db,
     );

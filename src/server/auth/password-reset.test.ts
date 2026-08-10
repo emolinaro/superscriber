@@ -99,7 +99,8 @@ describe("requestPasswordReset", () => {
     expect(JSON.stringify(events[0])).not.toContain("ghost@example.com");
   });
 
-  it("rate limits per email after 3 requests per hour without revealing the limit", async () => {
+  it("rate limits per email after 3 issued tokens per hour without revealing the limit", async () => {
+    for (const [key, value] of Object.entries(SMTP_ENV)) vi.stubEnv(key, value);
     const bundle = openAppDatabase(":memory:");
     seedUser(bundle.sqlite, "user-1");
 
@@ -107,9 +108,40 @@ describe("requestPasswordReset", () => {
       await requestPasswordReset({ email: "user-1@example.com", ip: "127.0.0.1", origin: null }, bundle.db);
     }
 
+    expect(bundle.sqlite.prepare(`SELECT * FROM password_reset_tokens`).all()).toHaveLength(3);
+    expect(sendPasswordResetEmail).toHaveBeenCalledTimes(3);
     const events = securityEventRows(bundle.sqlite);
     expect(events.at(-1)).toMatchObject({ outcome: "denied" });
     expect(events.at(-1)!.metadata).toContain("rate_limited");
+  });
+
+  it("does not consume the per-email budget for requests that never issue a token", async () => {
+    const bundle = openAppDatabase(":memory:");
+    seedUser(bundle.sqlite, "user-1");
+
+    for (let i = 0; i < 5; i++) {
+      await requestPasswordReset(
+        { email: "ghost@example.com", ip: `10.0.0.${i}`, origin: null },
+        bundle.db,
+      );
+    }
+    for (let i = 0; i < 4; i++) {
+      await requestPasswordReset(
+        { email: "user-1@example.com", ip: `10.0.1.${i}`, origin: null },
+        bundle.db,
+      );
+    }
+
+    for (const [key, value] of Object.entries(SMTP_ENV)) vi.stubEnv(key, value);
+    for (let i = 0; i < 3; i++) {
+      await requestPasswordReset(
+        { email: "user-1@example.com", ip: `10.0.2.${i}`, origin: null },
+        bundle.db,
+      );
+    }
+
+    expect(bundle.sqlite.prepare(`SELECT * FROM password_reset_tokens`).all()).toHaveLength(3);
+    expect(sendPasswordResetEmail).toHaveBeenCalledTimes(3);
   });
 
   it("with smtp configured, issues a token and sends exactly one message", async () => {
