@@ -4,10 +4,12 @@ export function SourceChoice({
   recordingSupported,
   source,
   onChange,
+  disabled = false,
 }: {
   recordingSupported: boolean;
   source: RecordingSource;
   onChange: (source: RecordingSource) => void;
+  disabled?: boolean;
 }) {
   return (
     <fieldset className="ingest-section ingest-source-choice">
@@ -16,6 +18,7 @@ export function SourceChoice({
         <label className="ingest-source-option interactive-target">
           <input
             checked={source === "upload"}
+            disabled={disabled}
             name="source"
             onChange={() => onChange("upload")}
             type="radio"
@@ -30,6 +33,7 @@ export function SourceChoice({
           <label className="ingest-source-option interactive-target">
             <input
               checked={source === "record"}
+              disabled={disabled}
               name="source"
               onChange={() => onChange("record")}
               type="radio"

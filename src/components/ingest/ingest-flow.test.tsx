@@ -3,7 +3,7 @@
 import { act } from "react";
 import { hydrateRoot } from "react-dom/client";
 import { renderToString } from "react-dom/server";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { UserRole } from "@/domain/models";
@@ -179,6 +179,68 @@ function buildStatus(overrides: Partial<UploadSessionStatus> = {}): UploadSessio
     warning: null,
     ...overrides,
   };
+}
+
+function attachFiles(input: HTMLInputElement, files: File[]) {
+  const fileList = {
+    length: files.length,
+    item: (index: number) => files[index] ?? null,
+    [Symbol.iterator]: function* iterate() {
+      yield* files;
+    },
+  } as FileList;
+  files.forEach((file, index) => {
+    Object.defineProperty(fileList, index, { configurable: true, value: file, enumerable: true });
+  });
+  Object.defineProperty(input, "files", { configurable: true, value: fileList });
+  fireEvent.change(input);
+}
+
+function mockBatchServer({ failOn }: { failOn?: string } = {}) {
+  vi.mocked(fetch).mockImplementation((input, init) => {
+    const url = String(input);
+    if (url === "/api/ingest/sessions" && init?.method === "POST") {
+      const body = JSON.parse(String(init.body)) as { fileName?: string; fileSize?: number };
+      if (failOn && body.fileName === failOn) {
+        return Promise.reject(new Error("Unsupported media type."));
+      }
+      return mockJsonResponse({
+        ok: true,
+        status: {
+          sessionId: `s-${body.fileName}`,
+          recordingId: "recording-1",
+          nextAction: "upload",
+          bytesReceived: 0,
+          bytesExpected: body.fileSize ?? 0,
+          progressPercent: 0,
+          verificationSummary: null,
+        },
+      });
+    }
+    if (url.includes("/chunk")) {
+      const start = Number((init?.headers as Record<string, string>)["x-superscriber-byte-start"]);
+      const size = (init?.body as ArrayBuffer).byteLength;
+      return mockJsonResponse({
+        ok: true,
+        status: {
+          sessionId: "s-1",
+          nextAction: "finalize",
+          bytesReceived: start + size,
+          bytesExpected: start + size,
+          progressPercent: 100,
+          verificationSummary: null,
+        },
+      });
+    }
+    if (url.includes("/finalize")) {
+      return mockJsonResponse({
+        ok: true,
+        nextPath: "/recordings/recording-1",
+        status: { sessionId: "s-1", nextAction: "done", progressPercent: 100 },
+      });
+    }
+    return Promise.resolve(new Response("not found", { status: 404 }));
+  });
 }
 
 function mockJsonResponse(body: unknown) {
@@ -999,6 +1061,298 @@ describe("IngestFlow", () => {
         "/recordings/recording-1?error=Upload+stored%2C+but+backend+dispatch+failed%3A+Engine+unavailable.",
       );
     });
+    expect(window.localStorage.getItem("superscriber.pendingIngest")).toBeNull();
+  });
+
+  it("accepts a multi-file selection and announces the count", async () => {
+    const user = userEvent.setup();
+    renderFlow();
+
+    const input = screen.getByLabelText("Audio or video file") as HTMLInputElement;
+    expect(input).toHaveAttribute("multiple");
+
+    await user.upload(input, [
+      new File([new ArrayBuffer(6)], "alpha.wav", { type: "audio/wav" }),
+      new File([new ArrayBuffer(6)], "delta.wav", { type: "audio/wav" }),
+    ]);
+
+    expect(screen.getByTestId("batch-count")).toHaveTextContent("2 files selected.");
+  });
+
+  it("uploads every file a forced multi-file selection hands it - the silent-drop counterfactual", async () => {
+    const user = userEvent.setup();
+    mockBatchServer();
+
+    renderFlow();
+    await user.type(screen.getByLabelText("Title"), "Batch harness");
+    await user.selectOptions(screen.getByLabelText("Language"), "english");
+
+    // Counterfactual from data/superscriber-multi-upload-regression/report.md
+    // section 5.1: a two-file selection forced onto the input must yield two
+    // sessions, not a silently dropped second file.
+    const input = screen.getByLabelText("Audio or video file", {
+      selector: "input",
+    }) as HTMLInputElement;
+    attachFiles(input, [
+      new File([new ArrayBuffer(6)], "alpha.wav", { type: "audio/wav" }),
+      new File([new ArrayBuffer(6)], "delta.wav", { type: "audio/wav" }),
+    ]);
+
+    await user.click(screen.getByRole("button", { name: "Upload file" }));
+
+    await waitFor(() => {
+      expect(
+        vi.mocked(fetch).mock.calls.filter(([target]) => target === "/api/ingest/sessions"),
+      ).toHaveLength(2);
+    });
+
+    const batch = await screen.findByTestId("batch-results");
+    expect(within(batch).getByText("alpha.wav").closest("[data-state]")).toHaveAttribute(
+      "data-state",
+      "queued",
+    );
+    expect(within(batch).getByText("delta.wav").closest("[data-state]")).toHaveAttribute(
+      "data-state",
+      "queued",
+    );
+    expect(
+      screen.getByText("Batch complete: 2 recordings queued for transcription."),
+    ).toBeVisible();
+    expect(mockPush).not.toHaveBeenCalled();
+  });
+
+  it("bulk upload runs each file under its own title and surviving failures don't stop the batch", async () => {
+    const user = userEvent.setup();
+    mockBatchServer({ failOn: "bad.wav" });
+
+    renderFlow();
+    await user.type(screen.getByLabelText("Title"), "Batch row evidence");
+    await user.selectOptions(screen.getByLabelText("Language"), "english");
+    const input = screen.getByLabelText("Audio or video file", {
+      selector: "input",
+    }) as HTMLInputElement;
+    await user.upload(input, [
+      new File([new ArrayBuffer(6)], "alpha.wav", { type: "audio/wav" }),
+      new File([new ArrayBuffer(6)], "bad.wav", { type: "audio/wav" }),
+      new File([new ArrayBuffer(6)], "delta.wav", { type: "audio/wav" }),
+    ]);
+    expect(screen.getByTestId("batch-count")).toHaveTextContent("3 files selected.");
+
+    await user.click(screen.getByRole("button", { name: "Upload file" }));
+
+    const batch = await screen.findByTestId("batch-results");
+    await waitFor(() => expect(batch).toHaveTextContent("delta.wav"));
+
+    expect(within(batch).getByText("alpha.wav").closest("[data-state]")).toHaveAttribute(
+      "data-state",
+      "queued",
+    );
+    expect(within(batch).getByText("bad.wav").closest("[data-state]")).toHaveAttribute(
+      "data-state",
+      "failed",
+    );
+    expect(within(batch).getByText("bad.wav").closest("[data-state]")).toHaveTextContent(
+      "Unsupported media type.",
+    );
+    expect(
+      within(batch).getByText("alpha.wav").closest("[data-state]"),
+    ).toHaveTextContent("Queued for transcription");
+
+    expect(
+      screen.getByText("Batch finished with 1 failed of 3; the rest are queued for transcription."),
+    ).toBeVisible();
+
+    const createCalls = vi
+      .mocked(fetch)
+      .mock.calls.filter(([target]) => target === "/api/ingest/sessions");
+    expect(
+      createCalls.map(([, init]) => {
+        const body = JSON.parse(String((init as RequestInit).body)) as { title: string };
+        return body.title;
+      }),
+    ).toEqual(["alpha", "bad", "delta"]);
+    expect(mockPush).not.toHaveBeenCalled();
+  });
+
+  it("keeps the transfer surface visible between transfers with an honest idle state", () => {
+    renderFlow();
+
+    const transfer = screen.getByTestId("transfer-progress");
+    expect(transfer).toBeVisible();
+    expect(transfer).toHaveTextContent("Idle");
+    expect(transfer).toHaveTextContent("No transfer in progress.");
+    expect(screen.getByRole("progressbar")).toBeVisible();
+    expect(screen.getByRole("button", { name: "Upload file" })).toBeEnabled();
+  });
+
+  it("keeps the submit control rendered and disabled during a transfer", async () => {
+    const user = userEvent.setup();
+    const file = new File(["abcdef"], "clip.wav", { type: "audio/wav" });
+
+    let releaseChunk!: () => void;
+    const chunkGate = new Promise<void>((resolve) => {
+      releaseChunk = resolve;
+    });
+
+    vi.mocked(fetch).mockImplementation((input) => {
+      const url = String(input);
+      if (url === "/api/ingest/sessions") {
+        return mockJsonResponse({ ok: true, status: buildStatus() });
+      }
+      if (url.includes("/chunk")) {
+        return chunkGate.then(() =>
+          mockJsonResponse({
+            ok: true,
+            status: buildStatus({ bytesReceived: 6, progressPercent: 100, nextAction: "finalize" }),
+          }),
+        );
+      }
+      if (url.includes("/finalize")) {
+        return mockJsonResponse({
+          ok: true,
+          nextPath: "/workspace",
+          status: buildStatus({
+            bytesReceived: 6,
+            progressPercent: 100,
+            nextAction: "none",
+            integrityState: "verified",
+          }),
+        });
+      }
+      return Promise.reject(new Error(`Unexpected fetch: ${url}`));
+    });
+
+    renderFlow();
+    await user.type(screen.getByLabelText("Title"), "In-flight control");
+    await user.selectOptions(screen.getByLabelText("Language"), "english");
+    await user.upload(screen.getByLabelText("Audio or video file"), file);
+    await user.click(screen.getByRole("button", { name: "Upload file" }));
+
+    const busyButton = await screen.findByRole("button", { name: "Uploading..." });
+    expect(busyButton).toBeDisabled();
+    expect(screen.getByTestId("transfer-progress")).toHaveTextContent("Uploading");
+    expect(screen.getByRole("progressbar")).toBeVisible();
+
+    releaseChunk();
+    await waitFor(() => {
+      expect(mockPush).toHaveBeenCalledWith(
+        "/workspace?notice=Upload+received.+Verification+has+started.",
+      );
+    });
+  });
+
+  it("locks the picker and source switcher during a batch and frees them - and capture - afterwards", async () => {
+    const user = userEvent.setup();
+
+    let releaseChunk!: () => void;
+    const chunkGate = new Promise<void>((resolve) => {
+      releaseChunk = resolve;
+    });
+
+    vi.mocked(fetch).mockImplementation((input) => {
+      const url = String(input);
+      if (url === "/api/ingest/sessions") {
+        return mockJsonResponse({ ok: true, status: buildStatus() });
+      }
+      if (url.includes("/chunk")) {
+        return chunkGate.then(() =>
+          mockJsonResponse({
+            ok: true,
+            status: buildStatus({ bytesReceived: 6, progressPercent: 100, nextAction: "finalize" }),
+          }),
+        );
+      }
+      if (url.includes("/finalize")) {
+        return mockJsonResponse({
+          ok: true,
+          nextPath: "/workspace",
+          status: buildStatus({ nextAction: "none", progressPercent: 100 }),
+        });
+      }
+      return Promise.reject(new Error(`Unexpected fetch: ${url}`));
+    });
+
+    renderFlow();
+    await user.type(screen.getByLabelText("Title"), "Batch gating");
+    await user.selectOptions(screen.getByLabelText("Language"), "english");
+    const input = screen.getByLabelText("Audio or video file", {
+      selector: "input",
+    }) as HTMLInputElement;
+    await user.upload(input, [
+      new File([new ArrayBuffer(6)], "alpha.wav", { type: "audio/wav" }),
+      new File([new ArrayBuffer(6)], "delta.wav", { type: "audio/wav" }),
+    ]);
+
+    await user.click(screen.getByRole("button", { name: "Upload file" }));
+
+    await waitFor(() => {
+      expect(input).toBeDisabled();
+    });
+    expect(screen.getByRole("radio", { name: /Upload file/ })).toBeDisabled();
+    expect(screen.getByRole("radio", { name: /Record audio/ })).toBeDisabled();
+
+    releaseChunk();
+    await waitFor(() => {
+      expect(
+        screen.getByText("Batch complete: 2 recordings queued for transcription."),
+      ).toBeVisible();
+    });
+
+    expect(input).toBeEnabled();
+    expect(screen.getByRole("radio", { name: /Upload file/ })).toBeEnabled();
+
+    await user.click(screen.getByRole("radio", { name: /Record audio/ }));
+    expect(screen.getByRole("button", { name: "Start recording" })).toBeEnabled();
+  });
+
+  it("clears a stale resume notice once the batch supersedes the pending ingest", async () => {
+    const user = userEvent.setup();
+    mockBatchServer();
+
+    window.localStorage.setItem(
+      "superscriber.pendingIngest",
+      JSON.stringify({
+        sessionId: "session-stale",
+        fileName: "stale.wav",
+        fileSize: 6,
+        fileType: "audio/wav",
+        fileLastModified: 1234,
+        source: "upload",
+      }),
+    );
+    vi.mocked(fetch).mockImplementationOnce(() =>
+      mockJsonResponse({
+        ok: true,
+        status: buildStatus({ sessionId: "session-stale", bytesReceived: 3, progressPercent: 50 }),
+      }),
+    );
+
+    renderFlow();
+
+    expect(
+      await screen.findByText("Resume upload for stale.wav from 3 B committed."),
+    ).toBeVisible();
+
+    await user.type(screen.getByLabelText("Title"), "Batch supersedes");
+    await user.selectOptions(screen.getByLabelText("Language"), "english");
+    const input = screen.getByLabelText("Audio or video file", {
+      selector: "input",
+    }) as HTMLInputElement;
+    await user.upload(input, [
+      new File([new ArrayBuffer(6)], "alpha.wav", { type: "audio/wav" }),
+      new File([new ArrayBuffer(6)], "delta.wav", { type: "audio/wav" }),
+    ]);
+
+    await user.click(screen.getByRole("button", { name: "Upload file" }));
+
+    await waitFor(() => {
+      expect(
+        screen.getByText("Batch complete: 2 recordings queued for transcription."),
+      ).toBeVisible();
+    });
+    expect(
+      screen.queryByText("Resume upload for stale.wav from 3 B committed."),
+    ).not.toBeInTheDocument();
     expect(window.localStorage.getItem("superscriber.pendingIngest")).toBeNull();
   });
 });

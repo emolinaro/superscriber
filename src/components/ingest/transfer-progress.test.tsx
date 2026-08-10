@@ -1,8 +1,12 @@
 // @vitest-environment jsdom
 
-import { render, screen } from "@testing-library/react";
-import { describe, expect, it } from "vitest";
+import { cleanup, render, screen } from "@testing-library/react";
+import { afterEach, describe, expect, it } from "vitest";
 import { TransferProgress, nextProgressAnnouncement } from "./transfer-progress";
+
+afterEach(() => {
+  cleanup();
+});
 
 describe("nextProgressAnnouncement", () => {
   it("announces only start, ten-percent boundaries, and completion", () => {
@@ -42,5 +46,21 @@ describe("TransferProgress", () => {
     expect(screen.getByRole("progressbar")).toHaveAttribute("max", "1024");
     expect(screen.getByText("512 B of 1.0 KB committed")).toBeVisible();
     expect(screen.getByRole("status")).toHaveTextContent("Finalizing upload.");
+  });
+
+  it("supports an honest idle detail line in place of committed bytes", () => {
+    render(
+      <TransferProgress
+        announcement=""
+        bytesExpected={0}
+        bytesReceived={0}
+        detail="No transfer in progress."
+        statusLabel="Idle"
+      />,
+    );
+
+    expect(screen.getByText("Idle")).toBeVisible();
+    expect(screen.getByText("No transfer in progress.")).toBeVisible();
+    expect(screen.getByRole("progressbar")).toHaveAttribute("value", "0");
   });
 });
