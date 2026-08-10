@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
 
+import { act } from "react";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -322,6 +323,186 @@ describe("CaptureAudio", () => {
     expect(screen.getByLabelText("Recorded audio preview")).toBeVisible();
     expect(screen.getByRole("button", { name: "Discard" })).toBeEnabled();
     expect(screen.getByRole("button", { name: "Start recording" })).toBeDisabled();
+  });
+
+  it("offers no capture controls when browser recording is unsupported", () => {
+    controller.restore();
+    Object.defineProperty(window, "MediaRecorder", {
+      configurable: true,
+      writable: true,
+      value: undefined,
+    });
+    Object.defineProperty(navigator, "mediaDevices", {
+      configurable: true,
+      value: undefined,
+    });
+
+    renderCapture();
+
+    expect(screen.queryByRole("button", { name: "Start recording" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Pause recording" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Resume recording" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Stop recording" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Discard" })).not.toBeInTheDocument();
+  });
+
+  it("offers no pause, resume, or discard controls after microphone denial", async () => {
+    const user = userEvent.setup();
+    controller.setGetUserMediaResult("reject");
+
+    renderCapture();
+
+    await user.click(screen.getByRole("button", { name: "Start recording" }));
+    await screen.findByRole("alert");
+
+    expect(screen.queryByRole("button", { name: "Start recording" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Pause recording" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Resume recording" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Stop recording" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Discard" })).not.toBeInTheDocument();
+  });
+
+  it("releases the microphone and never delivers a take when unmounted while recording", async () => {
+    const user = userEvent.setup();
+    const view = renderCapture();
+
+    await user.click(screen.getByRole("button", { name: "Start recording" }));
+    expect(controller.tracks()).toHaveLength(1);
+
+    view.unmount();
+
+    expect(controller.tracks()[0]?.stop).toHaveBeenCalled();
+    expect(controller.recorderInstances()[0]?.stopCalls).toBe(1);
+    expect(onRecordingReady).not.toHaveBeenCalled();
+    expect(onRecordingCleared).not.toHaveBeenCalled();
+  });
+
+  it("releases the microphone and never delivers a take when unmounted while paused", async () => {
+    const user = userEvent.setup();
+    const view = renderCapture();
+
+    await user.click(screen.getByRole("button", { name: "Start recording" }));
+    await user.click(screen.getByRole("button", { name: "Pause recording" }));
+
+    view.unmount();
+
+    expect(controller.tracks()[0]?.stop).toHaveBeenCalled();
+    expect(controller.recorderInstances()[0]?.stopCalls).toBe(1);
+    expect(onRecordingReady).not.toHaveBeenCalled();
+    expect(onRecordingCleared).not.toHaveBeenCalled();
+  });
+
+  it("keeps one recorder across rapid pause and resume toggling", async () => {
+    const user = userEvent.setup();
+
+    renderCapture();
+
+    await user.click(screen.getByRole("button", { name: "Start recording" }));
+
+    fireEvent.click(screen.getByRole("button", { name: "Pause recording" }));
+    fireEvent.click(screen.getByRole("button", { name: "Resume recording" }));
+    fireEvent.click(screen.getByRole("button", { name: "Pause recording" }));
+
+    const instances = controller.recorderInstances();
+    expect(instances).toHaveLength(1);
+    expect(instances[0]?.startCalls).toBe(1);
+    expect(instances[0]?.pauseCalls).toBe(2);
+    expect(instances[0]?.resumeCalls).toBe(1);
+    expect(screen.getByRole("status")).toHaveTextContent(/Recording paused\./);
+    expect(onRecordingReady).not.toHaveBeenCalled();
+  });
+
+  it("abandons the take honestly when the microphone track ends while recording", async () => {
+    const user = userEvent.setup();
+
+    renderCapture();
+
+    await user.click(screen.getByRole("button", { name: "Start recording" }));
+
+    act(() => {
+      controller.emitTrackEnded();
+    });
+
+    expect(screen.getByRole("status")).toHaveTextContent(
+      "The microphone connection ended, so this take cannot continue. " +
+        "Start recording to begin a new take.",
+    );
+    expect(screen.getByRole("button", { name: "Start recording" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "Stop recording" })).toBeDisabled();
+    expect(screen.queryByLabelText("Recorded audio preview")).not.toBeInTheDocument();
+    expect(onRecordingReady).not.toHaveBeenCalled();
+    expect(onRecordingCleared).not.toHaveBeenCalled();
+  });
+
+  it("abandons the take honestly when the microphone track ends while paused", async () => {
+    const user = userEvent.setup();
+
+    renderCapture();
+
+    await user.click(screen.getByRole("button", { name: "Start recording" }));
+    await user.click(screen.getByRole("button", { name: "Pause recording" }));
+
+    act(() => {
+      controller.emitTrackEnded();
+    });
+
+    expect(screen.getByRole("status")).toHaveTextContent(
+      "The microphone connection ended, so this take cannot continue. " +
+        "Start recording to begin a new take.",
+    );
+    expect(screen.getByRole("button", { name: "Start recording" })).toBeEnabled();
+    expect(screen.queryByLabelText("Recorded audio preview")).not.toBeInTheDocument();
+    expect(onRecordingReady).not.toHaveBeenCalled();
+  });
+
+  it("keeps the captured audio stoppable when pause fails", async () => {
+    const user = userEvent.setup();
+    controller.failRecorderMethod("pause");
+
+    renderCapture();
+
+    await user.click(screen.getByRole("button", { name: "Start recording" }));
+    await user.click(screen.getByRole("button", { name: "Pause recording" }));
+
+    expect(screen.getByRole("status")).toHaveTextContent(
+      "Pause is unavailable for this recording. Stop to finish and preview the audio already captured.",
+    );
+    expect(screen.getByRole("button", { name: "Pause recording" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Stop recording" })).toBeEnabled();
+    expect(onRecordingReady).not.toHaveBeenCalled();
+
+    await user.click(screen.getByRole("button", { name: "Stop recording" }));
+
+    await waitFor(() => {
+      expect(onRecordingReady).toHaveBeenCalledTimes(1);
+    });
+    expect(screen.getByLabelText("Recorded audio preview")).toBeVisible();
+  });
+
+  it("keeps the captured audio stoppable when resume fails", async () => {
+    const user = userEvent.setup();
+
+    renderCapture();
+
+    await user.click(screen.getByRole("button", { name: "Start recording" }));
+    await user.click(screen.getByRole("button", { name: "Pause recording" }));
+
+    controller.failRecorderMethod("resume");
+    await user.click(screen.getByRole("button", { name: "Resume recording" }));
+
+    expect(screen.getByRole("status")).toHaveTextContent(
+      "Resume is unavailable for this recording. Stop to finish and preview the audio already captured.",
+    );
+    expect(screen.getByRole("button", { name: "Resume recording" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Stop recording" })).toBeEnabled();
+    expect(onRecordingReady).not.toHaveBeenCalled();
+
+    await user.click(screen.getByRole("button", { name: "Stop recording" }));
+
+    await waitFor(() => {
+      expect(onRecordingReady).toHaveBeenCalledTimes(1);
+    });
+    expect(screen.getByLabelText("Recorded audio preview")).toBeVisible();
   });
 
   it("emits onRecordingReady once when stop is activated repeatedly", async () => {

@@ -447,6 +447,9 @@ export function IngestFlow({
           <SourceChoice
             onChange={(nextSource) => {
               setSource(nextSource);
+              if (nextSource !== "record") {
+                setRecordedFile(null);
+              }
               setErrors((current) => {
                 const next = { ...current };
                 delete next.file;

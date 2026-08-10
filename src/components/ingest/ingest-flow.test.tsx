@@ -244,6 +244,65 @@ describe("IngestFlow", () => {
     global.fetch = vi.fn();
   });
 
+  it("abandons a completed take when switching away from Record audio", async () => {
+    const user = userEvent.setup();
+    renderFlow();
+
+    await user.click(screen.getByRole("radio", { name: /Record audio/ }));
+    await user.type(screen.getByLabelText("Title"), "Interview 011");
+    await user.selectOptions(screen.getByLabelText("Language"), "english");
+    await user.click(screen.getByRole("button", { name: "Start recording" }));
+    await user.click(screen.getByRole("button", { name: "Stop recording" }));
+
+    expect(await screen.findByLabelText("Recorded audio preview")).toBeVisible();
+
+    await user.click(screen.getByRole("radio", { name: /Upload file/ }));
+
+    expect(screen.getByLabelText("Title")).toHaveValue("Interview 011");
+    expect(screen.getByLabelText("Language")).toHaveValue("english");
+    expect(screen.getByLabelText("Audio or video file")).toBeVisible();
+
+    await user.click(screen.getByRole("radio", { name: /Record audio/ }));
+
+    expect(screen.getByRole("button", { name: "Start recording" })).toBeEnabled();
+    expect(screen.queryByLabelText("Recorded audio preview")).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "Upload recording" }));
+
+    const summary = await screen.findByRole("alert", { name: "There is a problem" });
+    expect(summary).toHaveTextContent("Recording - Record audio before uploading.");
+    expect(
+      vi
+        .mocked(fetch)
+        .mock.calls.filter(([input]) => String(input).startsWith("/api/ingest/sessions")),
+    ).toHaveLength(0);
+    expect(window.localStorage.setItem).not.toHaveBeenCalled();
+  });
+
+  it("never delivers an in-progress take after switching sources mid-capture", async () => {
+    const user = userEvent.setup();
+    renderFlow();
+
+    await user.click(screen.getByRole("radio", { name: /Record audio/ }));
+    await user.type(screen.getByLabelText("Title"), "Interview 012");
+    await user.selectOptions(screen.getByLabelText("Language"), "english");
+    await user.click(screen.getByRole("button", { name: "Start recording" }));
+    await user.click(screen.getByRole("button", { name: "Pause recording" }));
+
+    await user.click(screen.getByRole("radio", { name: /Upload file/ }));
+    await user.click(screen.getByRole("radio", { name: /Record audio/ }));
+
+    expect(screen.getByRole("button", { name: "Start recording" })).toBeEnabled();
+    expect(screen.queryByLabelText("Recorded audio preview")).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "Upload recording" }));
+
+    const summary = await screen.findByRole("alert", { name: "There is a problem" });
+    expect(summary).toHaveTextContent("Recording - Record audio before uploading.");
+    expect(fetch).not.toHaveBeenCalled();
+    expect(window.localStorage.setItem).not.toHaveBeenCalled();
+  });
+
   it("keeps capture local until Upload recording creates the first durable session", async () => {
     const user = userEvent.setup();
     renderFlow();
