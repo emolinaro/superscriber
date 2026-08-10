@@ -115,11 +115,44 @@
   color: var(--color-muted);
 }
 
+/* demo-filter-row-align: admins see FIVE fields (Assigned user ID joins
+   between Stage and Sort). The hard 4-column grid pushed it onto a ragged
+   second row, breaking the baseline with the results count; auto-fit keeps
+   every control on one row while width allows, wrapping as whole columns. */
 .work-filters {
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(12rem, 1fr));
   gap: var(--space-4);
   align-items: end;
+}
+
+/* demo-filter-row-height: every field uses the SAME label/control rows.
+   The shared 44px grid track, rather than input/select native line-height
+   or per-element sizing, owns all control borders and top/bottom edges. */
+.work-filters .field {
+  display: grid;
+  grid-template-rows: 1.5em var(--type-44);
+  gap: var(--space-1);
+  align-content: end;
+}
+
+.work-filters .field-label {
+  display: flex;
+  align-items: end;
+  white-space: nowrap;
+}
+
+/* Native search decorations (the in-field clear affordance) inherit the
+   surface spacing rule exactly once, so nothing crowds the control's right
+   edge even on the narrowest column. */
+.work-filters input[type='search']::-webkit-search-cancel-button {
+  position: relative;
+  right: 0;
+  margin-right: 0;
+  margin-left: var(--space-2);
+  height: 18px;
+  width: 18px;
+  padding: 0;
 }
 
 .work-chip {

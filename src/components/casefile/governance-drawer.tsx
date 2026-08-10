@@ -196,21 +196,18 @@ function DesktopDrawer({
   setActiveTab: (value: GovernanceTab) => void;
   setOpen: (value: boolean) => void;
 }) {
+  // demo-gov-placement: the trigger lives in the casefile header
+  // ("Governance >"); the drawer renders only while open, so a closed state
+  // leaves no rail column on the page.
+  if (!open) {
+    return null;
+  }
+
   return (
-    <aside aria-label="Governance" className="governance-drawer" data-open={open || undefined}>
-      <button
-        aria-expanded={open}
-        className="button button-secondary governance-drawer__toggle"
-        onClick={() => setOpen(!open)}
-        type="button"
-      >
-        {open ? "Close governance" : "Open governance"}
-      </button>
-      {open ? (
-        <div className="governance-drawer__surface">
-          <GovernanceTabs activeTab={activeTab} casefile={casefile} setActiveTab={setActiveTab} />
-        </div>
-      ) : null}
+    <aside aria-label="Governance" className="governance-drawer" data-open>
+      <div className="governance-drawer__surface">
+        <GovernanceTabs activeTab={activeTab} casefile={casefile} setActiveTab={setActiveTab} />
+      </div>
     </aside>
   );
 }
@@ -228,16 +225,10 @@ function TabletDrawer({
   setActiveTab: (value: GovernanceTab) => void;
   setOpen: (value: boolean) => void;
 }) {
+  // demo-gov-placement: the tablet modal also opens from the header link;
+  // its own secondary-side trigger row is gone.
   return (
     <div className="governance-tablet-drawer">
-      <button
-        aria-expanded={open}
-        className="button button-secondary governance-drawer__toggle"
-        onClick={() => setOpen(true)}
-        type="button"
-      >
-        Open governance
-      </button>
       <Modal
         backdropClassName="governance-tablet-drawer__backdrop"
         description="Inspect policy, provenance, assignments, revisions, decisions, and audit facts."
@@ -270,13 +261,26 @@ function PhoneAccordions({ casefile }: { casefile: CasefileViewModel }) {
 
 export function GovernanceDrawer({
   casefile,
+  open: controlledOpen,
   onOpenChange,
+  onToggle,
 }: {
   casefile: CasefileViewModel;
+  /** demo-gov-placement: the header hosts the trigger; the workspace owns state. */
+  open?: boolean;
   onOpenChange?: (open: boolean) => void;
+  onToggle?: () => void;
 }) {
   const [viewportMode, setViewportMode] = useState<ViewportMode>("phone");
-  const [open, setOpen] = useState(false);
+  const [internalOpen, setInternalOpen] = useState(false);
+  const open = controlledOpen ?? internalOpen;
+  const setOpen = (value: boolean) => {
+    if (controlledOpen === undefined) {
+      setInternalOpen(value);
+    } else if (value !== controlledOpen) {
+      onToggle?.();
+    }
+  };
   const [activeTab, setActiveTab] = useState<GovernanceTab>("Policy");
 
   useEffect(() => {
@@ -287,8 +291,11 @@ export function GovernanceDrawer({
   }, []);
 
   useEffect(() => {
-    if (viewportMode === "phone") {
-      setOpen(false);
+    if (viewportMode === "phone" && open) {
+      onToggle?.();
+      if (controlledOpen === undefined) {
+        setInternalOpen(false);
+      }
     }
   }, [viewportMode]);
 

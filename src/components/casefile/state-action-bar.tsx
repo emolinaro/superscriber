@@ -51,6 +51,11 @@ export function StateActionBar({
         <span>{assignmentLabel}</span>
         {dirty ? <span className="casefile-action-bar__dirty">Unsaved changes</span> : null}
       </div>
+      {phoneSafetyMode && hasGovernedActions ? (
+        <p className="field-note casefile-action-bar__phone-note">
+          Review and decisions require a tablet or desktop.
+        </p>
+      ) : null}
       {!phoneSafetyMode ? (
         <div className="button-row casefile-action-bar__buttons">
           {canSave ? (

@@ -94,4 +94,34 @@ describe("StateActionBar", () => {
     expect(screen.queryByRole("button", { name: "Save draft" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Submit for approval" })).not.toBeInTheDocument();
   });
+
+  it("names the withheld governed actions on the phone-safety surface", () => {
+    render(
+      <StateActionBar
+        assignmentLabel="Assigned reviewer"
+        canApprove={false}
+        canExport={false}
+        canReopen={false}
+        canRequestChanges={false}
+        canSave
+        canSubmit
+        canWithdraw={false}
+        dirty
+        onApprove={vi.fn()}
+        onExport={vi.fn()}
+        onReopen={vi.fn()}
+        onRequestChanges={vi.fn()}
+        onSave={vi.fn()}
+        onSubmit={vi.fn()}
+        onWithdraw={vi.fn()}
+        phoneSafetyMode
+        saving={false}
+        stageLabel="Draft review"
+      />,
+    );
+
+    expect(
+      screen.getByText("Review and decisions require a tablet or desktop."),
+    ).toHaveClass("casefile-action-bar__phone-note");
+  });
 });

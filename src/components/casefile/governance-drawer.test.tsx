@@ -1,7 +1,8 @@
 // @vitest-environment jsdom
 
+import { useState } from "react";
 import userEvent from "@testing-library/user-event";
-import { cleanup, render, screen } from "@testing-library/react";
+import { act, cleanup, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { createCasefile } from "./test-fixtures";
 import { GovernanceDrawer } from "./governance-drawer";
@@ -25,27 +26,46 @@ describe("GovernanceDrawer", () => {
     setViewport(1280);
   });
 
-  it("renders the exact governance tabs and stays collapsed by default on desktop", async () => {
-    const user = userEvent.setup();
-    render(<GovernanceDrawer casefile={createCasefile()} />);
+  // demo-gov-placement: the trigger is header-hosted now - tests drive the
+  // component's controlled open prop through a tiny state host.
+  function harness() {
+    let state: { open: boolean; setOpen: (value: boolean) => void } | null = null;
+    function Host() {
+      const [open, setOpen] = useState(false);
+      state = { open, setOpen };
+      return (
+        <GovernanceDrawer
+          casefile={createCasefile()}
+          open={open}
+          onToggle={() => setOpen((current) => !current)}
+        />
+      );
+    }
+    return { Host, getState: () => state! };
+  }
 
-    expect(screen.getByRole("button", { name: "Open governance" })).toHaveAttribute(
-      "aria-expanded",
-      "false",
-    );
+  it("stays unmounted by default on desktop and renders the exact governance tabs once opened", () => {
+    const { Host, getState } = harness();
+    render(<Host />);
 
-    await user.click(screen.getByRole("button", { name: "Open governance" }));
+    // No rail trigger anymore; the casefile header owns "Governance >".
+    expect(screen.queryByRole("complementary")).toBeNull();
+    expect(screen.queryByRole("button", { name: /governance$/i })).toBeNull();
+
+    act(() => getState().setOpen(true));
 
     for (const name of ["Policy", "Provenance", "Assignments", "Revisions", "Decisions", "Audit"]) {
       expect(screen.getByRole("tab", { name })).toBeVisible();
     }
+    expect(screen.getByRole("complementary", { name: "Governance" })).toBeVisible();
   });
 
   it("wires governance tabs and the active panel with accessible ids and roving tabIndex", async () => {
     const user = userEvent.setup();
-    render(<GovernanceDrawer casefile={createCasefile()} />);
+    const { Host, getState } = harness();
+    render(<Host />);
 
-    await user.click(screen.getByRole("button", { name: "Open governance" }));
+    act(() => getState().setOpen(true));
 
     const tabs = ["Policy", "Provenance", "Assignments", "Revisions", "Decisions", "Audit"].map(
       (name) => screen.getByRole("tab", { name }),
@@ -66,9 +86,10 @@ describe("GovernanceDrawer", () => {
 
   it("moves focus and activates governance tabs with arrow, home, and end keys", async () => {
     const user = userEvent.setup();
-    render(<GovernanceDrawer casefile={createCasefile()} />);
+    const { Host, getState } = harness();
+    render(<Host />);
 
-    await user.click(screen.getByRole("button", { name: "Open governance" }));
+    act(() => getState().setOpen(true));
 
     const policyTab = screen.getByRole("tab", { name: "Policy" });
     await user.click(policyTab);
@@ -99,7 +120,8 @@ describe("GovernanceDrawer", () => {
 
   it("renders phone governance as accordions", () => {
     setViewport(390);
-    render(<GovernanceDrawer casefile={createCasefile()} />);
+    const { Host } = harness();
+    render(<Host />);
 
     for (const name of ["Policy", "Provenance", "Assignments", "Revisions", "Decisions", "Audit"]) {
       expect(screen.getByText(name)).toBeVisible();
@@ -107,16 +129,24 @@ describe("GovernanceDrawer", () => {
     expect(screen.queryByRole("tab")).not.toBeInTheDocument();
   });
 
-  it("locks the background and restores focus for the tablet governance drawer", async () => {
+  it("locks the background and restores focus to the header trigger for the tablet governance drawer", async () => {
     const user = userEvent.setup();
     const appRoot = document.createElement("div");
     appRoot.id = "app-root";
     document.body.append(appRoot);
     setViewport(960);
 
-    render(<GovernanceDrawer casefile={createCasefile()} />, { container: appRoot });
+    const trigger = document.createElement("button");
+    trigger.textContent = "Governance >";
+    document.body.prepend(trigger);
+    trigger.focus();
 
-    await user.click(screen.getByRole("button", { name: "Open governance" }));
+    const { Host, getState } = harness();
+    render(<Host />, { container: appRoot });
+
+    // The header link (trigger) holds focus before opening; the drawer must
+    // restore focus to it on close (in the real layout via the header).
+    act(() => getState().setOpen(true));
 
     expect(screen.getByRole("dialog", { name: "Governance" })).toBeVisible();
     expect(document.querySelector("#app-root")).toHaveAttribute("inert");
@@ -124,8 +154,10 @@ describe("GovernanceDrawer", () => {
 
     await user.click(screen.getByRole("button", { name: "Close governance" }));
 
-    expect(screen.getByRole("button", { name: "Open governance" })).toHaveFocus();
-    expect(document.querySelector("#app-root")).not.toHaveAttribute("inert");
+    await waitFor(() => {
+      expect(document.querySelector("#app-root")).not.toHaveAttribute("inert");
+    });
     expect(document.body.style.overflow).toBe("");
+    expect(trigger).toHaveFocus();
   });
 });

@@ -391,6 +391,53 @@ describe("getCasefile", () => {
     }
   });
 
+  it("marks segments the viewed revision edited versus its parent in the same casefile", async () => {
+    const { bundle, nextReviewer, reopenedRevisionId } = await setupLifecycleFixture();
+
+    try {
+      // The reopened revision reproduces its approved parent verbatim, so it
+      // starts with no highlight at all.
+      const reopenedView = getCasefile(nextReviewer, "rec-1", {}, bundle.db);
+      expect(reopenedView?.diffHighlight).toBeNull();
+
+      // Save an edited sibling of the reopened revision and make it current.
+      const parent = bundle.db
+        .select()
+        .from(revisions)
+        .where(eq(revisions.id, reopenedRevisionId))
+        .get()!;
+      const segments = JSON.parse(parent.segmentsJson) as Array<Record<string, unknown>>;
+      segments[0] = { ...segments[0], text: "Edited wording." };
+      bundle.db.insert(revisions).values({
+        id: "rev-child",
+        recordingId: "rec-1",
+        version: parent.version + 1,
+        state: "draft",
+        basedOnRevisionId: parent.id,
+        createdByRole: "reviewer",
+        createdByUserId: null,
+        createdAt: parent.createdAt,
+        submittedByUserId: null,
+        submittedAt: null,
+        approvedAt: null,
+        summary: parent.summary,
+        segmentsJson: JSON.stringify(segments),
+      }).run();
+      bundle.db
+        .update(recordings)
+        .set({ currentRevisionId: "rev-child" })
+        .run();
+
+      const casefile = getCasefile(nextReviewer, "rec-1", {}, bundle.db);
+      expect(casefile?.diffHighlight).toEqual({
+        parentVersion: parent.version,
+        editedSegmentIds: [(segments[0] as { id: string }).id],
+      });
+    } finally {
+      bundle.sqlite.close();
+    }
+  });
+
   it("returns only the approved completion snapshot for completed access", async () => {
     const { bundle, reviewer, approvedRevisionId } = await setupLifecycleFixture();
 

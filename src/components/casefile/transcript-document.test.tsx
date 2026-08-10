@@ -84,4 +84,69 @@ describe("TranscriptDocument", () => {
     await user.click(screen.getByRole("button", { name: "Play from 00:00-00:10" }));
     expect(onSeek).toHaveBeenCalledWith(0);
   });
+
+  it("names the withheld editors on the phone-safety surface", () => {
+    render(
+      <TranscriptDocument
+        activeSegmentId={null}
+        editable
+        onSeek={vi.fn()}
+        onUpdateSpeaker={vi.fn()}
+        onUpdateText={vi.fn()}
+        phoneSafetyMode
+        safetyStripped
+        segments={baseSegments}
+        summary="Phone summary"
+        onSummaryChange={vi.fn()}
+      />,
+    );
+
+    expect(
+      screen.getByText(/Review and decisions require a tablet or desktop\./),
+    ).toBeVisible();
+  });
+
+  it("keeps permission-based read-only rendering free of the device copy", () => {
+    render(
+      <TranscriptDocument
+        activeSegmentId={null}
+        editable={false}
+        onSeek={vi.fn()}
+        onUpdateSpeaker={vi.fn()}
+        onUpdateText={vi.fn()}
+        phoneSafetyMode
+        segments={baseSegments}
+        summary="Viewer summary"
+        onSummaryChange={vi.fn()}
+      />,
+    );
+
+    expect(
+      screen.queryByText(/Review and decisions require a tablet or desktop\./),
+    ).toBeNull();
+  });
+
+  it("marks segments the viewed revision edited with an 'Edited vs vN' badge", () => {
+    render(
+      <TranscriptDocument
+        activeSegmentId={null}
+        diffHighlight={{ parentVersion: 2, editedSegmentIds: ["seg-1"] }}
+        editable={false}
+        onSeek={vi.fn()}
+        onUpdateSpeaker={vi.fn()}
+        onUpdateText={vi.fn()}
+        phoneSafetyMode={false}
+        segments={baseSegments}
+        summary="Reopened draft"
+        onSummaryChange={vi.fn()}
+      />,
+    );
+
+    const first = screen.getByRole("article", { name: /Transcript segment 1,/ });
+    expect(first.querySelector(".transcript-segment__diff-flag")).toHaveTextContent(
+      "Edited vs v2",
+    );
+    const second = screen.getByRole("article", { name: /Transcript segment 2,/ });
+    expect(second.querySelector(".transcript-segment__diff-flag")).toBeNull();
+  });
 });

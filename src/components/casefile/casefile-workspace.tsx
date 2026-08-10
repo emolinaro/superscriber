@@ -368,6 +368,13 @@ export function CasefileWorkspace({
     !casefile.access.historical &&
     !phoneSafetyMode &&
     !unresolved;
+  // Editing would be possible here but the guarded presentation removed the
+  // inline editors: TranscriptDocument must name that explicitly.
+  const safetyStripped =
+    casefile.capabilities.canEdit &&
+    !casefile.access.historical &&
+    phoneSafetyMode &&
+    !unresolved;
   const approvedDecision = latestApprovedDecision(casefile);
   const currentCasefileLatestHref = useMemo(
     () => latestHref(casefile, conflict),
@@ -658,7 +665,13 @@ export function CasefileWorkspace({
 
       {statusPoller}
 
-      <CaseHeader casefile={casefile} />
+      <CaseHeader
+        casefile={casefile}
+        governanceOpen={casefile.revision ? governanceOpen : undefined}
+        onToggleGovernance={
+          casefile.revision ? () => setGovernanceOpen((current) => !current) : undefined
+        }
+      />
 
       {casefile.revision ? (
         <AdminActionModeBanner
@@ -685,7 +698,11 @@ export function CasefileWorkspace({
         className="casefile-layout"
         data-governance-open={governanceOpen ? "true" : undefined}
       >
-        <div className="casefile-main" id="transcript-main">
+        <div
+          className="casefile-main"
+          data-revision={casefile.revision ? "true" : undefined}
+          id="transcript-main"
+        >
           {unresolvedNotice ? (
             <InlineNotice tone={unresolvedNotice.tone}>{unresolvedNotice.message}</InlineNotice>
           ) : null}
@@ -710,15 +727,21 @@ export function CasefileWorkspace({
                 onUpdateSpeaker={updateSpeaker}
                 onUpdateText={updateText}
                 phoneSafetyMode={phoneSafetyMode}
+                safetyStripped={safetyStripped}
                 segments={segments}
                 summary={summary}
+                diffHighlight={casefile.diffHighlight}
               />
             </>
           ) : (
             <CasefileStatusCards casefile={casefile} />
           )}
         </div>
-        <GovernanceDrawer casefile={casefile} onOpenChange={setGovernanceOpen} />
+        <GovernanceDrawer
+          casefile={casefile}
+          open={governanceOpen}
+          onToggle={() => setGovernanceOpen((current) => !current)}
+        />
       </div>
 
       <StateActionBar

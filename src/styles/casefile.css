@@ -5,19 +5,69 @@ html {
 .casefile-page {
   display: grid;
   gap: var(--space-4);
-  margin-top: calc(var(--space-8) * -1);
+  /* demo-casefile-top-offset: no negative top pull, AND an own space-8 gap -
+     the work page's first card sits main-pad(32) + shell-pad(32) below the
+     top bar; the casefile matches: main-pad(32) + this margin(space-8=32) -
+     exactly 64px. Contained playback subtracts both 32s in its height math. */
+  margin-top: var(--space-8);
   padding: 0 0 calc(88px + env(safe-area-inset-bottom));
+  /* demo-casefile-layout-cadence: the casefile must sit on EXACTLY the Work
+     page's cadence (same content max, centered) - no horizontal jump when
+     navigating between the two. */
+  width: min(100%, var(--work-max));
+  margin-inline: auto;
 }
 
+/* One card for the casefile header (demo-casefile-header-gutter,
+   kicker-gutter, backbutton-inset): kicker, title, actions, and facts all
+   share the card's interior padding, and the sticky chrome reads as a true
+   card rather than a floating strip. */
 .case-header {
   position: sticky;
   top: 64px;
   z-index: 6;
+}
+
+.case-header__body {
   display: grid;
   gap: var(--space-3);
-  padding: var(--space-4) 0 var(--space-3);
-  background: color-mix(in srgb, var(--color-paper) 97%, transparent);
-  border-bottom: 1px solid var(--color-line);
+  padding: var(--space-4);
+  border: 1px solid var(--color-line);
+  border-radius: var(--radius-surface);
+  background: var(--color-paper);
+  box-shadow: var(--shadow-1);
+}
+
+.case-header__row {
+  display: flex;
+  align-items: start;
+  justify-content: space-between;
+  gap: var(--space-3);
+}
+
+/* demo-gov-placement: Back to Work is the only real button in the header
+   card's right column; the Governance affordance is a plain underlined text
+   link, flush-right directly beneath it. */
+.case-header__actions {
+  display: grid;
+  justify-items: end;
+  gap: var(--space-1);
+  flex: 0 0 auto;
+}
+
+.case-header__governance {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--color-teal-700);
+  font-size: var(--type-14);
+  font-weight: 600;
+  text-decoration: underline;
+  cursor: pointer;
+}
+
+.case-header__governance:hover {
+  color: var(--color-rust-600);
 }
 
 .case-header__title {
@@ -149,6 +199,10 @@ html {
   position: sticky;
   bottom: 0;
   z-index: 7;
+  /* Containment belt: never exceed the page/column width, even with long
+     meta strings or wide sibling content (demo-actionbar-overflow). */
+  min-width: 0;
+  max-width: 100%;
   display: flex;
   flex-wrap: wrap;
   justify-content: space-between;
@@ -164,6 +218,12 @@ html {
   flex-wrap: wrap;
   gap: var(--space-3);
   align-items: center;
+  min-width: 0;
+}
+
+.casefile-action-bar__meta > * {
+  min-width: 0;
+  overflow-wrap: anywhere;
 }
 
 .casefile-action-bar__dirty {
@@ -268,10 +328,6 @@ html {
   min-width: 0;
 }
 
-.governance-drawer__toggle {
-  width: 100%;
-}
-
 .governance-drawer__surface,
 .governance-tablet-drawer__surface,
 .governance-panel {
@@ -367,7 +423,7 @@ html {
 
 @media (min-width: 1100px) {
   .casefile-layout {
-    grid-template-columns: minmax(0, 1fr) auto;
+    grid-template-columns: minmax(0, 1fr);
   }
 
   .casefile-layout[data-governance-open="true"] {
@@ -376,6 +432,68 @@ html {
 
   .governance-drawer[data-open] {
     width: 100%;
+    /* demo-gov-placement: drawer surfaces directly beneath the rail column
+       (no standalone toggle card on the rail when closed). */
+  }
+
+  /* Playback containment (demo-transcript-scroll 2026-08-05), revised by
+     demo-casefile-ux: the PAGE is a fixed viewport-high flex column (shell
+     header's 64px stays outside). Case header, action banner, layout, and
+     action bar keep natural order; the layout row gets exactly what is left
+     over and the MAIN column is the single scrollport - the transcript has
+     no nested mini-scroller, so follow-scroll and wheel scrolling just work
+     and the full page can never run away. Applies only when a revision is
+     on screen; status-only and unresolved flows keep natural flow. */
+  .casefile-page:has(> .casefile-layout > .casefile-main[data-revision="true"]) {
+    display: flex;
+    flex-direction: column;
+    /* 65px shell bar + main's space-8 top pad + the page's own space-8
+       margin (demo-casefile-top-offset): the bounded page fills exactly the
+       remaining viewport - the action bar lands flush at the bottom edge. */
+    height: calc(100vh - 65px - var(--space-8) - var(--space-8) - env(safe-area-inset-bottom));
+    padding-bottom: 0;
+    overflow: hidden;
+    gap: var(--space-4);
+  }
+
+  .casefile-page:has(> .casefile-layout > .casefile-main[data-revision="true"]) .case-header {
+    /* The page is bounded - the header is already permanently visible. */
+    position: static;
+    flex: 0 0 auto;
+  }
+
+  .casefile-page:has(> .casefile-layout > .casefile-main[data-revision="true"]) .casefile-layout {
+    flex: 1 1 0;
+    min-height: 0;
+  }
+
+  .casefile-main[data-revision="true"] {
+    max-height: 100%;
+    overflow-y: auto;
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-4);
+    scroll-padding-block: 176px;
+  }
+
+  .casefile-main[data-revision="true"] .media-transport {
+    position: static;
+    flex: 0 0 auto;
+  }
+
+  .casefile-main[data-revision="true"] .media-transport__controls video {
+    max-height: 30vh;
+  }
+
+  .casefile-main[data-revision="true"] .transcript-document__summary {
+    flex: 0 0 auto;
+  }
+
+  .casefile-layout[data-governance-open="true"] .governance-drawer {
+    position: sticky;
+    top: 0;
+    max-height: 100%;
+    overflow-y: auto;
   }
 }
 
@@ -384,7 +502,6 @@ html {
     grid-template-columns: 1fr;
   }
 }
-
 @media (max-width: 767px) {
   .casefile-page {
     padding-inline: 0;
@@ -402,5 +519,42 @@ html {
   .casefile-action-bar,
   .media-transport__actions {
     display: grid;
+  }
+}
+
+/* demo-diff-highlights (casefile UX batch): inline banner on segments the
+   viewed revision edited relative to its parent revision. */
+.transcript-segment__diff-flag {
+  grid-column: 1 / -1;
+  font-size: var(--type-12);
+  font-weight: 600;
+  color: var(--color-warning-fg);
+  background: var(--color-warning-bg);
+  border: 1px solid color-mix(in srgb, var(--color-warning-fg) 35%, transparent);
+  border-radius: 999px;
+  padding: 1px var(--space-2);
+  width: fit-content;
+}
+
+/* demo-casefile-ux: density inside the desktop casefile containment. The
+   transport is the vertical hog at laptop heights, so the summary keeps its
+   reading width but drops its box padding, and the header card tightens.
+   All inside the >=1100px containment block's scope. */
+@media (min-width: 1100px) {
+  .casefile-main[data-revision="true"] .transcript-document__summary-copy {
+    padding: var(--space-2) var(--space-3);
+  }
+
+  .casefile-main[data-revision="true"] .media-transport {
+    padding: var(--space-3);
+    gap: var(--space-2);
+  }
+
+  .casefile-page:has(> .casefile-layout > .casefile-main[data-revision="true"]) .case-header__body {
+    padding: var(--space-3);
+  }
+
+  .casefile-page:has(> .casefile-layout > .casefile-main[data-revision="true"]) .case-header__facts {
+    gap: var(--space-2) var(--space-6);
   }
 }

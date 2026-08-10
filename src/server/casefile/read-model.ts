@@ -213,6 +213,9 @@ export type CasefileViewModel = {
   };
   revision: CasefileRevisionViewModel | null;
   revisions: CasefileRevisionViewModel[];
+  /** demo-diff-highlights (casefile UX batch): inline "Edited vs vN" markers
+     on the viewed revision, when it derives from an in-casefile parent. */
+  diffHighlight: { parentVersion: number; editedSegmentIds: string[] } | null;
   assignments: CasefileAssignmentViewModel[];
   decisions: CasefileDecisionViewModel[];
   audit: CasefileAuditViewModel[];
@@ -837,6 +840,32 @@ export function getCasefile(
     db,
   );
   const stage = deriveStageForSelection(recording, selectedRevision, decisionRows);
+  // demo-diff-highlights: when the viewed revision derives from a parent
+  // (based_on_revision_id), compute which segments changed versus the parent
+  // so the transcript list can mark them inline. All grants with revision
+  // visibility get the same read-only recall.
+  let diffHighlight: { parentVersion: number; editedSegmentIds: string[] } | null = null;
+  if (selectedRevision?.basedOnRevisionId) {
+    const parent = revisionMap.get(selectedRevision.basedOnRevisionId);
+    if (parent) {
+      const byId = new Map(parent.segments.map((segment) => [segment.id, segment]));
+      const editedSegmentIds = selectedRevision.segments
+        .filter((segment) => {
+          const previous = byId.get(segment.id);
+          if (!previous) {
+            return true; // added versus parent
+          }
+          return (
+            previous.text !== segment.text ||
+            previous.speakerLabel !== segment.speakerLabel
+          );
+        })
+        .map((segment) => segment.id);
+      if (editedSegmentIds.length > 0) {
+        diffHighlight = { parentVersion: parent.version, editedSegmentIds };
+      }
+    }
+  }
   const capabilities = deriveCasefileCapabilities({
     principal,
     grant,
@@ -884,6 +913,7 @@ export function getCasefile(
         ingestionSession?.verificationSummary ?? recording.verificationSummary ?? null,
     },
     policy: policyView(principal, policyProfileId, actionMode),
+    diffHighlight,
     revision: selectedRevision
       ? toRevisionViewModel(selectedRevision, userDisplayMap, { includeSegments: true })
       : null,
