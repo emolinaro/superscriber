@@ -390,17 +390,21 @@ test.describe.serial("Superscriber editorial single-voice wordmark", () => {
     });
   });
 
-  test("keeps unvisited and visited link rendering distinct under the locked CSS rules", async ({
-    browser,
+  test("keeps the workspace destination and locked logo colors across navigation", async ({
+    page,
   }, testInfo) => {
-    const context = await browser.newContext({ viewport: { width: 1440, height: 900 } });
-    const page = await context.newPage();
+    await page.setViewportSize({ width: 1440, height: 900 });
     await authenticateWithoutVisitingWorkspace(page);
     await page.goto("/ingest");
     await waitForLocalFonts(page);
 
     const brand = page.locator(".app-shell__brand");
-    const unvisited = await attachScreenshot(testInfo, "wordmark-unvisited", brand);
+    await expect(brand).toHaveAttribute("href", "/workspace");
+    const logoColorsBeforeNavigation = await brand.evaluate((element) => ({
+      prefix: getComputedStyle(element.querySelector(".superscriber-logo-name-prefix")!).color,
+      core: getComputedStyle(element.querySelector(".superscriber-logo-name-core")!).color,
+    }));
+    await attachScreenshot(testInfo, "wordmark-before-workspace-navigation", brand);
 
     const anchorRules = await page.evaluate(() =>
       [...document.styleSheets].flatMap((sheet) => {
@@ -424,22 +428,22 @@ test.describe.serial("Superscriber editorial single-voice wordmark", () => {
     await brand.click();
     await expect(page).toHaveURL(/\/workspace$/);
     await waitForLocalFonts(page);
-    // Chromium's visited-link partitioning applies :visited only when the link
-    // URL equals the current top-level URL, so the brand renders the rust
-    // visited color on /workspace itself (matching the captain reference crop).
-    const visited = await attachScreenshot(
-      testInfo,
-      "wordmark-visited",
-      page.locator(".app-shell__brand"),
-    );
-
-    const differs = !unvisited.equals(visited);
-    expect(differs).toBe(true);
+    const workspaceBrand = page.locator(".app-shell__brand");
+    const logoColorsAfterNavigation = await workspaceBrand.evaluate((element) => ({
+      prefix: getComputedStyle(element.querySelector(".superscriber-logo-name-prefix")!).color,
+      core: getComputedStyle(element.querySelector(".superscriber-logo-name-core")!).color,
+    }));
+    expect(logoColorsAfterNavigation).toEqual(logoColorsBeforeNavigation);
+    expect(logoColorsAfterNavigation).toEqual({
+      prefix: "rgba(20, 36, 33, 0.62)",
+      core: "rgb(17, 42, 40)",
+    });
+    await attachScreenshot(testInfo, "wordmark-after-workspace-navigation", workspaceBrand);
     await attachJsonEvidence(testInfo, "wordmark-link-state-proof", {
       anchorRules,
-      unvisitedAndVisitedScreenshotsDiffer: differs,
-      destination: await page.locator(".app-shell__brand").getAttribute("href"),
+      destination: await workspaceBrand.getAttribute("href"),
+      logoColorsBeforeNavigation,
+      logoColorsAfterNavigation,
     });
-    await context.close();
   });
 });
