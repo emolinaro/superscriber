@@ -10,7 +10,13 @@ import type { AdminPasswordResetActionResult } from "@/server/actions/administra
 
 type Stage =
   | { kind: "form" }
-  | { kind: "issued"; resetUrl: string | null; expiresAt: string; notice: string };
+  | {
+      kind: "issued";
+      resetUrl: string | null;
+      expiresAt: string;
+      notice: string;
+      actorMustRelogin: boolean;
+    };
 
 /**
  * Governed password reset modal (spec section 5). Exactly one disclosure
@@ -72,19 +78,27 @@ export function AccountPasswordResetModal({
         }
         return;
       }
+      const actorMustRelogin = result.data.actorMustRelogin;
       setStage({
         kind: "issued",
         resetUrl: result.data.resetUrl,
         expiresAt: result.data.expiresAt,
         notice: result.notice,
+        actorMustRelogin,
       });
-      onIssued();
+      if (!actorMustRelogin) {
+        onIssued();
+      }
     });
   }
 
   function close() {
+    const mustRelogin = stage.kind === "issued" && stage.actorMustRelogin;
     setStage({ kind: "form" });
     onClose();
+    if (mustRelogin) {
+      onIssued();
+    }
   }
 
   return (

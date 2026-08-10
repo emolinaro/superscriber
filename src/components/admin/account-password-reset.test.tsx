@@ -72,4 +72,43 @@ describe("AccountPasswordResetModal", () => {
     renderModal({ currentUserId: "user-1" });
     expect(screen.getByText(/your own password/)).toBeInTheDocument();
   });
+
+  it("notifies issuance immediately for non-self resets", async () => {
+    const onIssued = vi.fn();
+    renderModal({ onIssued });
+    await userEvent.type(
+      screen.getByLabelText(/reason/i),
+      "User forgot their password at the front desk.",
+    );
+    await userEvent.click(screen.getByRole("button", { name: /issue reset/i }));
+
+    expect(await screen.findByDisplayValue("https://app.test/reset/tok")).toBeInTheDocument();
+    expect(onIssued).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps the one-time reveal mounted on self-reset until dismissed", async () => {
+    const onIssued = vi.fn();
+    const action = vi.fn(async () => ({
+      ok: true as const,
+      notice: "Reviewer One's password reset was issued.",
+      data: {
+        targetDisplayName: "Reviewer One",
+        resetUrl: "https://app.test/reset/tok",
+        expiresAt: "2026-08-10T13:00:00.000Z",
+        actorMustRelogin: true,
+      },
+    }));
+    renderModal({ action, currentUserId: "user-1", onIssued });
+    await userEvent.type(
+      screen.getByLabelText(/reason/i),
+      "Rotating my own password after a device loss.",
+    );
+    await userEvent.click(screen.getByRole("button", { name: /issue reset/i }));
+
+    expect(await screen.findByDisplayValue("https://app.test/reset/tok")).toBeInTheDocument();
+    expect(onIssued).not.toHaveBeenCalled();
+
+    await userEvent.click(screen.getByRole("button", { name: /done/i }));
+    expect(onIssued).toHaveBeenCalledTimes(1);
+  });
 });
