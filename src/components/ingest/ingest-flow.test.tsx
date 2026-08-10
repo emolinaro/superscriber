@@ -49,30 +49,64 @@ const STABLE_UPLOAD_INTERRUPTION_RECOVERY_NOTICE =
 type MediaRecorderListener = (event?: Event & { data?: Blob }) => void;
 
 function installRecorderSupport() {
-  const listeners = new Map<string, Set<MediaRecorderListener>>();
+  const instances: Array<{
+    state: "inactive" | "recording" | "paused";
+    startCalls: number;
+    pauseCalls: number;
+    resumeCalls: number;
+  }> = [];
 
   class MockMediaRecorder {
-    state: "inactive" | "recording" = "inactive";
+    state: "inactive" | "recording" | "paused" = "inactive";
     mimeType = "audio/webm";
+    startCalls = 0;
+    pauseCalls = 0;
+    resumeCalls = 0;
+    private listeners = new Map<string, Set<MediaRecorderListener>>();
+
+    constructor() {
+      instances.push(this);
+    }
 
     addEventListener(type: string, listener: MediaRecorderListener) {
-      const current = listeners.get(type) ?? new Set<MediaRecorderListener>();
+      const current = this.listeners.get(type) ?? new Set<MediaRecorderListener>();
       current.add(listener);
-      listeners.set(type, current);
+      this.listeners.set(type, current);
+    }
+
+    removeEventListener(type: string, listener: MediaRecorderListener) {
+      this.listeners.get(type)?.delete(listener);
     }
 
     start() {
+      this.startCalls += 1;
+      this.state = "recording";
+    }
+
+    pause() {
+      this.pauseCalls += 1;
+      if (this.state !== "recording") {
+        throw new Error("InvalidStateError: recorder is not recording");
+      }
+      this.state = "paused";
+    }
+
+    resume() {
+      this.resumeCalls += 1;
+      if (this.state !== "paused") {
+        throw new Error("InvalidStateError: recorder is not paused");
+      }
       this.state = "recording";
     }
 
     stop() {
       this.state = "inactive";
-      listeners.get("dataavailable")?.forEach((listener) => {
+      this.listeners.get("dataavailable")?.forEach((listener) => {
         listener({ data: new Blob(["recorded-audio"], { type: "audio/webm" }) } as Event & {
           data: Blob;
         });
       });
-      listeners.get("stop")?.forEach((listener) => {
+      this.listeners.get("stop")?.forEach((listener) => {
         listener(new Event("stop"));
       });
     }
@@ -87,10 +121,14 @@ function installRecorderSupport() {
     configurable: true,
     value: {
       getUserMedia: vi.fn().mockResolvedValue({
-        getTracks: () => [{ stop: vi.fn() }],
+        getTracks: () => [
+          { stop: vi.fn(), addEventListener: vi.fn(), removeEventListener: vi.fn() },
+        ],
       }),
     },
   });
+
+  return { instances };
 }
 
 function removeRecorderSupport() {
@@ -189,8 +227,10 @@ afterEach(() => {
 });
 
 describe("IngestFlow", () => {
+  let recorderInstances: ReturnType<typeof installRecorderSupport>["instances"];
+
   beforeEach(() => {
-    installRecorderSupport();
+    recorderInstances = installRecorderSupport().instances;
     mockPush.mockReset();
     mockRefresh.mockReset();
     Object.defineProperty(URL, "createObjectURL", {
@@ -206,6 +246,240 @@ describe("IngestFlow", () => {
       value: createStorage(),
     });
     global.fetch = vi.fn();
+  });
+
+  it("abandons a completed take when switching away from Record audio", async () => {
+    const user = userEvent.setup();
+    renderFlow();
+
+    await user.click(screen.getByRole("radio", { name: /Record audio/ }));
+    await user.type(screen.getByLabelText("Title"), "Interview 011");
+    await user.selectOptions(screen.getByLabelText("Language"), "english");
+    await user.click(screen.getByRole("button", { name: "Start recording" }));
+    await user.click(screen.getByRole("button", { name: "Stop recording" }));
+
+    expect(await screen.findByLabelText("Recorded audio preview")).toBeVisible();
+
+    await user.click(screen.getByRole("radio", { name: /Upload file/ }));
+
+    expect(screen.getByLabelText("Title")).toHaveValue("Interview 011");
+    expect(screen.getByLabelText("Language")).toHaveValue("english");
+    expect(screen.getByLabelText("Audio or video file")).toBeVisible();
+
+    await user.click(screen.getByRole("radio", { name: /Record audio/ }));
+
+    expect(screen.getByRole("button", { name: "Start recording" })).toBeEnabled();
+    expect(screen.queryByLabelText("Recorded audio preview")).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "Upload recording" }));
+
+    const summary = await screen.findByRole("alert", { name: "There is a problem" });
+    expect(summary).toHaveTextContent("Recording - Record audio before uploading.");
+    expect(
+      vi
+        .mocked(fetch)
+        .mock.calls.filter(([input]) => String(input).startsWith("/api/ingest/sessions")),
+    ).toHaveLength(0);
+    expect(window.localStorage.setItem).not.toHaveBeenCalled();
+  });
+
+  it("never delivers an in-progress take after switching sources mid-capture", async () => {
+    const user = userEvent.setup();
+    renderFlow();
+
+    await user.click(screen.getByRole("radio", { name: /Record audio/ }));
+    await user.type(screen.getByLabelText("Title"), "Interview 012");
+    await user.selectOptions(screen.getByLabelText("Language"), "english");
+    await user.click(screen.getByRole("button", { name: "Start recording" }));
+    await user.click(screen.getByRole("button", { name: "Pause recording" }));
+
+    await user.click(screen.getByRole("radio", { name: /Upload file/ }));
+    await user.click(screen.getByRole("radio", { name: /Record audio/ }));
+
+    expect(screen.getByRole("button", { name: "Start recording" })).toBeEnabled();
+    expect(screen.queryByLabelText("Recorded audio preview")).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "Upload recording" }));
+
+    const summary = await screen.findByRole("alert", { name: "There is a problem" });
+    expect(summary).toHaveTextContent("Recording - Record audio before uploading.");
+    expect(fetch).not.toHaveBeenCalled();
+    expect(window.localStorage.setItem).not.toHaveBeenCalled();
+  });
+
+  it("keeps capture local until Upload recording creates the first durable session", async () => {
+    const user = userEvent.setup();
+    renderFlow();
+
+    await user.click(screen.getByRole("radio", { name: /Record audio/ }));
+    await user.type(screen.getByLabelText("Title"), "Interview 009");
+    await user.selectOptions(screen.getByLabelText("Language"), "english");
+
+    await user.click(screen.getByRole("button", { name: "Start recording" }));
+    await user.click(screen.getByRole("button", { name: "Pause recording" }));
+    expect(screen.getByRole("button", { name: "Resume recording" })).toBeEnabled();
+    await user.click(screen.getByRole("button", { name: "Resume recording" }));
+    await user.click(screen.getByRole("button", { name: "Stop recording" }));
+
+    expect(await screen.findByLabelText("Recorded audio preview")).toBeVisible();
+
+    expect(
+      vi
+        .mocked(fetch)
+        .mock.calls.filter(([input]) => String(input).startsWith("/api/ingest/sessions")),
+    ).toHaveLength(0);
+    expect(window.localStorage.setItem).not.toHaveBeenCalled();
+    expect(window.localStorage.getItem("superscriber.pendingIngest")).toBeNull();
+
+    const recordedFileSize = 14;
+    vi.mocked(fetch)
+      .mockImplementationOnce(() =>
+        mockJsonResponse({
+          ok: true,
+          status: buildStatus({ source: "record", bytesExpected: recordedFileSize }),
+        }),
+      )
+      .mockImplementationOnce(() =>
+        mockJsonResponse({
+          ok: true,
+          status: buildStatus({
+            source: "record",
+            bytesReceived: recordedFileSize,
+            bytesExpected: recordedFileSize,
+            progressPercent: 100,
+            nextAction: "finalize",
+          }),
+        }),
+      )
+      .mockImplementationOnce(() =>
+        mockJsonResponse({
+          ok: true,
+          nextPath: "/workspace",
+          status: buildStatus({
+            source: "record",
+            bytesReceived: recordedFileSize,
+            bytesExpected: recordedFileSize,
+            progressPercent: 100,
+            nextAction: "none",
+            integrityState: "verified",
+          }),
+        }),
+      );
+
+    await user.click(screen.getByRole("button", { name: "Upload recording" }));
+
+    await waitFor(() => {
+      expect(mockPush).toHaveBeenCalledWith(
+        "/workspace?notice=Upload+received.+Verification+has+started.",
+      );
+    });
+
+    expect(recorderInstances).toHaveLength(1);
+    expect(recorderInstances[0]?.startCalls).toBe(1);
+
+    const createCall = vi
+      .mocked(fetch)
+      .mock.calls.find(([input]) => input === "/api/ingest/sessions");
+    expect(createCall?.[1]?.method).toBe("POST");
+    const createBody = JSON.parse(String(createCall?.[1]?.body)) as Record<string, unknown>;
+    expect(createBody).toMatchObject({
+      title: "Interview 009",
+      languageHint: "english",
+      source: "record",
+      mimeType: "audio/webm",
+      fileSize: recordedFileSize,
+    });
+    expect(String(createBody.fileName)).toMatch(/^recording-.*\.webm$/);
+
+    const [, rawValue] = vi.mocked(window.localStorage.setItem).mock.calls[0] ?? [];
+    expect(JSON.parse(String(rawValue))).toMatchObject({
+      sessionId: "session-1",
+      fileName: createBody.fileName,
+      fileSize: recordedFileSize,
+      fileType: "audio/webm",
+      source: "record",
+    });
+    expect(String(rawValue)).not.toContain("Interview 009");
+    expect(String(rawValue)).not.toContain("english");
+    expect(window.localStorage.getItem("superscriber.pendingIngest")).toBeNull();
+  });
+
+  it("blocks upload of a discarded take and supports an immediate re-record", async () => {
+    const user = userEvent.setup();
+    renderFlow();
+
+    await user.click(screen.getByRole("radio", { name: /Record audio/ }));
+    await user.type(screen.getByLabelText("Title"), "Interview 010");
+    await user.selectOptions(screen.getByLabelText("Language"), "english");
+    await user.click(screen.getByRole("button", { name: "Start recording" }));
+    await user.click(screen.getByRole("button", { name: "Stop recording" }));
+
+    expect(await screen.findByLabelText("Recorded audio preview")).toBeVisible();
+
+    await user.click(screen.getByRole("button", { name: "Discard" }));
+
+    expect(screen.queryByLabelText("Recorded audio preview")).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "Upload recording" }));
+
+    const summary = await screen.findByRole("alert", { name: "There is a problem" });
+    expect(summary).toHaveTextContent("Recording - Record audio before uploading.");
+    expect(fetch).not.toHaveBeenCalled();
+    expect(window.localStorage.setItem).not.toHaveBeenCalled();
+
+    const recordedFileSize = 14;
+    vi.mocked(fetch)
+      .mockImplementationOnce(() =>
+        mockJsonResponse({
+          ok: true,
+          status: buildStatus({ source: "record", bytesExpected: recordedFileSize }),
+        }),
+      )
+      .mockImplementationOnce(() =>
+        mockJsonResponse({
+          ok: true,
+          status: buildStatus({
+            source: "record",
+            bytesReceived: recordedFileSize,
+            bytesExpected: recordedFileSize,
+            progressPercent: 100,
+            nextAction: "finalize",
+          }),
+        }),
+      )
+      .mockImplementationOnce(() =>
+        mockJsonResponse({
+          ok: true,
+          nextPath: "/workspace",
+          status: buildStatus({
+            source: "record",
+            bytesReceived: recordedFileSize,
+            bytesExpected: recordedFileSize,
+            progressPercent: 100,
+            nextAction: "none",
+            integrityState: "verified",
+          }),
+        }),
+      );
+
+    await user.click(screen.getByRole("button", { name: "Start recording" }));
+    await user.click(screen.getByRole("button", { name: "Stop recording" }));
+
+    expect(await screen.findByLabelText("Recorded audio preview")).toBeVisible();
+    expect(recorderInstances).toHaveLength(2);
+
+    await user.click(screen.getByRole("button", { name: "Upload recording" }));
+
+    await waitFor(() => {
+      expect(mockPush).toHaveBeenCalledWith(
+        "/workspace?notice=Upload+received.+Verification+has+started.",
+      );
+    });
+    expect(
+      vi
+        .mocked(fetch)
+        .mock.calls.filter(([input]) => input === "/api/ingest/sessions"),
+    ).toHaveLength(1);
   });
 
   it("renders Source as a native radio group and validates title, language, and upload file", async () => {
@@ -280,14 +554,16 @@ describe("IngestFlow", () => {
 
     renderFlow();
 
-    await user.click(screen.getByRole("radio", { name: /Record audio/ }));    await user.click(screen.getByRole("button", { name: "Start recording" }));
+    await user.click(screen.getByRole("radio", { name: /Record audio/ }));
+    await user.click(screen.getByRole("button", { name: "Start recording" }));
 
     const notice = await screen.findByRole("alert");
     expect(notice).toHaveTextContent(
       "Microphone access was blocked. Choose Upload file to continue safely.",
     );
 
-    await user.click(screen.getByRole("radio", { name: /Upload file/ }));    expect(screen.getByLabelText("Audio or video file")).toBeVisible();
+    await user.click(screen.getByRole("radio", { name: /Upload file/ }));
+    expect(screen.getByLabelText("Audio or video file")).toBeVisible();
   });
 
   it("writes only safe metadata when creating a session", async () => {

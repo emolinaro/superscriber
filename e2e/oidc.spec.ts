@@ -35,6 +35,11 @@ const linkedRoleUser = {
   password: "Superscriber!123",
 };
 
+function appUrlWithErrorPattern() {
+  const port = new URL(process.env.PLAYWRIGHT_BASE_URL || "http://localhost:3105").port || "3105";
+  return new RegExp(`(127\\.0\\.0\\.1|localhost):${port}\\/\\?.*error=`);
+}
+
 test.describe.serial("authentik oidc dual login", () => {
   // In container mode the suite's sidecar serves the same issuer; locally an
   // in-process fake is started on the same port. Behavior is identical.
@@ -199,7 +204,7 @@ test.describe.serial("authentik oidc dual login", () => {
 
     await oidcSignIn(page);
 
-    await expect(page).toHaveURL(/(127\.0\.0\.1|localhost):3105\/\?.*error=/);
+    await expect(page).toHaveURL(appUrlWithErrorPattern());
     await expect(page.getByRole("heading", { name: "Sign in" })).toBeVisible();
     await expect(
       page.locator("p.banner").getByText("Access is not provisioned for this account"),
@@ -220,7 +225,7 @@ test.describe.serial("authentik oidc dual login", () => {
 
     await oidcSignIn(page);
 
-    await expect(page).toHaveURL(/(127\.0\.0\.1|localhost):3105\/\?.*error=/);
+    await expect(page).toHaveURL(appUrlWithErrorPattern());
     await expect(
       page.locator("p.banner").getByText("Access is not provisioned for this account"),
     ).toBeVisible();
@@ -234,7 +239,7 @@ test.describe.serial("authentik oidc dual login", () => {
 
     await oidcSignIn(page);
 
-    await expect(page).toHaveURL(/(127\.0\.0\.1|localhost):3105\/\?.*error=/);
+    await expect(page).toHaveURL(appUrlWithErrorPattern());
     await expect(
       page.locator("p.banner").getByText("Access is not provisioned for this account"),
     ).toBeVisible();

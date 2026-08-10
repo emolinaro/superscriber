@@ -87,6 +87,14 @@ test.describe.serial("accessibility workflows", () => {
     await expectNoViolations(page, "admin policy");
   });
 
+  test("passes axe across ingest upload and recording controls", async ({ page }) => {
+    await bootstrapAndLogin(page, adminUser);
+    await page.goto("/ingest");
+    await expectNoViolations(page, "ingest upload surface");
+    await page.getByLabel("Record audio").check();
+    await expectNoViolations(page, "ingest record audio capture controls");
+  });
+
   test("supports keyboard focus restoration, 200 percent zoom, and reduced motion", async ({ page }) => {
     await bootstrapAndLogin(page, adminUser);
     const recordingId = await uploadFixture(page, { title: "Accessible keyboard record" });
