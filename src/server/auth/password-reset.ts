@@ -207,17 +207,6 @@ export async function completePasswordReset(
     return deny(redeemable.reason);
   }
 
-  // Defense in depth: a token issued before designation must never reset the
-  // break-glass credential outside the emergency ceremony.
-  const designation = bundle.db
-    .select({ userId: authControl.breakGlassUserId })
-    .from(authControl)
-    .where(eq(authControl.id, 1))
-    .get();
-  if (designation?.userId === redeemable.token.userId) {
-    return deny("break_glass_designee");
-  }
-
   const passwordHash = await hash(params.password, 12);
 
   try {
@@ -225,6 +214,16 @@ export async function completePasswordReset(
       const current = loadRedeemableToken(params.rawToken, db, new Date(nowIso));
       if (!current.ok) {
         throw new RedeemStateChangedError("state_changed");
+      }
+      // Defense in depth: a token issued before designation must never reset
+      // the break-glass credential outside the emergency ceremony.
+      const designation = db
+        .select({ userId: authControl.breakGlassUserId })
+        .from(authControl)
+        .where(eq(authControl.id, 1))
+        .get();
+      if (designation?.userId === current.token.userId) {
+        throw new RedeemStateChangedError("break_glass_designee");
       }
       const target = db
         .select({ isActive: users.isActive, passwordHash: users.passwordHash })
