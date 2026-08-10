@@ -1,4 +1,5 @@
 import { cookies, headers } from "next/headers";
+import Link from "next/link";
 import { redirect } from "next/navigation";
 import { AuthSurface } from "@/components/auth/auth-surface";
 import { EmergencyAccess } from "@/components/auth/emergency-access";
@@ -115,7 +116,12 @@ export default async function LandingPage({
           <>
             {surface.showOidcSignIn ? <OidcSignInButton returnTo={requestedReturnTo} /> : null}
             {surface.showLocalCredentialsForm ? (
-              <LoginForm initialEmail={bootstrapEmail} returnTo={requestedReturnTo} />
+              <>
+                <LoginForm initialEmail={bootstrapEmail} returnTo={requestedReturnTo} />
+                <p className="auth-links">
+                  <Link href="/reset-request">Forgot your password?</Link>
+                </p>
+              </>
             ) : null}
             {surface.showBreakGlassDisclosure ? <EmergencyAccess /> : null}
           </>
