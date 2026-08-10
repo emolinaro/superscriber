@@ -1,5 +1,5 @@
 :root {
-  color-scheme: light;
+  color-scheme: light dark;
   --color-bone: #f7f3ea;
   --color-paper: #fffcf6;
   --color-ink: #172421;
@@ -16,6 +16,15 @@
   --color-info-fg: #315e72;
   --color-info-bg: #e5f0f4;
   --color-focus: #0b6f64;
+  /* Text roles for filled controls. Filled primaries sit on --color-teal-700,
+     which retone pale in dark mode - the on-role flips with them so the
+     pair stays WCAG AA in every mode. */
+  --color-on-primary: #ffffff;
+  --color-on-danger: #ffffff;
+  /* Raised card surface above paper; selected state for the active
+     transcript segment and peer affordances. */
+  --color-raised: #fdfcfa;
+  --color-selected: #eef5ee;
   --font-ui: "Public Sans Variable", sans-serif;
   --font-display: "Newsreader Variable", serif;
   --font-mono: "IBM Plex Mono", monospace;
@@ -43,4 +52,61 @@
   --work-max: 1200px;
   --motion-fast: 120ms;
   --motion-slow: 180ms;
+}
+
+/* Tokenized dark theme. Light stays the canonical default; dark overrides
+   the SAME tokens - every surface downstream inherits. Source of truth for
+   an explicit choice: data-theme on <html>. Without data-theme the OS
+   preference applies (system mode). The explicit block and the media-query
+   block below MUST stay identical token-for-token. */
+[data-theme="dark"] {
+  color-scheme: dark;
+  --color-bone: #131918;
+  --color-paper: #1e2624;
+  --color-ink: #e7ede8;
+  --color-teal-700: #8fc2b6;
+  --color-rust-600: #d98d63;
+  --color-muted: #9aa89f;
+  --color-line: #33403b;
+  --color-success-fg: #8fd4b2;
+  --color-success-bg: #1d332a;
+  --color-warning-fg: #e8b96c;
+  --color-warning-bg: #3a2f16;
+  --color-danger-fg: #e49185;
+  --color-danger-bg: #3a1f1b;
+  --color-info-fg: #9ac6d6;
+  --color-info-bg: #1d2f36;
+  --color-focus: #6fd0bf;
+  --color-on-primary: #10201d;
+  --color-on-danger: #2a1512;
+  --color-raised: #28322f;
+  --color-selected: #1d2e28;
+  --shadow-1: 0 1px 2px rgba(0, 0, 0, 0.5);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]):not([data-theme="dark"]) {
+    color-scheme: dark;
+    --color-bone: #131918;
+    --color-paper: #1e2624;
+    --color-ink: #e7ede8;
+    --color-teal-700: #8fc2b6;
+    --color-rust-600: #d98d63;
+    --color-muted: #9aa89f;
+    --color-line: #33403b;
+    --color-success-fg: #8fd4b2;
+    --color-success-bg: #1d332a;
+    --color-warning-fg: #e8b96c;
+    --color-warning-bg: #3a2f16;
+    --color-danger-fg: #e49185;
+    --color-danger-bg: #3a1f1b;
+    --color-info-fg: #9ac6d6;
+    --color-info-bg: #1d2f36;
+    --color-focus: #6fd0bf;
+    --color-on-primary: #10201d;
+    --color-on-danger: #2a1512;
+    --color-raised: #28322f;
+    --color-selected: #1d2e28;
+    --shadow-1: 0 1px 2px rgba(0, 0, 0, 0.5);
+  }
 }

@@ -134,6 +134,16 @@ The Superscriber wordmark is one Newsreader line: `Super` remains sentence case 
 - Focus ring: teal (`--color-focus`), 2 px, at least 3:1 contrast, never clipped by sticky containers
 - Avoid bright SaaS gradients, purple-blue palettes, and decorative color noise
 
+### Appearance (Light / Dark / System)
+
+- Light is the canonical default; dark is a retone of the SAME design tokens, never a second design
+- Rendering contract: `data-theme` on `<html>` carries an explicit per-user choice; without it the OS `prefers-color-scheme` decides (System mode)
+- No-flash boot: an inline layout script reads the localStorage copy pre-paint; the per-user `users.theme_preference` row is the durable sync across devices
+- Appearance is a personal preference, not a governed mutation: no security event, no capability change
+- Filled controls use on-role text (`--color-on-primary`, `--color-on-danger`) so they keep WCAG AA when their fill retone; raised and selected surfaces are tokens (`--color-raised`, `--color-selected`)
+- Every explicit `[data-theme="dark"]` override keeps a matching System-mode fallback selector; the styles contract test enforces parity
+- WCAG AA (4.5:1) is verified in browser across all four rendering states (Light, Dark, System-light, System-dark) at desktop and 390 px
+
 ### Surfaces
 
 - Primary work surfaces use paper, a 1 px border, and one quiet elevation; typography and spacing carry hierarchy before shadows

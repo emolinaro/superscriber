@@ -42,7 +42,7 @@
   padding: 0 var(--space-4);
   border: 1px solid var(--color-line);
   border-radius: var(--radius-control);
-  background: rgba(255, 252, 246, 0.92);
+  background: color-mix(in srgb, var(--color-paper) 92%, transparent);
 }
 
 .administration-nav__link[aria-current="page"],
@@ -55,7 +55,7 @@
 .administration-status {
   border: 1px solid var(--color-line);
   border-radius: var(--radius-surface);
-  background: rgba(255, 252, 246, 0.92);
+  background: color-mix(in srgb, var(--color-paper) 92%, transparent);
 }
 
 .administration-status {
@@ -180,7 +180,7 @@
   padding: var(--space-4);
   border: 1px solid var(--color-line);
   border-radius: var(--radius-surface);
-  background: rgba(255, 252, 246, 0.92);
+  background: color-mix(in srgb, var(--color-paper) 92%, transparent);
 }
 
 .administration-fact-list {
@@ -224,7 +224,7 @@
   padding: var(--space-3) var(--space-4);
   border: 1px solid var(--color-line);
   border-radius: var(--radius-surface);
-  background: rgba(255, 252, 246, 0.72);
+  background: color-mix(in srgb, var(--color-paper) 72%, transparent);
 }
 
 .administration-loading-card {

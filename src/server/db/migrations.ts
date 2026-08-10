@@ -13,7 +13,7 @@ type Migration = {
   rebuildsTables?: boolean;
 };
 
-export const LATEST_SCHEMA_VERSION = 8;
+export const LATEST_SCHEMA_VERSION = 9;
 
 const migrations: Migration[] = [
   { version: 1, name: "baseline-appliance", up: createBaselineSchema },
@@ -24,6 +24,7 @@ const migrations: Migration[] = [
   { version: 6, name: "break-glass-controls", up: addBreakGlassControlsSchema },
   { version: 7, name: "break-glass-ceremonies", up: addBreakGlassCeremoniesSchema },
   { version: 8, name: "account-role-guards", up: addAccountRoleGuards },
+  { version: 9, name: "user-theme-preference", up: addUserThemePreferenceSchema },
 ];
 
 const LEGACY_AUDIT_METADATA_JSON = serializeAuditMetadata(LEGACY_AUDIT_METADATA);
@@ -937,6 +938,14 @@ function addAccountRoleGuards(sqlite: Database.Database) {
       SELECT RAISE(ABORT, 'active assignment role must match the assigned user''s role');
     END;
   `);
+}
+
+function addUserThemePreferenceSchema(sqlite: Database.Database) {
+  // Per-user appearance preference ("system" | "light" | "dark"). Nullable:
+  // no value written yet means the boot copy (localStorage) and the OS
+  // setting decide. localStorage stays the no-flash first-paint copy; this
+  // row is the durable source of truth synced on session resume.
+  ensureColumn(sqlite, "users", "theme_preference", "theme_preference TEXT");
 }
 
 export function runMigrations(
