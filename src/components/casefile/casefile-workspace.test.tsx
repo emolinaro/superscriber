@@ -553,4 +553,20 @@ describe("CasefileWorkspace", () => {
     expect(screen.queryByRole("button", { name: "Submit for approval" })).not.toBeInTheDocument();
     expect(screen.queryAllByRole("textbox")).toHaveLength(0);
   });
+
+  it("hides the header governance trigger in phone safety mode", () => {
+    phoneSafetyModeMock.mockReturnValue(true);
+    renderWorkspace();
+
+    expect(screen.queryByRole("button", { name: /^Governance/ })).not.toBeInTheDocument();
+  });
+
+  it("renders the header governance trigger on non-phone surfaces", () => {
+    renderWorkspace();
+
+    expect(screen.getByRole("button", { name: /^Governance/ })).toHaveAttribute(
+      "aria-expanded",
+      "false",
+    );
+  });
 });

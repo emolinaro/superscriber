@@ -752,9 +752,13 @@ export async function completeReasonDialog(page: Page, reason: string): Promise<
 }
 
 export async function openGovernanceTab(page: Page, tab: string) {
-  const openButton = page.getByRole("button", { name: "Open governance" });
+  // Casefile UX batch: the governance trigger lives in the casefile header
+  // ("Governance >"); the drawer renders only while open.
+  const openButton = page.getByRole("button", { name: /^Governance/ });
   if ((await openButton.count()) > 0 && (await openButton.isVisible().catch(() => false))) {
-    await openButton.click();
+    if ((await openButton.getAttribute("aria-expanded")) !== "true") {
+      await openButton.click();
+    }
   }
 
   const tabButton = page.getByRole("tab", { name: tab });

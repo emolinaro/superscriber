@@ -8,7 +8,6 @@
 
 .administration-nav__inner,
 .administration-section__header,
-.administration-search,
 .administration-subnav,
 .administration-policy-meta {
   display: flex;
@@ -68,10 +67,29 @@
   gap: var(--space-4);
 }
 
-.administration-search,
 .administration-filters {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(14rem, 1fr));
+}
+
+/* Clean label+input+button row: the filter grid suits four selects; the
+   search form needs an input that grows and a button that hugs its label
+   (demo-accounts-search-misaligned: the shared grid stretched the Search
+   button to a full grid column). */
+.administration-search {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-3);
+  align-items: end;
+}
+
+.administration-search .field {
+  flex: 1 1 18rem;
+  min-width: 0;
+}
+
+.administration-search .button {
+  flex: 0 0 auto;
 }
 
 .administration-table-wrap {

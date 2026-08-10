@@ -325,6 +325,14 @@
   min-height: 260px;
 }
 
+.page-skeleton--casefile {
+  /* demo-casefile-transition-pop: the loading frame owns the EXACT casefile
+     cadence (work-max centered + space-8 top margin), so Work->casefile
+     navigation swaps skeleton for content with zero geometry change. */
+  width: min(100%, var(--work-max));
+  margin: var(--space-8) auto 0;
+}
+
 .page-skeleton--casefile .page-skeleton__block--large {
   min-height: 420px;
 }

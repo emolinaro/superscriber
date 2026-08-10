@@ -1,12 +1,20 @@
+import { useEffect, useRef } from "react";
 import type { TranscriptSegment } from "@/domain/models";
 import { formatSegmentWindow } from "@/lib/format";
+import { InlineNotice } from "@/components/ui/inline-notice";
 
 type TranscriptDocumentProps = {
   activeSegmentId: string | null;
   editable: boolean;
   phoneSafetyMode: boolean;
+  /** True when phone safety (not permissions or history) removed the editors. */
+  safetyStripped?: boolean;
   summary: string;
   segments: TranscriptSegment[];
+  /** demo-diff-highlights (casefile UX batch): inline "edited vs parent vN"
+     mark on segments the viewed revision changed relative to its in-casefile
+     parent. */
+  diffHighlight?: { parentVersion: number; editedSegmentIds: string[] } | null;
   onSummaryChange: (value: string) => void;
   onSeek: (startMs: number) => void;
   onUpdateSpeaker: (segmentId: string, value: string) => void;
@@ -23,8 +31,37 @@ export function TranscriptDocument({
   onSeek,
   onUpdateSpeaker,
   onUpdateText,
+  safetyStripped = false,
+  diffHighlight = null,
 }: TranscriptDocumentProps) {
   const readOnly = !editable || phoneSafetyMode;
+  // Guarded presentation (narrow/coarse surface) silently swaps the segment
+  // editors for static copy; name the withheld affordance inline so the guard
+  // never looks like broken editing (demo-segment-edit). The workspace passes
+  // `safetyStripped` when editing would otherwise be possible - permission-
+  // or history-based read-only states keep their own, separate story.
+  const segmentsRef = useRef<HTMLDivElement>(null);
+
+  // Playback follow: keep the active segment visible inside the nearest
+  // scrollport (the bounded .casefile-main scrollport on desktop, the window
+  // elsewhere). The segments list itself is never a scroller - the bounded
+  // shell keeps .casefile-main as the single scrollport.
+  useEffect(() => {
+    const container = segmentsRef.current;
+    if (!container || !activeSegmentId) {
+      return;
+    }
+    const row = container.querySelector<HTMLElement>("[data-active]");
+    if (!row) {
+      return;
+    }
+
+    const reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    row.scrollIntoView({
+      block: "nearest",
+      behavior: reducedMotion ? "auto" : "smooth",
+    });
+  }, [activeSegmentId]);
 
   return (
     <section aria-label="Transcript document" className="transcript-document" data-testid="transcript-start">
@@ -46,7 +83,12 @@ export function TranscriptDocument({
         )}
       </div>
 
-      <div className="transcript-document__segments">
+      <div className="transcript-document__segments" ref={segmentsRef}>
+        {safetyStripped ? (
+          <InlineNotice tone="info">
+            Review and decisions require a tablet or desktop.
+          </InlineNotice>
+        ) : null}
         {segments.map((segment, index) => {
           const windowLabel = formatSegmentWindow(segment.startMs, segment.endMs);
           const active = segment.id === activeSegmentId;
@@ -57,8 +99,15 @@ export function TranscriptDocument({
               aria-label={`Transcript segment ${index + 1}, ${windowLabel}`}
               className="transcript-segment"
               data-active={active || undefined}
+              data-edited-diff={diffHighlight?.editedSegmentIds.includes(segment.id) || undefined}
+              data-segment-id={segment.id}
               key={segment.id}
             >
+              {diffHighlight?.editedSegmentIds.includes(segment.id) ? (
+                <span className="transcript-segment__diff-flag" role="note">
+                  Edited vs v{diffHighlight.parentVersion}
+                </span>
+              ) : null}
               <button
                 aria-label={`Play from ${windowLabel}`}
                 className="transcript-segment__timestamp"

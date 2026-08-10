@@ -108,10 +108,10 @@ test.describe.serial("accessibility workflows", () => {
 
     await page.keyboard.press("Tab");
     await expect(page.locator(":focus")).toBeVisible();
-    await page.getByRole("button", { name: "Open governance" }).click();
+    await page.getByRole("button", { name: "Governance >" }).click();
     await expect(page.locator("#app-root")).toHaveAttribute("inert", "");
     await page.keyboard.press("Escape");
-    await expect(page.getByRole("button", { name: "Open governance" })).toBeFocused();
+    await expect(page.getByRole("button", { name: "Governance >" })).toBeFocused();
 
     await saveAndRecoverSession(page);
   });
