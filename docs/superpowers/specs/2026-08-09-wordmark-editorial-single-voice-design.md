@@ -147,7 +147,7 @@ Browser evidence must show `document.fonts.check(...)` succeeds for Newsreader a
 
 ## Semantics and interaction invariants
 
-The brand remains a Next.js link to `/workspace`. It keeps normal unvisited and visited link behavior, the global visible keyboard focus treatment, and the accessible name `Superscriber`. The SVG stays `aria-hidden="true"`, so assistive technology receives one brand name rather than path or split-span noise.
+The authenticated header brand remains a Next.js link to `/workspace`. It keeps normal unvisited and visited link behavior, the global visible keyboard focus treatment, and the accessible name `Superscriber`. The SVG stays `aria-hidden="true"`, so assistive technology receives one brand name rather than path or split-span noise.
 
 No new wrapper, control, route, animation, transition, descriptor copy, or link override is introduced. Primary navigation and account-menu semantics remain untouched.
 
