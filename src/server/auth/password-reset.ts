@@ -3,16 +3,30 @@ import { loadAuthConfig } from "@/server/auth/auth-config";
 import { loadResetMailConfig } from "@/server/auth/reset-mail-config";
 import { sendPasswordResetEmail } from "@/server/auth/reset-mailer";
 import { recordSecurityEvent } from "@/server/auth/security-events";
+import { normalizeEmail } from "@/server/auth/validation";
 import {
+  resetRedeemByIpLimiter,
   resetRequestByEmailLimiter,
   resetRequestByIpLimiter,
 } from "@/server/auth/password-reset-rate-limit";
 import {
   checkSelfServiceEligibility,
+  invalidateUserResetTokens,
   issueResetToken,
+  loadRedeemableToken,
+  markResetTokenUsed,
 } from "@/server/auth/password-reset-tokens";
-import { normalizeEmail } from "@/server/auth/validation";
-import { getAppDb, type AppDatabase } from "@/server/db/client";
+import { retireUserSessions } from "@/server/auth/session-registry";
+import { PASSWORD_RESET_COPY } from "@/lib/password-reset";
+import {
+  getAppDb,
+  getAppDbBundle,
+  type AppDatabase,
+  type AppDatabaseBundle,
+} from "@/server/db/client";
+import { runImmediateGovernedTransaction } from "@/server/db/transaction";
+import { eq } from "drizzle-orm";
+import { authControl, users } from "@/server/db/schema";
 
 const DUMMY_PASSWORD = "superscriber-reset-dummy-guess";
 let dummyHashPromise: Promise<string> | null = null;
@@ -135,4 +149,89 @@ export async function requestPasswordReset(
       db,
     );
   }
+}
+
+class RedeemStateChangedError extends Error {}
+
+/**
+ * Completion (spec 4.1): one transaction - mark used, write bcrypt(12) hash,
+ * retire every session from every auth source via auth_version advancement,
+ * invalidate leftover tokens. Never mints a session; never auto-signs-in.
+ */
+export async function completePasswordReset(
+  params: { rawToken: string; password: string; ip: string | null },
+  bundle: AppDatabaseBundle = getAppDbBundle(),
+): Promise<{ ok: true } | { ok: false; message: string }> {
+  const deny = (reason: string) => {
+    safeRecord(
+      {
+        type: "password.reset.redeem_denied",
+        outcome: "denied",
+        detail: "Password reset redemption denied.",
+        metadata: { reason },
+      },
+      bundle.db,
+    );
+    return { ok: false as const, message: PASSWORD_RESET_COPY.REDEEM_FAILURE };
+  };
+
+  if (!resetRedeemByIpLimiter.check(params.ip ?? "unknown").allowed) {
+    return deny("rate_limited");
+  }
+
+  const redeemable = loadRedeemableToken(params.rawToken, bundle.db);
+  if (!redeemable.ok) {
+    return deny(redeemable.reason);
+  }
+
+  // Defense in depth: a token issued before designation must never reset the
+  // break-glass credential outside the emergency ceremony.
+  const designation = bundle.db
+    .select({ userId: authControl.breakGlassUserId })
+    .from(authControl)
+    .where(eq(authControl.id, 1))
+    .get();
+  if (designation?.userId === redeemable.token.userId) {
+    return deny("break_glass_designee");
+  }
+
+  const passwordHash = await hash(params.password, 12);
+
+  try {
+    runImmediateGovernedTransaction((db, nowIso) => {
+      const current = loadRedeemableToken(params.rawToken, db, new Date(nowIso));
+      if (!current.ok) {
+        throw new RedeemStateChangedError(current.ok ? "" : current.reason);
+      }
+      markResetTokenUsed(current.token.id, db, nowIso);
+      db.update(users)
+        .set({ passwordHash, updatedAt: nowIso })
+        .where(eq(users.id, current.token.userId))
+        .run();
+      retireUserSessions({ userId: current.token.userId, reason: "password_reset" }, db);
+      invalidateUserResetTokens(
+        { userId: current.token.userId, reason: "user_reset_completed" },
+        db,
+        nowIso,
+      );
+      recordSecurityEvent(
+        {
+          type: "password.reset.completed",
+          outcome: "success",
+          userId: current.token.userId,
+          detail: "Password reset completed; sessions revoked.",
+          metadata: { source: current.token.source, resetRecordId: current.token.id },
+        },
+        db,
+      );
+      return null;
+    }, bundle);
+  } catch (error) {
+    if (error instanceof RedeemStateChangedError) {
+      return deny("state_changed");
+    }
+    throw error;
+  }
+
+  return { ok: true };
 }
