@@ -17,16 +17,16 @@
 ## Deploy Configuration (configured by /setup-deploy)
 - Platform: github-actions
 - Production URL: none yet
-- Deploy workflow: .github/workflows/container-e2e.yml
-- Deploy status command: gh run list --workflow "Container E2E" --branch main --limit 1
+- Deploy workflow: .github/workflows/container-e2e.yml (hosted runs disabled by captain decision)
+- Deploy status command: none - local/container gates are the quality bar
 - Merge method: squash
 - Project type: web app
 - Post-deploy health check: none yet
 
 ### Custom deploy hooks
 - Pre-merge: none
-- Deploy trigger: automatic on push to main
-- Deploy status: GitHub Actions workflow status for Container E2E on main
+- Deploy trigger: none - hosted Container E2E workflow disabled by captain decision
+- Deploy status: none (hosted workflow disabled; local container E2E is the gate)
 - Health check: none yet
 
 ## Maintaining this file

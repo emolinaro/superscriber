@@ -187,7 +187,7 @@ Primary navigation is exact: uploader gets Work and Ingest; reviewer and approve
   3. hand off to normal login
 - Daily login is a separate steady-state screen
 - A concurrent bootstrap that loses the race converts to login with a completion notice; it never creates a second admin
-- Deployments may enable institutional sign-in through Authentik OIDC (`dual` or `authentik-primary` modes): the steady-state login then adds an institutional sign-in button, and in `authentik-primary` plain-password sign-in is disabled for everyone - the single break-glass admin enters only through the emergency ceremony (management network boundary, password plus WebAuthn or recovery code; see [`docs/operators/break-glass.md`](./docs/operators/break-glass.md)). Operator configuration lives in [`docs/operators/`](./docs/operators/); mail is disabled by design
+- Deployments may enable institutional sign-in through Authentik OIDC (`dual` or `authentik-primary` modes): the steady-state login then adds an institutional sign-in button, and in `authentik-primary` plain-password sign-in is disabled for everyone - the single break-glass admin enters only through the emergency ceremony (management network boundary, password plus WebAuthn or recovery code; see [`docs/operators/break-glass.md`](./docs/operators/break-glass.md)). Operator configuration lives in [`docs/operators/`](./docs/operators/); mail is disabled by default, with one scoped password-reset exception (see [`docs/operators/no-mail-profile.md`](./docs/operators/no-mail-profile.md)). Self-service and administrator password reset are covered by [`docs/operators/password-reset.md`](./docs/operators/password-reset.md)
 
 ### Work Inbox
 
@@ -225,11 +225,11 @@ A recording owner with uploader-only access receives a status casefile: ingest p
 
 ### Administration
 
-Administration has secondary navigation for Accounts, Assignments, and Policy; the selected section is the page's `h1` and only its task is shown. Accounts supports search, a create-account drawer, and an inline role dropdown on every row. Selecting a role other than the persisted role reveals a required 10-500 character Change reason field plus explicit Save role and Cancel actions. Administrators may change any account, including their own, but an active administrator cannot be demoted when no other active administrator remains. The designated break-glass administrator cannot be demoted until the designation moves, and active assignments whose recorded role conflicts with the requested role block the change with a link to the filtered assignment ledger.
+Administration has secondary navigation for Accounts, Assignments, and Policy; the selected section is the page's `h1` and only its task is shown. Accounts supports search, a create-account drawer, an inline role dropdown on every row, and a Reset password control whose governed behavior is owned by [`docs/operators/password-reset.md`](./docs/operators/password-reset.md). Selecting a role other than the persisted role reveals a required 10-500 character Change reason field plus explicit Save role and Cancel actions. Administrators may change any account, including their own, but an active administrator cannot be demoted when no other active administrator remains. The designated break-glass administrator cannot be demoted until the designation moves, and active assignments whose recorded role conflicts with the requested role block the change with a link to the filtered assignment ledger.
 
 The server remains authoritative for role changes. One immediate database transaction reloads actor and target, compares the expected role, enforces active-admin, break-glass, and assignment compatibility, updates the local `users.role`, increments `auth_version`, revokes every active target session, appends the canonical audit event with actor, target, old role, new role, reason, and UTC time, and advances governed state. Any failure rolls the whole operation back. A committed change requires the target to sign in again. The local user row is the role authority for local and OIDC-linked identities; OIDC admission fails closed until exactly one direct Authentik group maps to the new local role and never rewrites the local role or identity link.
 
-Assignments defaults to Active with a History tab showing outcomes and completion revisions; `Assign work` explains whether an assignment is actionable now or waiting for a compatible state. Policy is read-only: the active profile and the permission matrix, including the note that phone safety mode removes governed mutations and export. Phone safety mode keeps account, assignment, break-glass, and policy facts visible while omitting all administration mutation controls. Account deactivation and password management remain deliberately not rendered.
+Assignments defaults to Active with a History tab showing outcomes and completion revisions; `Assign work` explains whether an assignment is actionable now or waiting for a compatible state. Policy is read-only: the active profile and the permission matrix, including the note that phone safety mode removes governed mutations and export. Phone safety mode keeps account, assignment, break-glass, and policy facts visible while omitting all administration mutation controls, including the Accounts row password-reset control. Account deactivation remains deliberately not rendered.
 
 ## Interaction And Copy Rules
 
@@ -247,7 +247,7 @@ Assignments defaults to Active with a History tab showing outcomes and completio
 | State | User Sees | Primary Action |
 |---|---|---|
 | First run | Setup gate with environment/trust framing and first-admin form | Create admin |
-| Normal login | Simple sign-in surface with local account fields and policy context; OIDC-enabled deployments add an institutional sign-in option | Sign in |
+| Normal login | Simple sign-in surface with local account fields and policy context; OIDC-enabled deployments add an institutional sign-in option; a password-reset link appears whenever the credential form is offered | Sign in |
 | Wrong password | Inline error on the form, no ambiguous failure language | Retry sign-in |
 | Session expired | Clear interruption message with return-to-login handoff; in-place reauthentication when unsaved work exists | Sign in again |
 | Logged out | Quiet confirmation that the session ended safely | Return to login |
@@ -342,7 +342,7 @@ These requirements apply to the auth, work inbox, ingest, casefile, export, and 
 - Timing-edit tools for transcript alignment
 - Bulk workflow decisions or bulk assignment changes
 - Policy authoring or policy-profile switching in the UI
-- Account deactivation or password reset
+- Account deactivation
 - Raw media download
 - A separate reporting or export center
 
