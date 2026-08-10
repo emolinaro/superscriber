@@ -103,6 +103,7 @@ describe("migrations", () => {
       { version: 6 },
       { version: 7 },
       { version: 8 },
+      { version: 9 },
     ]);
   });
 
@@ -339,5 +340,45 @@ describe("migrations", () => {
         .prepare("select approved_revision_id from recordings where id = ?")
         .get("legacy-reopened"),
     ).toEqual({ approved_revision_id: null });
+  });
+
+  it("adds a nullable per-user theme preference at v9 without touching user rows", () => {
+    const sqlite = new Database(":memory:");
+    sqlite.pragma("foreign_keys = ON");
+
+    runMigrations(sqlite, 8);
+    const now = "2026-08-10T00:00:00.000Z";
+    sqlite.exec(`
+      INSERT INTO policy_profiles (id, label, description)
+        VALUES ('strict', 'Strict regulated mode', 'Strict regulated mode.');
+      INSERT INTO workspaces (id, name, slug, policy_profile_id)
+        VALUES ('workspace-theme', 'Workspace', 'workspace-theme', 'strict');
+      INSERT INTO users (
+        id, email, display_name, password_hash, role, is_active, auth_version,
+        created_at, updated_at
+      ) VALUES
+        ('user-theme', 'theme@example.com', 'Theme User', 'hash', 'reviewer', 1, 1, '${now}', '${now}');
+    `);
+
+    runMigrations(sqlite);
+
+    expect(
+      sqlite.prepare("select id, theme_preference as themePreference from users").all(),
+    ).toEqual([{ id: "user-theme", themePreference: null }]);
+
+    // The column accepts the three contract values and round-trips updates.
+    sqlite
+      .prepare("update users set theme_preference = ? where id = ?")
+      .run("dark", "user-theme");
+    expect(
+      sqlite.prepare("select theme_preference as themePreference from users where id = 'user-theme'").get(),
+    ).toEqual({ themePreference: "dark" });
+
+    // Idempotent: re-running the full chain keeps the stored preference.
+    runMigrations(sqlite);
+    expect(
+      sqlite.prepare("select theme_preference as themePreference from users where id = 'user-theme'").get(),
+    ).toEqual({ themePreference: "dark" });
+    expect(sqlite.prepare("PRAGMA foreign_key_check").all()).toEqual([]);
   });
 });

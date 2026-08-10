@@ -18,6 +18,20 @@ function readAllProductCss() {
 }
 
 describe("product css contract", () => {
+  it("keeps every stylesheet structurally balanced", () => {
+    for (const entry of readdirSync(STYLES_DIR).filter((file) =>
+      file.endsWith(".css"),
+    )) {
+      const css = readFileSync(resolve(STYLES_DIR, entry), "utf8");
+      const open = (css.match(/\{/g) ?? []).length;
+      const close = (css.match(/\}/g) ?? []).length;
+      expect(
+        { file: entry, open, close },
+        `${entry} has ${open} "{" but ${close} "}"`,
+      ).toEqual({ file: entry, open: close, close });
+    }
+  });
+
   it("keeps the exact hardened tokens and bans legacy visual grammar", () => {
     const css = readAllProductCss();
 
@@ -27,6 +41,91 @@ describe("product css contract", () => {
     expect(css).toContain("--motion-slow: 180ms");
     expect(css).toContain("--type-44: 44px");
     expect(css).not.toMatch(/waveform|annotation-rail|queue-card|gradient|backdrop-filter|legacy\.css/);
+  });
+
+  it("declares the appearance system: explicit dark tokens with system-mode parity", () => {
+    const tokens = readFileSync(resolve(STYLES_DIR, "tokens.css"), "utf8");
+
+    // Rendering contract: data-theme on <html> wins; without it the media
+    // query follows the OS. Light stays the canonical default.
+    expect(tokens).toContain("color-scheme: light dark");
+    expect(tokens).toContain('[data-theme="dark"]');
+    expect(tokens).toContain("@media (prefers-color-scheme: dark)");
+    expect(tokens).toContain(
+      ':root:not([data-theme="light"]):not([data-theme="dark"])',
+    );
+
+    // The same override arms both the explicit selector and the system
+    // fallback: identical dark token sets in each.
+    for (const token of [
+      "--color-bone",
+      "--color-paper",
+      "--color-ink",
+      "--color-muted",
+      "--color-line",
+      "--color-teal-700",
+      "--color-focus",
+      "--color-on-primary",
+      "--color-on-danger",
+      "--color-raised",
+      "--color-selected",
+    ]) {
+      expect(tokens).toMatch(new RegExp(`:root\\s*\\{[^}]*${token}:`, "m"));
+      const explicitBlock = tokens.match(/\[data-theme="dark"\]\s*\{([^}]*)\}/);
+      expect(explicitBlock?.[1]).toContain(`${token}:`);
+      const systemBlock = tokens.match(
+        /@media \(prefers-color-scheme: dark\)[\s\S]*?:root:not\(\[data-theme="light"\]\):not\(\[data-theme="dark"\]\)\s*\{([^}]*)\}/,
+      );
+      expect(systemBlock?.[1]).toContain(`${token}:`);
+    }
+  });
+
+  it("keeps filled controls on on-role text instead of hard-coded white", () => {
+    const css = readAllProductCss();
+
+    const primary = css.match(/\.button-primary\s*\{([^}]*)\}/);
+    expect(primary?.[1]).toContain("color: var(--color-on-primary)");
+    expect(css).not.toContain("color: #fff;");
+  });
+
+  it("leaves no literal light fills that would glare or wash out in dark mode", () => {
+    // brand.css is exempt: its light block anchors the mark's light backdrop
+    // deliberately, and its dark retone carries the mode adaptation.
+    const adaptiveCss = [
+      "tokens.css",
+      "base.css",
+      "shell.css",
+      "auth.css",
+      "inbox.css",
+      "ingest.css",
+      "casefile.css",
+      "administration.css",
+      "responsive.css",
+    ]
+      .map((entry) => readFileSync(resolve(STYLES_DIR, entry), "utf8"))
+      .join("\n");
+
+    expect(adaptiveCss).not.toContain("#fff7f5");
+    expect(adaptiveCss).not.toContain("rgba(255, 252, 246");
+    expect(adaptiveCss).not.toContain("rgba(247, 243, 234");
+    expect(adaptiveCss).not.toMatch(/background:\s*rgba\(255, 255, 255/);
+  });
+
+  it("retones the wordmark for dark with explicit and system selectors in parity", () => {
+    const brand = readFileSync(resolve(STYLES_DIR, "brand.css"), "utf8");
+
+    expect(brand).toContain('[data-theme="dark"] .superscriber-logo');
+    expect(brand).toMatch(
+      /@media \(prefers-color-scheme: dark\)[\s\S]*?:root:not\(\[data-theme="light"\]\):not\(\[data-theme="dark"\]\) \.superscriber-logo/,
+    );
+    expect(brand).toContain("--logo-wordmark");
+  });
+
+  it("keeps the account menu appearance picker styled", () => {
+    const shell = readFileSync(resolve(STYLES_DIR, "shell.css"), "utf8");
+
+    expect(shell).toContain(".account-menu__appearance");
+    expect(shell).toContain(".account-menu__appearance-option");
   });
 
   it("keeps the exact responsive, sticky, reduced-motion, and export rules", () => {

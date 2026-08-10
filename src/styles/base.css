@@ -75,7 +75,7 @@ input[aria-invalid="true"],
 select[aria-invalid="true"],
 textarea[aria-invalid="true"] {
   border-color: rgba(140, 51, 42, 0.35);
-  background: #fff7f5;
+  background: var(--color-danger-bg);
 }
 
 :focus-visible {
@@ -204,7 +204,7 @@ textarea[aria-invalid="true"] {
 
 .panel-subtle,
 .card-like {
-  background: rgba(247, 243, 234, 0.72);
+  background: color-mix(in srgb, var(--color-bone) 72%, transparent);
 }
 
 .panel-inner,
@@ -247,7 +247,9 @@ textarea[aria-invalid="true"] {
 }
 
 .button-primary {
-  color: #fff;
+  /* The fill retone to pale teal in dark mode - the on-role follows, so the
+     pair keeps WCAG AA instead of stranding white on pale teal (1.99:1). */
+  color: var(--color-on-primary);
   background: var(--color-teal-700);
 }
 
@@ -273,12 +275,12 @@ textarea[aria-invalid="true"] {
 
 .badge {
   color: var(--color-ink);
-  background: rgba(22, 61, 56, 0.08);
+  background: color-mix(in srgb, var(--color-teal-700) 8%, transparent);
 }
 
 .pill {
   border: 1px solid var(--color-line);
-  background: rgba(255, 252, 246, 0.88);
+  background: color-mix(in srgb, var(--color-paper) 88%, transparent);
 }
 
 .pill[data-tone="ok"] {

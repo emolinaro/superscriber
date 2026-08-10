@@ -218,7 +218,10 @@ test.describe.serial("Superscriber editorial single-voice wordmark", () => {
     expect(shellColors).toEqual({
       bodyBackground: "rgb(247, 243, 234)",
       bodyColor: "rgb(23, 36, 33)",
-      headerBackground: "rgba(255, 252, 246, 0.96)",
+      // The header fill is token-composed now (color-mix over --color-paper),
+      // so Chromium serializes the identical rgba(255, 252, 246, 0.96) value
+      // in color(srgb ...) form.
+      headerBackground: "color(srgb 1 0.988235 0.964706 / 0.96)",
       headerBorder: "rgb(216, 216, 207)",
       linkColor: "rgb(22, 61, 56)",
       focusToken: "#0b6f64",

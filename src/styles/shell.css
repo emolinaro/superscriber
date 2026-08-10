@@ -51,7 +51,7 @@
   z-index: 10;
   min-height: 64px;
   border-bottom: 1px solid var(--color-line);
-  background: rgba(255, 252, 246, 0.96);
+  background: color-mix(in srgb, var(--color-paper) 96%, transparent);
 }
 
 .app-shell__header-content {
@@ -126,6 +126,42 @@
   gap: var(--space-1);
   color: var(--color-muted);
   font-size: var(--type-14);
+}
+
+/* Appearance picker inside the account menu. Plain radio row; the menu
+   surface above supplies the card chrome. */
+.account-menu__appearance {
+  border: 1px solid var(--color-line);
+  border-radius: var(--radius-control);
+  margin: 0;
+  padding: var(--space-2) var(--space-3) var(--space-3);
+}
+
+.account-menu__appearance legend {
+  font-size: var(--type-12);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--color-muted);
+  padding-inline: var(--space-1);
+}
+
+.account-menu__appearance-options {
+  display: flex;
+  gap: var(--space-2);
+}
+
+.account-menu__appearance-option {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  font-size: var(--type-14);
+  cursor: pointer;
+}
+
+.account-menu__appearance-option input {
+  width: auto;
+  min-height: auto;
+  margin: 0;
 }
 
 .account-menu__meta strong {

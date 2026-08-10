@@ -66,6 +66,11 @@ export const users = sqliteTable(
     passwordHash: text("password_hash"),
     role: text("role", { enum: USER_ROLES }).$type<UserRole>().notNull(),
     isActive: integer("is_active", { mode: "boolean" }).notNull().default(true),
+    // Appearance preference; the localStorage boot copy handles first paint,
+    // this row is the per-user durable sync across devices.
+    themePreference: text("theme_preference", {
+      enum: ["system", "light", "dark"],
+    }),
     authVersion: integer("auth_version").notNull().default(1),
     createdAt: text("created_at").notNull(),
     updatedAt: text("updated_at").notNull(),

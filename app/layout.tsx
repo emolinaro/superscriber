@@ -16,7 +16,17 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html lang="en">
+    <html lang="en" suppressHydrationWarning>
+      <head>
+        {/* Apply the user's saved appearance before first paint so dark-mode
+            users never see a light flash. The durable per-user copy
+            (users.theme_preference) syncs via the theme hook after mount. */}
+        <script
+          dangerouslySetInnerHTML={{
+            __html: `(function(){try{var t=localStorage.getItem("superscriber.theme");if(t==="light"||t==="dark"){document.documentElement.setAttribute("data-theme",t);document.documentElement.style.colorScheme=t;}}catch(e){}})();`,
+          }}
+        />
+      </head>
       <body>
         <div id="app-root">{children}</div>
       </body>

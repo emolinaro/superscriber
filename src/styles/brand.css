@@ -139,3 +139,25 @@
     font-size: 35.2px;
   }
 }
+
+/* Dark retone: the mark itself stays in brand color; only the ink-leaning
+   props follow the theme. Without this the ink wordmark (#112a28) sits on
+   dark bone (#131918) at 1.02:1. The explicit block and the media-query
+   block below MUST stay identical prop-for-prop. */
+[data-theme="dark"] .superscriber-logo {
+  --logo-backdrop: color-mix(in srgb, var(--color-paper) 74%, transparent);
+  --logo-backdrop-line: color-mix(in srgb, var(--color-ink) 12%, transparent);
+  --logo-prefix: color-mix(in srgb, var(--color-ink) 70%, transparent);
+  --logo-wordmark: var(--color-ink);
+  --logo-descriptor: color-mix(in srgb, var(--color-ink) 64%, transparent);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]):not([data-theme="dark"]) .superscriber-logo {
+    --logo-backdrop: color-mix(in srgb, var(--color-paper) 74%, transparent);
+    --logo-backdrop-line: color-mix(in srgb, var(--color-ink) 12%, transparent);
+    --logo-prefix: color-mix(in srgb, var(--color-ink) 70%, transparent);
+    --logo-wordmark: var(--color-ink);
+    --logo-descriptor: color-mix(in srgb, var(--color-ink) 64%, transparent);
+  }
+}
