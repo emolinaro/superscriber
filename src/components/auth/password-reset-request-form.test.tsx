@@ -1,10 +1,12 @@
 // @vitest-environment jsdom
 
-import { render, screen } from "@testing-library/react";
+import { cleanup, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { PASSWORD_RESET_COPY } from "@/lib/password-reset";
 import { PasswordResetRequestForm } from "@/components/auth/password-reset-request-form";
+
+afterEach(cleanup);
 
 describe("PasswordResetRequestForm", () => {
   it("always shows the identical confirmation after submit", async () => {

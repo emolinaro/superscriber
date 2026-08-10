@@ -35,3 +35,46 @@ export async function requestPasswordResetAction(input: {
   // Anti-enumeration: identical confirmation for every accepted submission.
   return { ok: true, message: PASSWORD_RESET_COPY.REQUEST_CONFIRMATION };
 }
+
+import { completePasswordReset } from "@/server/auth/password-reset";
+import { passwordResetCompletionSchema } from "@/lib/password-reset";
+
+export type CompletePasswordResetActionResult =
+  | { ok: true; message: string }
+  | {
+      ok: false;
+      message: string;
+      fieldErrors?: Partial<Record<"password" | "confirmPassword", string>>;
+    };
+
+export async function completePasswordResetAction(input: {
+  token: string;
+  password: string;
+  confirmPassword: string;
+}): Promise<CompletePasswordResetActionResult> {
+  const parsed = passwordResetCompletionSchema.safeParse(input);
+  if (!parsed.success) {
+    const flat = parsed.error.flatten();
+    return {
+      ok: false,
+      message:
+        flat.fieldErrors.password?.[0] ??
+        flat.fieldErrors.confirmPassword?.[0] ??
+        "Check the form and try again.",
+      fieldErrors: {
+        password: flat.fieldErrors.password?.[0],
+        confirmPassword: flat.fieldErrors.confirmPassword?.[0],
+      },
+    };
+  }
+  const { ip } = await requestContext();
+  const result = await completePasswordReset({
+    rawToken: parsed.data.token,
+    password: parsed.data.password,
+    ip,
+  });
+  if (!result.ok) {
+    return { ok: false, message: result.message };
+  }
+  return { ok: true, message: PASSWORD_RESET_COPY.REDEEM_SUCCESS };
+}
