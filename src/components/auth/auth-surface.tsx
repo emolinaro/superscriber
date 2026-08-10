@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef, type ReactNode } from "react";
+import { SuperscriberLogo } from "@/components/brand/superscriber-logo";
 
 export function AuthSurface({
   children,
@@ -32,6 +33,7 @@ export function AuthSurface({
     <div className="auth-surface">
       <section className="auth-surface__primary panel panel-strong">
         <div className="panel-inner stack auth-surface__primary-inner">
+          <SuperscriberLogo size="md" />
           <div className="stack-tight">
             <h1 className="section-title auth-surface__heading" ref={headingRef} tabIndex={-1}>
               {heading}

@@ -166,6 +166,12 @@ test.describe.serial("authentik oidc dual login", () => {
     await expect(
       page.getByRole("button", { name: "Sign in with institutional account" }),
     ).toBeVisible();
+    const brand = page.locator(".auth-surface__primary .superscriber-logo");
+    await expect(brand).toBeVisible();
+    await expect(brand.locator(".superscriber-logo-name")).toHaveAttribute(
+      "aria-label",
+      "Superscriber",
+    );
 
     await oidcSignIn(page);
     await expect(page).toHaveURL(/\/workspace$/);
