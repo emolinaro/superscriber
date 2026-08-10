@@ -170,7 +170,7 @@ async function expectContrast(
 
 async function applyState(
   page: Page,
-  state: { stored: string | null; os: "light" | "dark" },
+  state: (typeof STATES)[number],
   viewport: (typeof VIEWPORTS)[number],
 ) {
   // Pin the server copy to the state being rendered: the hook re-POSTs a
