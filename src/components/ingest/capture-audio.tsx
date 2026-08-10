@@ -12,6 +12,17 @@ export function isBrowserRecordingSupported() {
 
 type CaptureState = "idle" | "recording" | "paused" | "ready" | "unsupported" | "denied";
 
+type CaptureGeneration = {
+  active: boolean;
+  chunks: Blob[];
+  dataAvailableListener: ((event: BlobEvent) => void) | null;
+  recorder: MediaRecorder | null;
+  stopListener: (() => void) | null;
+  stopRequested: boolean;
+  stream: MediaStream | null;
+  trackEndedListeners: Array<{ listener: () => void; track: MediaStreamTrack }>;
+};
+
 const RECORDING_COPY =
   "Recording in progress. Pause to take a break, or Stop when you are ready to upload.";
 const PAUSED_COPY =
@@ -43,11 +54,54 @@ export function CaptureAudio({
   const [recordedFileName, setRecordedFileName] = useState<string | null>(null);
   const [captureNotice, setCaptureNotice] = useState<string | null>(null);
   const [captureControlsFaulted, setCaptureControlsFaulted] = useState(false);
+  const [isStarting, setIsStarting] = useState(false);
   const noticeRef = useRef<HTMLParagraphElement | null>(null);
-  const recorderRef = useRef<MediaRecorder | null>(null);
-  const streamRef = useRef<MediaStream | null>(null);
-  const chunksRef = useRef<Blob[]>([]);
-  const suppressCompletionRef = useRef(false);
+  const captureRef = useRef<CaptureGeneration | null>(null);
+
+  function releaseCapture(capture: CaptureGeneration, stopRecorder = true) {
+    capture.active = false;
+    if (captureRef.current === capture) {
+      captureRef.current = null;
+    }
+
+    const recorder = capture.recorder;
+    if (recorder && capture.dataAvailableListener) {
+      recorder.removeEventListener("dataavailable", capture.dataAvailableListener);
+    }
+    if (recorder && capture.stopListener) {
+      recorder.removeEventListener("stop", capture.stopListener);
+    }
+    capture.trackEndedListeners.forEach(({ listener, track }) => {
+      track.removeEventListener("ended", listener);
+    });
+
+    if (stopRecorder && recorder && recorder.state !== "inactive") {
+      try {
+        recorder.stop();
+      } catch {
+        capture.stopRequested = false;
+      }
+    }
+    capture.stream?.getTracks().forEach((track) => track.stop());
+    capture.chunks.length = 0;
+    capture.dataAvailableListener = null;
+    capture.recorder = null;
+    capture.stopListener = null;
+    capture.stream = null;
+    capture.trackEndedListeners = [];
+  }
+
+  function abandonInterruptedCapture(capture: CaptureGeneration) {
+    if (!capture.active || captureRef.current !== capture) {
+      return;
+    }
+
+    releaseCapture(capture);
+    setIsStarting(false);
+    setCaptureControlsFaulted(false);
+    setCaptureNotice(TRACK_ENDED_COPY);
+    setCaptureState("idle");
+  }
 
   useEffect(() => {
     if (captureState === "denied") {
@@ -60,25 +114,15 @@ export function CaptureAudio({
       if (previewUrl) {
         URL.revokeObjectURL(previewUrl);
       }
-      streamRef.current?.getTracks().forEach((track) => track.stop());
     };
   }, [previewUrl]);
 
   useEffect(() => {
     return () => {
-      suppressCompletionRef.current = true;
-      const recorder = recorderRef.current;
-      if (recorder && recorder.state !== "inactive") {
-        try {
-          recorder.stop();
-        } catch {
-          // Unmount teardown is best effort; the take is abandoned either way.
-        }
+      const capture = captureRef.current;
+      if (capture) {
+        releaseCapture(capture);
       }
-      recorderRef.current = null;
-      streamRef.current?.getTracks().forEach((track) => track.stop());
-      streamRef.current = null;
-      chunksRef.current = [];
     };
   }, []);
 
@@ -88,37 +132,76 @@ export function CaptureAudio({
       return;
     }
 
+    if (captureState !== "idle" || captureRef.current) {
+      return;
+    }
+
+    const capture: CaptureGeneration = {
+      active: true,
+      chunks: [],
+      dataAvailableListener: null,
+      recorder: null,
+      stopListener: null,
+      stopRequested: false,
+      stream: null,
+      trackEndedListeners: [],
+    };
+    captureRef.current = capture;
+    setIsStarting(true);
+    setCaptureNotice(null);
+    setCaptureControlsFaulted(false);
+
+    let stream: MediaStream | null = null;
     try {
-      streamRef.current?.getTracks().forEach((track) => track.stop());
-      chunksRef.current = [];
-      suppressCompletionRef.current = false;
-      setCaptureNotice(null);
-      setCaptureControlsFaulted(false);
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      if (!capture.active || captureRef.current !== capture) {
+        stream.getTracks().forEach((track) => track.stop());
+        return;
+      }
+
       const recorder = new MediaRecorder(stream);
-      recorderRef.current = recorder;
-      streamRef.current = stream;
+      capture.recorder = recorder;
+      capture.stream = stream;
 
-      stream.getTracks().forEach((track) => track.addEventListener("ended", handleTrackEnded));
-
-      recorder.addEventListener("dataavailable", (event) => {
-        if (event.data && event.data.size > 0) {
-          chunksRef.current.push(event.data);
-        }
+      capture.trackEndedListeners = stream.getTracks().map((track) => {
+        const listener = () => {
+          if (!capture.stopRequested) {
+            abandonInterruptedCapture(capture);
+          }
+        };
+        track.addEventListener("ended", listener);
+        return { listener, track };
       });
 
-      recorder.addEventListener("stop", () => {
-        if (suppressCompletionRef.current) {
+      capture.dataAvailableListener = (event) => {
+        if (
+          capture.active &&
+          captureRef.current === capture &&
+          event.data &&
+          event.data.size > 0
+        ) {
+          capture.chunks.push(event.data);
+        }
+      };
+
+      capture.stopListener = () => {
+        if (!capture.active || captureRef.current !== capture) {
           return;
         }
 
-        const blob = new Blob(chunksRef.current, {
+        if (!capture.stopRequested) {
+          abandonInterruptedCapture(capture);
+          return;
+        }
+
+        const blob = new Blob(capture.chunks, {
           type: recorder.mimeType || "audio/webm",
         });
         const file = new File([blob], `recording-${Date.now()}.webm`, {
           type: blob.type || "audio/webm",
         });
 
+        releaseCapture(capture, false);
         setRecordedFileName(file.name);
         setPreviewUrl((current) => {
           if (current) {
@@ -128,22 +211,32 @@ export function CaptureAudio({
         });
         setCaptureNotice(null);
         setCaptureState("ready");
-        stream.getTracks().forEach((track) => track.stop());
         onRecordingReady(file);
-      });
+      };
+
+      recorder.addEventListener("dataavailable", capture.dataAvailableListener);
+      recorder.addEventListener("stop", capture.stopListener);
 
       recorder.start();
+      setIsStarting(false);
       setCaptureState("recording");
     } catch {
-      streamRef.current?.getTracks().forEach((track) => track.stop());
-      streamRef.current = null;
-      recorderRef.current = null;
+      if (!capture.active || captureRef.current !== capture) {
+        stream?.getTracks().forEach((track) => track.stop());
+        return;
+      }
+
+      if (stream && !capture.stream) {
+        capture.stream = stream;
+      }
+      releaseCapture(capture);
+      setIsStarting(false);
       setCaptureState("denied");
     }
   }
 
   function pauseRecording() {
-    const recorder = recorderRef.current;
+    const recorder = captureRef.current?.recorder;
     if (captureState !== "recording" || !recorder || recorder.state !== "recording") {
       return;
     }
@@ -158,7 +251,7 @@ export function CaptureAudio({
   }
 
   function resumeRecording() {
-    const recorder = recorderRef.current;
+    const recorder = captureRef.current?.recorder;
     if (captureState !== "paused" || !recorder || recorder.state !== "paused") {
       return;
     }
@@ -177,15 +270,21 @@ export function CaptureAudio({
       return;
     }
 
-    const recorder = recorderRef.current;
-    if (!recorder || recorder.state === "inactive") {
+    const capture = captureRef.current;
+    const recorder = capture?.recorder;
+    if (!capture || !recorder || recorder.state === "inactive") {
       return;
     }
 
+    capture.stopRequested = true;
     recorder.stop();
   }
 
   function discardRecording() {
+    const capture = captureRef.current;
+    if (capture) {
+      releaseCapture(capture);
+    }
     setPreviewUrl((current) => {
       if (current) {
         URL.revokeObjectURL(current);
@@ -193,30 +292,11 @@ export function CaptureAudio({
       return null;
     });
     setRecordedFileName(null);
+    setIsStarting(false);
     setCaptureControlsFaulted(false);
     setCaptureNotice(DISCARDED_COPY);
     setCaptureState(isBrowserRecordingSupported() ? "idle" : "unsupported");
     onRecordingCleared();
-  }
-
-  function handleTrackEnded() {
-    const recorder = recorderRef.current;
-    if (!recorder || recorder.state === "inactive") {
-      return;
-    }
-
-    suppressCompletionRef.current = true;
-    try {
-      recorder.stop();
-    } catch {
-      // Teardown is best effort; the take is abandoned either way.
-    }
-    recorderRef.current = null;
-    streamRef.current = null;
-    chunksRef.current = [];
-    setCaptureControlsFaulted(false);
-    setCaptureNotice(TRACK_ENDED_COPY);
-    setCaptureState("idle");
   }
 
   if (captureState === "unsupported") {
@@ -257,7 +337,7 @@ export function CaptureAudio({
       <div className="button-row ingest-capture__actions">
         <button
           className="button button-secondary interactive-target"
-          disabled={disabled || captureState !== "idle"}
+          disabled={disabled || captureState !== "idle" || isStarting}
           onClick={startRecording}
           type="button"
         >

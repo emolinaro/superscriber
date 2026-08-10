@@ -1,7 +1,6 @@
 // @vitest-environment jsdom
 
-import { act } from "react";
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { CaptureAudio } from "./capture-audio";
@@ -15,6 +14,7 @@ type RecorderInstance = {
   resumeCalls: number;
   stopCalls: number;
   stopEvents: number;
+  listenerCount: (type: string) => number;
 };
 
 type MockTrack = {
@@ -27,9 +27,14 @@ type MockTrack = {
 type RecorderController = {
   restore: () => void;
   setGetUserMediaResult: (mode: "resolve" | "reject") => void;
+  deferGetUserMedia: () => void;
+  resolveGetUserMediaRequests: () => Promise<void>;
+  deferStopEvents: () => void;
+  flushStopEvents: () => void;
   failRecorderMethod: (method: "pause" | "resume" | null) => void;
   recorderInstances: () => RecorderInstance[];
   tracks: () => MockTrack[];
+  endedListenerCount: () => number;
   emitTrackEnded: () => void;
 };
 
@@ -37,10 +42,14 @@ function installRecorderMocks(): RecorderController {
   const originalMediaRecorder = window.MediaRecorder;
   const originalMediaDevices = navigator.mediaDevices;
   let getUserMediaMode: "resolve" | "reject" = "resolve";
+  let getUserMediaDeferred = false;
+  let stopEventsDeferred = false;
   let failingMethod: "pause" | "resume" | null = null;
   const instances: RecorderInstance[] = [];
   const createdTracks: MockTrack[] = [];
   const endedListeners = new Set<() => void>();
+  const pendingGetUserMedia: Array<(stream: MediaStream) => void> = [];
+  const pendingStopEvents: Array<() => void> = [];
 
   class MockMediaRecorder {
     state: "inactive" | "recording" | "paused" = "inactive";
@@ -60,6 +69,14 @@ function installRecorderMocks(): RecorderController {
       const current = this.listeners.get(type) ?? new Set<MediaRecorderListener>();
       current.add(listener);
       this.listeners.set(type, current);
+    }
+
+    removeEventListener(type: string, listener: MediaRecorderListener) {
+      this.listeners.get(type)?.delete(listener);
+    }
+
+    listenerCount(type: string) {
+      return this.listeners.get(type)?.size ?? 0;
     }
 
     start() {
@@ -92,15 +109,22 @@ function installRecorderMocks(): RecorderController {
         throw new Error("InvalidStateError: recorder is inactive");
       }
       this.state = "inactive";
-      this.listeners.get("dataavailable")?.forEach((listener) => {
-        listener({ data: new Blob(["captured-audio"], { type: "audio/webm" }) } as Event & {
-          data: Blob;
+      const emitStopEvents = () => {
+        this.listeners.get("dataavailable")?.forEach((listener) => {
+          listener({ data: new Blob(["captured-audio"], { type: "audio/webm" }) } as Event & {
+            data: Blob;
+          });
         });
-      });
-      this.listeners.get("stop")?.forEach((listener) => {
-        listener(new Event("stop"));
-      });
-      this.stopEvents += 1;
+        this.listeners.get("stop")?.forEach((listener) => {
+          listener(new Event("stop"));
+        });
+        this.stopEvents += 1;
+      };
+      if (stopEventsDeferred) {
+        pendingStopEvents.push(emitStopEvents);
+      } else {
+        emitStopEvents();
+      }
     }
   }
 
@@ -139,6 +163,12 @@ function installRecorderMocks(): RecorderController {
           throw new Error("Permission denied");
         }
 
+        if (getUserMediaDeferred) {
+          return new Promise<MediaStream>((resolve) => {
+            pendingGetUserMedia.push(resolve);
+          });
+        }
+
         return createStream();
       }),
     },
@@ -159,6 +189,25 @@ function installRecorderMocks(): RecorderController {
     setGetUserMediaResult(mode) {
       getUserMediaMode = mode;
     },
+    deferGetUserMedia() {
+      getUserMediaDeferred = true;
+    },
+    async resolveGetUserMediaRequests() {
+      const requests = pendingGetUserMedia.splice(0);
+      await act(async () => {
+        requests.forEach((resolve) => resolve(createStream()));
+        await Promise.resolve();
+      });
+    },
+    deferStopEvents() {
+      stopEventsDeferred = true;
+    },
+    flushStopEvents() {
+      const events = pendingStopEvents.splice(0);
+      act(() => {
+        events.forEach((emit) => emit());
+      });
+    },
     failRecorderMethod(method) {
       failingMethod = method;
     },
@@ -167,6 +216,9 @@ function installRecorderMocks(): RecorderController {
     },
     tracks() {
       return createdTracks;
+    },
+    endedListenerCount() {
+      return endedListeners.size;
     },
     emitTrackEnded() {
       endedListeners.forEach((listener) => listener());
@@ -390,6 +442,68 @@ describe("CaptureAudio", () => {
     expect(controller.recorderInstances()[0]?.stopCalls).toBe(1);
     expect(onRecordingReady).not.toHaveBeenCalled();
     expect(onRecordingCleared).not.toHaveBeenCalled();
+  });
+
+  it("creates one recorder when Start is activated repeatedly during microphone access", async () => {
+    controller.deferGetUserMedia();
+    renderCapture();
+
+    const start = screen.getByRole("button", { name: "Start recording" });
+    fireEvent.click(start);
+    expect(start).toBeDisabled();
+    fireEvent.click(start);
+
+    await controller.resolveGetUserMediaRequests();
+
+    expect(controller.tracks()).toHaveLength(1);
+    expect(controller.recorderInstances()).toHaveLength(1);
+    expect(controller.recorderInstances()[0]?.startCalls).toBe(1);
+  });
+
+  it("stops a late microphone stream when unmounted before access resolves", async () => {
+    controller.deferGetUserMedia();
+    const view = renderCapture();
+
+    fireEvent.click(screen.getByRole("button", { name: "Start recording" }));
+    view.unmount();
+
+    await controller.resolveGetUserMediaRequests();
+
+    expect(controller.tracks()).toHaveLength(1);
+    expect(controller.tracks()[0]?.stop).toHaveBeenCalledTimes(1);
+    expect(controller.recorderInstances()).toHaveLength(0);
+    expect(onRecordingReady).not.toHaveBeenCalled();
+  });
+
+  it("ignores stale recorder events after a track-ended restart", async () => {
+    const user = userEvent.setup();
+    controller.deferStopEvents();
+    renderCapture();
+
+    await user.click(screen.getByRole("button", { name: "Start recording" }));
+    act(() => {
+      controller.emitTrackEnded();
+    });
+    await user.click(screen.getByRole("button", { name: "Start recording" }));
+
+    controller.flushStopEvents();
+
+    expect(controller.recorderInstances()).toHaveLength(2);
+    expect(screen.getByRole("status")).toHaveTextContent(/Recording in progress/);
+    expect(onRecordingReady).not.toHaveBeenCalled();
+  });
+
+  it("releases completed capture listeners when the take is discarded", async () => {
+    const user = userEvent.setup();
+    renderCapture();
+
+    await user.click(screen.getByRole("button", { name: "Start recording" }));
+    await user.click(screen.getByRole("button", { name: "Stop recording" }));
+    await user.click(screen.getByRole("button", { name: "Discard" }));
+
+    expect(controller.endedListenerCount()).toBe(0);
+    expect(controller.recorderInstances()[0]?.listenerCount("dataavailable")).toBe(0);
+    expect(controller.recorderInstances()[0]?.listenerCount("stop")).toBe(0);
   });
 
   it("keeps one recorder across rapid pause and resume toggling", async () => {
