@@ -2,7 +2,7 @@
 
 **Date:** 2026-08-09
 
-**Status:** Written-design review gate
+**Status:** Approved and implemented
 
 **Scope:** Product-facing Pause and Resume controls for an active browser audio recording, in addition to the existing Stop, preview, and Upload recording flow
 

@@ -111,6 +111,19 @@ async function expectNoHorizontalScroll(page: Page) {
     .toBe(0);
 }
 
+async function expectSourceChoiceContentContained(page: Page) {
+  for (const option of await page.locator(".ingest-source-option").all()) {
+    const optionBox = await option.boundingBox();
+    const copyBox = await option.locator("span").boundingBox();
+    expect(optionBox).not.toBeNull();
+    expect(copyBox).not.toBeNull();
+    expect(copyBox!.x).toBeGreaterThanOrEqual(optionBox!.x);
+    expect(copyBox!.x + copyBox!.width).toBeLessThanOrEqual(
+      optionBox!.x + optionBox!.width,
+    );
+  }
+}
+
 test.describe.serial("mock appliance auth, ingest, and administration", () => {
   test("bootstraps local auth, safe return paths, and logout recovery", async ({ page }) => {
     await page.goto("/");
@@ -462,6 +475,7 @@ test.describe.serial("mock appliance auth, ingest, and administration", () => {
       await narrowPage.goto("/ingest");
       await narrowPage.locator("#recording-title").fill(`Narrow capture ${width}`);
       await narrowPage.locator("#recording-language").selectOption("english");
+      await expectSourceChoiceContentContained(narrowPage);
       await narrowPage.getByLabel("Record audio").check();
 
       await narrowPage.getByRole("button", { name: "Start recording" }).click();

@@ -554,14 +554,16 @@ describe("IngestFlow", () => {
 
     renderFlow();
 
-    await user.click(screen.getByRole("radio", { name: /Record audio/ }));    await user.click(screen.getByRole("button", { name: "Start recording" }));
+    await user.click(screen.getByRole("radio", { name: /Record audio/ }));
+    await user.click(screen.getByRole("button", { name: "Start recording" }));
 
     const notice = await screen.findByRole("alert");
     expect(notice).toHaveTextContent(
       "Microphone access was blocked. Choose Upload file to continue safely.",
     );
 
-    await user.click(screen.getByRole("radio", { name: /Upload file/ }));    expect(screen.getByLabelText("Audio or video file")).toBeVisible();
+    await user.click(screen.getByRole("radio", { name: /Upload file/ }));
+    expect(screen.getByLabelText("Audio or video file")).toBeVisible();
   });
 
   it("writes only safe metadata when creating a session", async () => {
