@@ -58,6 +58,8 @@ function createModel(
       recoveryCodeCount: 0,
       adminCandidates: [],
     },
+    resetMailConfigured: false,
+    currentUserId: "admin-1",
     ...overrides,
   };
 }
@@ -71,7 +73,7 @@ describe("AccountsSection", () => {
     vi.clearAllMocks();
   });
 
-  it("renders the exact account facts and search without lifecycle controls", () => {
+  it("renders the exact account facts, search, and in-scope lifecycle controls", () => {
     render(<AccountsSection model={createModel()} phoneSafetyMode={false} />);
 
     expect(screen.getByRole("searchbox", { name: "Search accounts" })).toHaveValue("reviewer");
@@ -81,8 +83,10 @@ describe("AccountsSection", () => {
     expect(screen.getByRole("columnheader", { name: "Active assignments" })).toBeVisible();
     expect(screen.getByRole("columnheader", { name: "Created" })).toBeVisible();
     expect(screen.getByRole("rowheader", { name: "Reviewer One" })).toBeVisible();
+    expect(screen.getByRole("columnheader", { name: "Password" })).toBeVisible();
     expect(screen.queryByRole("button", { name: "Deactivate account" })).not.toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "Reset password" })).not.toBeInTheDocument();
+    // Table and card presentations both render the reset control.
+    expect(screen.getAllByRole("button", { name: "Reset password" })).toHaveLength(2);
     expect(screen.queryByRole("button", { name: "Change role" })).not.toBeInTheDocument();
   });
 
@@ -496,6 +500,7 @@ describe("AccountsSection", () => {
     render(<AccountsSection model={createModel()} phoneSafetyMode={true} />);
 
     expect(screen.getByRole("rowheader", { name: "Reviewer One" })).toBeVisible();
+    expect(screen.queryByRole("button", { name: "Reset password" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Create account" })).not.toBeInTheDocument();
     expect(screen.queryByRole("dialog", { name: "Create local account" })).not.toBeInTheDocument();
   });

@@ -13,6 +13,7 @@ import {
   listLocalUsers,
 } from "@/server/access/service";
 import { CasefileCommandError } from "@/server/casefile/errors";
+import { loadResetMailConfig } from "@/server/auth/reset-mail-config";
 import { getAppDb, type AppDatabase } from "@/server/db/client";
 import {
   toApprovalRecord,
@@ -88,6 +89,8 @@ export type AdministrationAccountsViewModel = {
     } & AccountRoleManagementFacts
   >;
   breakGlass: BreakGlassPanelModel;
+  resetMailConfigured: boolean;
+  currentUserId: string;
 };
 
 export type AdministrationAssignmentsViewModel = {
@@ -629,11 +632,24 @@ export function listAdministration(
       .map((user) => ({ id: user.id, displayName: user.displayName })),
   };
 
+  // Page render must not crash on a malformed seam the readiness surface
+  // already reports: fall back to the always-available handoff delivery.
+  let resetMailConfigured = false;
+  try {
+    resetMailConfigured = loadResetMailConfig().mode === "smtp";
+  } catch (error) {
+    console.error("reset mail configuration could not be read for the accounts view", {
+      message: error instanceof Error ? error.message : String(error),
+    });
+  }
+
   return {
     section: "accounts",
     query,
     columns: [...ACCOUNT_COLUMNS],
     users,
     breakGlass,
+    resetMailConfigured,
+    currentUserId: principal.userId,
   };
 }

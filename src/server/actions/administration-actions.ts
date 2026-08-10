@@ -27,6 +27,22 @@ import {
   type ChangeAccountRoleServiceSuccess,
 } from "@/server/administration/account-role-service";
 import { getActivePrincipal, getActiveSession } from "@/server/session";
+import {
+  adminPasswordResetInputSchema,
+  PASSWORD_RESET_ADMIN_COPY,
+  type AdminPasswordResetInput,
+} from "@/lib/account-password-reset";
+import {
+  AdminPasswordResetServiceError,
+  adminIssuePasswordReset,
+  type AdminPasswordResetFailure,
+  type AdminPasswordResetSuccess,
+} from "@/server/administration/password-reset-service";
+import { buildResetUrl } from "@/server/auth/password-reset";
+import { loadResetMailConfig } from "@/server/auth/reset-mail-config";
+import { sendPasswordResetEmail } from "@/server/auth/reset-mailer";
+import { recordSecurityEvent } from "@/server/auth/security-events";
+import { requestContext } from "@/server/actions/password-reset-actions";
 
 export type AdministrationMutationResult = {
   href: string;
@@ -343,4 +359,111 @@ export async function removeRecordingAssignmentFormAction(formData: FormData) {
 
 export async function unassignRecordingFormAction(formData: FormData) {
   return removeRecordingAssignmentFormAction(formData);
+}
+
+// ---------------------------------------------------------------------------
+// Administrator password reset (spec section 5)
+// ---------------------------------------------------------------------------
+
+export type AdminPasswordResetActionResult =
+  | {
+      ok: true;
+      notice: string;
+      data: {
+        targetDisplayName: string;
+        resetUrl: string | null;
+        expiresAt: string;
+        actorMustRelogin: boolean;
+      };
+    }
+  | {
+      ok: false;
+      code: AdminPasswordResetFailure["code"] | "AUTH_EXPIRED";
+      message: string;
+      fieldErrors?: Record<string, string>;
+    };
+
+export async function adminResetAccountPasswordAction(
+  input: AdminPasswordResetInput,
+): Promise<AdminPasswordResetActionResult> {
+  const activeSession = await getActiveSession();
+  if (!activeSession) {
+    return { ok: false, code: "AUTH_EXPIRED", message: "Your session expired. Sign in again." };
+  }
+  const principal = activeSession.user;
+
+  const parsed = adminPasswordResetInputSchema.safeParse(input);
+  if (!parsed.success) {
+    const flat = parsed.error.flatten();
+    return {
+      ok: false,
+      code: "VALIDATION_ERROR",
+      message: flat.fieldErrors.reason?.[0] ?? PASSWORD_RESET_ADMIN_COPY.VALIDATION_ERROR,
+      ...(flat.fieldErrors.reason?.[0]
+        ? { fieldErrors: { reason: flat.fieldErrors.reason[0] } }
+        : {}),
+    };
+  }
+
+  let issued: AdminPasswordResetSuccess;
+  try {
+    requireAdmin(principal.role);
+    issued = adminIssuePasswordReset({
+      actorUserId: principal.userId,
+      actorAuthSessionId: activeSession.authSessionId,
+      input: parsed.data,
+    });
+  } catch (error) {
+    if (error instanceof AdminPasswordResetServiceError) {
+      return { ok: false, ...error.failure };
+    }
+    throw error; // requireAdmin's CasefileCommandError propagates like the role action
+  }
+
+  let resetUrl: string | null = null;
+  if (issued.delivery === "email") {
+    const config = loadResetMailConfig();
+    const { origin } = await requestContext();
+    try {
+      if (config.mode === "smtp") {
+        await sendPasswordResetEmail(config, {
+          to: issued.targetEmail,
+          resetUrl: buildResetUrl(issued.rawToken, origin, config.baseUrl),
+          expiresAtIso: issued.expiresAt,
+        });
+      }
+    } catch {
+      recordSecurityEvent({
+        type: "password.reset.mail_failed",
+        outcome: "error",
+        userId: issued.userId,
+        detail: "Admin-issued reset mail could not be delivered.",
+        metadata: { resetRecordId: issued.recordId },
+      });
+      return {
+        ok: false,
+        code: "INTERNAL_ERROR",
+        message: PASSWORD_RESET_ADMIN_COPY.MAIL_SEND_FAILED,
+      };
+    }
+    // The emailed token is discarded here - never disclosed to the admin UI.
+  } else {
+    const { origin } = await requestContext();
+    resetUrl = buildResetUrl(issued.rawToken, origin, null);
+  }
+
+  revalidatePath("/administration");
+  return {
+    ok: true,
+    notice:
+      issued.delivery === "email"
+        ? `${issued.targetDisplayName}'s password reset was issued and emailed.`
+        : `${issued.targetDisplayName}'s password reset was issued.`,
+    data: {
+      targetDisplayName: issued.targetDisplayName,
+      resetUrl,
+      expiresAt: issued.expiresAt,
+      actorMustRelogin: issued.actorMustRelogin,
+    },
+  };
 }
