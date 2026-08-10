@@ -1,48 +1,127 @@
 // @vitest-environment jsdom
 
-import { render, screen, waitFor } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { CaptureAudio } from "./capture-audio";
 
 type MediaRecorderListener = (event?: Event & { data?: Blob }) => void;
 
+type RecorderInstance = {
+  state: "inactive" | "recording" | "paused";
+  startCalls: number;
+  pauseCalls: number;
+  resumeCalls: number;
+  stopCalls: number;
+  stopEvents: number;
+};
+
+type MockTrack = {
+  readyState: "live" | "ended";
+  stop: ReturnType<typeof vi.fn>;
+  addEventListener: (type: string, listener: () => void) => void;
+  removeEventListener: (type: string, listener: () => void) => void;
+};
+
 type RecorderController = {
   restore: () => void;
   setGetUserMediaResult: (mode: "resolve" | "reject") => void;
+  failRecorderMethod: (method: "pause" | "resume" | null) => void;
+  recorderInstances: () => RecorderInstance[];
+  tracks: () => MockTrack[];
+  emitTrackEnded: () => void;
 };
 
 function installRecorderMocks(): RecorderController {
   const originalMediaRecorder = window.MediaRecorder;
   const originalMediaDevices = navigator.mediaDevices;
-  const listeners = new Map<string, Set<MediaRecorderListener>>();
   let getUserMediaMode: "resolve" | "reject" = "resolve";
+  let failingMethod: "pause" | "resume" | null = null;
+  const instances: RecorderInstance[] = [];
+  const createdTracks: MockTrack[] = [];
+  const endedListeners = new Set<() => void>();
 
   class MockMediaRecorder {
-    state: "inactive" | "recording" = "inactive";
+    state: "inactive" | "recording" | "paused" = "inactive";
     mimeType = "audio/webm";
+    startCalls = 0;
+    pauseCalls = 0;
+    resumeCalls = 0;
+    stopCalls = 0;
+    stopEvents = 0;
+    private listeners = new Map<string, Set<MediaRecorderListener>>();
+
+    constructor() {
+      instances.push(this);
+    }
 
     addEventListener(type: string, listener: MediaRecorderListener) {
-      const current = listeners.get(type) ?? new Set<MediaRecorderListener>();
+      const current = this.listeners.get(type) ?? new Set<MediaRecorderListener>();
       current.add(listener);
-      listeners.set(type, current);
+      this.listeners.set(type, current);
     }
 
     start() {
+      if (this.state !== "inactive") {
+        throw new Error("InvalidStateError: recorder is already started");
+      }
+      this.startCalls += 1;
+      this.state = "recording";
+    }
+
+    pause() {
+      this.pauseCalls += 1;
+      if (this.state !== "recording" || failingMethod === "pause") {
+        throw new Error("InvalidStateError: recorder is not recording");
+      }
+      this.state = "paused";
+    }
+
+    resume() {
+      this.resumeCalls += 1;
+      if (this.state !== "paused" || failingMethod === "resume") {
+        throw new Error("InvalidStateError: recorder is not paused");
+      }
       this.state = "recording";
     }
 
     stop() {
+      this.stopCalls += 1;
+      if (this.state === "inactive") {
+        throw new Error("InvalidStateError: recorder is inactive");
+      }
       this.state = "inactive";
-      listeners.get("dataavailable")?.forEach((listener) => {
+      this.listeners.get("dataavailable")?.forEach((listener) => {
         listener({ data: new Blob(["captured-audio"], { type: "audio/webm" }) } as Event & {
           data: Blob;
         });
       });
-      listeners.get("stop")?.forEach((listener) => {
+      this.listeners.get("stop")?.forEach((listener) => {
         listener(new Event("stop"));
       });
+      this.stopEvents += 1;
     }
+  }
+
+  function createStream() {
+    const track: MockTrack = {
+      readyState: "live",
+      stop: vi.fn(() => {
+        track.readyState = "ended";
+      }),
+      addEventListener: (type, listener) => {
+        if (type === "ended") {
+          endedListeners.add(listener);
+        }
+      },
+      removeEventListener: (type, listener) => {
+        if (type === "ended") {
+          endedListeners.delete(listener);
+        }
+      },
+    };
+    createdTracks.push(track);
+    return { getTracks: () => [track] } as unknown as MediaStream;
   }
 
   Object.defineProperty(window, "MediaRecorder", {
@@ -59,9 +138,7 @@ function installRecorderMocks(): RecorderController {
           throw new Error("Permission denied");
         }
 
-        return {
-          getTracks: () => [{ stop: vi.fn() }],
-        } as unknown as MediaStream;
+        return createStream();
       }),
     },
   });
@@ -80,6 +157,18 @@ function installRecorderMocks(): RecorderController {
     },
     setGetUserMediaResult(mode) {
       getUserMediaMode = mode;
+    },
+    failRecorderMethod(method) {
+      failingMethod = method;
+    },
+    recorderInstances() {
+      return instances;
+    },
+    tracks() {
+      return createdTracks;
+    },
+    emitTrackEnded() {
+      endedListeners.forEach((listener) => listener());
     },
   };
 }
@@ -104,9 +193,20 @@ describe("CaptureAudio", () => {
   });
 
   afterEach(() => {
+    cleanup();
     controller.restore();
     vi.restoreAllMocks();
   });
+
+  function renderCapture() {
+    return render(
+      <CaptureAudio
+        disabled={false}
+        onRecordingCleared={onRecordingCleared}
+        onRecordingReady={onRecordingReady}
+      />,
+    );
+  }
 
   it("renders an unsupported fallback when browser recording is unavailable", () => {
     controller.restore();
@@ -120,13 +220,7 @@ describe("CaptureAudio", () => {
       value: undefined,
     });
 
-    render(
-      <CaptureAudio
-        disabled={false}
-        onRecordingCleared={onRecordingCleared}
-        onRecordingReady={onRecordingReady}
-      />,
-    );
+    renderCapture();
 
     expect(screen.getByText("Browser recording is not available in this browser.")).toBeVisible();
     expect(screen.queryByRole("button", { name: "Start recording" })).not.toBeInTheDocument();
@@ -136,13 +230,7 @@ describe("CaptureAudio", () => {
     const user = userEvent.setup();
     controller.setGetUserMediaResult("reject");
 
-    render(
-      <CaptureAudio
-        disabled={false}
-        onRecordingCleared={onRecordingCleared}
-        onRecordingReady={onRecordingReady}
-      />,
-    );
+    renderCapture();
 
     await user.click(screen.getByRole("button", { name: "Start recording" }));
 
@@ -156,16 +244,10 @@ describe("CaptureAudio", () => {
     expect(screen.queryByRole("button", { name: "Start recording" })).not.toBeInTheDocument();
   });
 
-  it("supports stop, preview, and replace controls with 44 px target hooks", async () => {
+  it("supports stop, preview, and discard controls with 44 px target hooks", async () => {
     const user = userEvent.setup();
 
-    render(
-      <CaptureAudio
-        disabled={false}
-        onRecordingCleared={onRecordingCleared}
-        onRecordingReady={onRecordingReady}
-      />,
-    );
+    renderCapture();
 
     const start = screen.getByRole("button", { name: "Start recording" });
     expect(start).toHaveClass("interactive-target");
@@ -180,14 +262,85 @@ describe("CaptureAudio", () => {
       expect(onRecordingReady).toHaveBeenCalledTimes(1);
     });
     expect(screen.getByLabelText("Recorded audio preview")).toBeVisible();
-    expect(screen.getByRole("button", { name: "Replace recording" })).toHaveClass(
-      "interactive-target",
-    );
+    expect(screen.getByRole("button", { name: "Discard" })).toHaveClass("interactive-target");
 
-    await user.click(screen.getByRole("button", { name: "Replace recording" }));
+    await user.click(screen.getByRole("button", { name: "Discard" }));
 
     expect(onRecordingCleared).toHaveBeenCalledTimes(1);
     expect(screen.queryByLabelText("Recorded audio preview")).not.toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Start recording" })).toBeVisible();
+    expect(screen.getByRole("button", { name: "Start recording" })).toBeEnabled();
+  });
+
+  it("pauses and resumes one recorder instance in the current tab", async () => {
+    const user = userEvent.setup();
+
+    renderCapture();
+
+    await user.click(screen.getByRole("button", { name: "Start recording" }));
+    await user.click(screen.getByRole("button", { name: "Pause recording" }));
+
+    expect(screen.getByRole("status")).toHaveTextContent(
+      "Recording paused. This recording stays in this browser tab; reloading, navigating, or " +
+        "switching source starts over. Resume to continue the same recording, or Stop to finish " +
+        "and preview the audio already captured.",
+    );
+    expect(screen.getByRole("button", { name: "Resume recording" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "Stop recording" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "Start recording" })).toBeDisabled();
+    expect(screen.queryByRole("button", { name: "Pause recording" })).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "Resume recording" }));
+
+    const instances = controller.recorderInstances();
+    expect(instances).toHaveLength(1);
+    expect(instances[0]?.startCalls).toBe(1);
+    expect(instances[0]?.pauseCalls).toBe(1);
+    expect(instances[0]?.resumeCalls).toBe(1);
+    expect(instances[0]?.stopCalls).toBe(0);
+    expect(screen.getByRole("status")).toHaveTextContent(/Recording in progress/);
+    expect(screen.getByRole("button", { name: "Pause recording" })).toBeEnabled();
+    expect(screen.queryByRole("button", { name: "Resume recording" })).not.toBeInTheDocument();
+    expect(onRecordingReady).not.toHaveBeenCalled();
+  });
+
+  it("stops directly from paused and delivers exactly one preview file", async () => {
+    const user = userEvent.setup();
+
+    renderCapture();
+
+    await user.click(screen.getByRole("button", { name: "Start recording" }));
+    await user.click(screen.getByRole("button", { name: "Pause recording" }));
+    await user.click(screen.getByRole("button", { name: "Stop recording" }));
+
+    await waitFor(() => {
+      expect(onRecordingReady).toHaveBeenCalledTimes(1);
+    });
+
+    const instances = controller.recorderInstances();
+    expect(instances).toHaveLength(1);
+    expect(instances[0]?.stopEvents).toBe(1);
+    expect(screen.getByLabelText("Recorded audio preview")).toBeVisible();
+    expect(screen.getByRole("button", { name: "Discard" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "Start recording" })).toBeDisabled();
+  });
+
+  it("emits onRecordingReady once when stop is activated repeatedly", async () => {
+    const user = userEvent.setup();
+
+    renderCapture();
+
+    await user.click(screen.getByRole("button", { name: "Start recording" }));
+
+    const stop = screen.getByRole("button", { name: "Stop recording" });
+    await user.click(stop);
+    fireEvent.click(stop);
+
+    await waitFor(() => {
+      expect(onRecordingReady).toHaveBeenCalledTimes(1);
+    });
+
+    const instances = controller.recorderInstances();
+    expect(instances).toHaveLength(1);
+    expect(instances[0]?.stopEvents).toBe(1);
   });
 });
