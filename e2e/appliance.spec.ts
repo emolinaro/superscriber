@@ -395,7 +395,9 @@ test.describe.serial("mock appliance auth, ingest, and administration", () => {
     await expect(pauseButton).toBeEnabled();
     await expect(stopButton).toBeEnabled();
     await expect(startButton).toBeDisabled();
-    await expect(recordPage.getByRole("status")).toContainText(/Recording in progress\./);
+    await expect(
+      recordPage.getByRole("status").filter({ hasText: /Recording in progress\./ }),
+    ).toContainText(/Recording in progress\./);
 
     await pauseButton.focus();
     await recordPage.keyboard.press("Enter");
@@ -404,7 +406,9 @@ test.describe.serial("mock appliance auth, ingest, and administration", () => {
     await expect(resumeButton).toBeFocused();
     await expect(stopButton).toBeEnabled();
     await expect(pauseButton).toHaveCount(0);
-    await expect(recordPage.getByRole("status")).toContainText(/Recording paused\./);
+    await expect(
+      recordPage.getByRole("status").filter({ hasText: /Recording paused\./ }),
+    ).toContainText(/Recording paused\./);
 
     await recordPage.keyboard.press("Tab");
     await expect(stopButton).toBeFocused();
@@ -414,7 +418,9 @@ test.describe.serial("mock appliance auth, ingest, and administration", () => {
 
     await expect(pauseButton).toBeEnabled();
     await expect(pauseButton).toBeFocused();
-    await expect(recordPage.getByRole("status")).toContainText(/Recording in progress\./);
+    await expect(
+      recordPage.getByRole("status").filter({ hasText: /Recording in progress\./ }),
+    ).toContainText(/Recording in progress\./);
 
     await recordPage.keyboard.press("Tab");
     await expect(stopButton).toBeFocused();

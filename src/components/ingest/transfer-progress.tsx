@@ -28,28 +28,31 @@ export function TransferProgress({
   announcement,
   bytesExpected,
   bytesReceived,
+  detail,
   statusLabel,
 }: {
   announcement: string;
   bytesExpected: number;
   bytesReceived: number;
+  detail?: string;
   statusLabel: string;
 }) {
   const detailId = useId();
 
   return (
-    <section className="ingest-transfer-card" aria-labelledby={detailId}>
+    <section className="ingest-transfer-card" aria-labelledby={detailId} data-testid="transfer-progress">
       <div className="status-row">
         <strong id={detailId}>Transfer</strong>
         <span className="badge">{statusLabel}</span>
       </div>
       <progress
         aria-describedby={`${detailId}-detail`}
+        aria-label="Upload progress"
         max={Math.max(bytesExpected, 1)}
         value={bytesReceived}
       />
       <p className="field-note" id={`${detailId}-detail`}>
-        {formatBytes(bytesReceived)} of {formatBytes(bytesExpected)} committed
+        {detail ?? `${formatBytes(bytesReceived)} of ${formatBytes(bytesExpected)} committed`}
       </p>
       <p aria-atomic="true" aria-live="polite" className="sr-only" role="status">
         {announcement}

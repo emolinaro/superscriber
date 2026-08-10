@@ -30,7 +30,14 @@ const STORED_UPLOAD_CHECK_MESSAGE = "Superscriber is checking the stored upload.
 const STORED_UPLOAD_CHECK_DETAIL =
   "Superscriber is checking the stored upload. Choose the same file again or reload this page so it can confirm whether verification already started.";
 
-type FlowState = "idle" | "preparing" | "uploading" | "interrupted" | "finalizing";
+type FlowState =
+  | "idle"
+  | "preparing"
+  | "uploading"
+  | "interrupted"
+  | "finalizing"
+  // batch finished state; the single-file flow keeps the original set.
+  | "complete";
 
 function isDurablyFinalized(status: UploadSessionStatus) {
   return (
@@ -67,6 +74,12 @@ export function IngestFlow({
   const [source, setSource] = useState<RecordingSource>("upload");
   const [title, setTitle] = useState("");
   const [language, setLanguage] = useState("");
+  // The picker accepts a batch; uploadFile stays the primary file so the
+  // single-file path is byte-identical to before.
+  const [uploadFiles, setUploadFiles] = useState<File[]>([]);
+  const [batchState, setBatchState] = useState<
+    Array<{ name: string; state: "waiting" | "uploading" | "queued" | "failed"; note: string }> | null
+  >(null);
   const [uploadFile, setUploadFile] = useState<File | null>(null);
   const [recordedFile, setRecordedFile] = useState<File | null>(null);
   const [errors, setErrors] = useState<Record<string, string>>({});
@@ -188,7 +201,7 @@ export function IngestFlow({
     if (!language) {
       nextErrors.language = LANGUAGE_ERROR_MESSAGE;
     }
-    if (source === "upload" && !uploadFile) {
+    if (source === "upload" && uploadFiles.length === 0 && !uploadFile) {
       nextErrors.file = FILE_ERROR_MESSAGE;
     }
     if (source === "record" && !recordedFile) {
@@ -355,6 +368,123 @@ export function IngestFlow({
     });
   }
 
+  async function transferFileOnce(file: File, titleOverride: string) {
+    const response = await fetch("/api/ingest/sessions", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        title: titleOverride,
+        languageHint: language,
+        source,
+        fileName: file.name,
+        mimeType: file.type,
+        fileSize: file.size,
+      }),
+    });
+    const { status } = await readJson<{ ok: true; status: UploadSessionStatus }>(response);
+
+    let offset = status.nextAction === "finalize" ? status.bytesExpected : status.bytesReceived;
+    setProgress({ bytesExpected: status.bytesExpected, bytesReceived: offset });
+    while (offset < file.size) {
+      const chunkEnd = Math.min(offset + CHUNK_SIZE, file.size);
+      const chunkResponse = await fetch(`/api/ingest/sessions/${status.sessionId}/chunk`, {
+        method: "PUT",
+        headers: {
+          "content-type": "application/octet-stream",
+          "x-superscriber-byte-start": String(offset),
+        },
+        body: await file.slice(offset, chunkEnd).arrayBuffer(),
+      });
+      const { status: nextStatus } = await readJson<{ ok: true; status: UploadSessionStatus }>(
+        chunkResponse,
+      );
+      offset = nextStatus.bytesReceived;
+      setProgress({
+        bytesExpected: nextStatus.bytesExpected,
+        bytesReceived: offset,
+      });
+      announceProgress(nextStatus.progressPercent);
+    }
+
+    const finalize = await fetch(`/api/ingest/sessions/${status.sessionId}/finalize`, {
+      method: "POST",
+    });
+    await readJson<{ ok: true; status: UploadSessionStatus }>(finalize);
+  }
+
+  function batchTitleOf(file: File) {
+    const stem = file.name.replace(/\.[^.]*$/, "").trim();
+    return stem || file.name;
+  }
+
+  async function runBatchUpload(files: File[]) {
+    setErrors({});
+    resetAnnouncements();
+    setProgress(null);
+    setFlowState("uploading");
+    setBatchState(
+      files.map((file) => ({ name: file.name, state: "waiting", note: "Waiting" })),
+    );
+
+    let failed = 0;
+    for (let index = 0; index < files.length; index += 1) {
+      const target = files[index];
+      const position = index + 1;
+      setStatusMessage(`Batch ${position} of ${files.length}: uploading ${target.name}.`);
+      setAnnouncement(`Batch ${position} of ${files.length}: ${target.name}.`);
+      setBatchState((current) =>
+        current?.map((item, itemIndex) =>
+          itemIndex === index ? { ...item, state: "uploading", note: "Uploading" } : item,
+        ) ?? null,
+      );
+      try {
+        await transferFileOnce(target, batchTitleOf(target));
+        setBatchState((current) =>
+          current?.map((item, itemIndex) =>
+            itemIndex === index ? { ...item, state: "queued", note: "Queued for transcription" } : item,
+          ) ?? null,
+        );
+      } catch (error) {
+        failed += 1;
+        setBatchState((current) =>
+          current?.map((item, itemIndex) =>
+            itemIndex === index
+              ? {
+                  ...item,
+                  state: "failed",
+                  note:
+                    error instanceof Error
+                      ? error.message
+                      : "Upload failed; the rest of the batch continues.",
+                }
+              : item,
+          ) ?? null,
+        );
+      }
+    }
+
+    clearPendingIngest();
+    setUploadFiles([]);
+    setUploadFile(null);
+    setFlowState("complete");
+    setStatusMessage(
+      failed > 0
+        ? `Batch finished with ${failed} failed of ${files.length}; the rest are queued for transcription.`
+        : `Batch complete: ${files.length} recordings queued for transcription.`,
+    );
+    setAnnouncement(
+      failed > 0
+        ? `Batch finished with ${failed} failed of ${files.length}.`
+        : `Batch complete: ${files.length} recordings queued.`,
+    );
+    // Keep the file input in sync with the cleared selection so picking the
+    // same batch again fires a fresh change event.
+    const input = document.getElementById("upload-file");
+    if (input instanceof HTMLInputElement) {
+      input.value = "";
+    }
+  }
+
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const nextErrors = buildErrors();
@@ -364,6 +494,13 @@ export function IngestFlow({
       setFlowState("idle");
       setStatusMessage("Fix the highlighted fields and try again.");
       setAnnouncement("Fix the highlighted fields and try again.");
+      return;
+    }
+
+    // Several files queue sequentially; each outcome is independent - one
+    // failure never swallows the rest.
+    if (source === "upload" && uploadFiles.length > 1) {
+      void runBatchUpload(uploadFiles);
       return;
     }
 
@@ -426,7 +563,20 @@ export function IngestFlow({
     }
   }
 
-  const showTransfer = flowState === "uploading" || flowState === "finalizing";
+  const transferBusy =
+    flowState === "preparing" || flowState === "uploading" || flowState === "finalizing";
+  const transferStatusLabel =
+    flowState === "uploading"
+      ? "Uploading"
+      : flowState === "finalizing"
+        ? "Finalizing"
+        : flowState === "preparing"
+          ? "Preparing"
+          : flowState === "interrupted"
+            ? "Interrupted"
+            : flowState === "complete"
+              ? "Complete"
+              : "Idle";
 
   return (
     <section className="panel panel-strong">
@@ -526,13 +676,25 @@ export function IngestFlow({
                   aria-invalid={errors.file ? "true" : "false"}
                   className="interactive-target"
                   id="upload-file"
-                  onChange={(event) => setUploadFile(event.target.files?.[0] ?? null)}
+                  multiple
+                  onChange={(event) => {
+                    const files = Array.from(event.target.files ?? []);
+                    setUploadFiles(files);
+                    setUploadFile(files[0] ?? null);
+                    setBatchState(null);
+                  }}
                   type="file"
                 />
                 <p className="field-note" id="upload-file-note">
-                  The browser sends this file in 1 MiB chunks and can resume from the last
-                  committed byte.
+                  Select one file - or a whole batch. The browser sends each file in 1 MiB chunks;
+                  single files can resume from the last committed byte, batches run sequentially
+                  with per-file results.
                 </p>
+                {uploadFiles.length > 1 ? (
+                  <p className="field-note" data-testid="batch-count">
+                    {uploadFiles.length} files selected.
+                  </p>
+                ) : null}
                 {errors.file ? (
                   <p className="field-error-message" id="upload-file-error">
                     {errors.file}
@@ -555,33 +717,58 @@ export function IngestFlow({
               </div>
             )}
 
+            {batchState ? (
+              <section
+                aria-label="Batch results"
+                className="ingest-batch"
+                data-testid="batch-results"
+              >
+                <h3 className="ingest-section__title">Batch results</h3>
+                <ol className="ingest-batch__list">
+                  {batchState.map((item, index) => (
+                    <li className="ingest-batch__item" data-state={item.state} key={index}>
+                      <span className="ingest-batch__name">{item.name}</span>
+                      <span className="ingest-batch__note">{item.note}</span>
+                    </li>
+                  ))}
+                </ol>
+              </section>
+            ) : null}
+
             <section className="ingest-status-card" aria-live="polite">
               <div className="status-row">
                 <strong>Status</strong>
                 <span className="badge">{flowState}</span>
               </div>
               <p className="body-copy">{statusMessage}</p>
-              {showTransfer && progress ? (
-                <TransferProgress
-                  announcement={announcement}
-                  bytesExpected={progress.bytesExpected}
-                  bytesReceived={progress.bytesReceived}
-                  statusLabel={flowState === "finalizing" ? "Finalizing" : "Uploading"}
-                />
-              ) : null}
+              {/* The transfer surface is persistent: it shows an honest idle
+                  state between transfers and live committed bytes during one,
+                  so the control never blinks out of existence on fast
+                  transfers. */}
+              <TransferProgress
+                announcement={announcement}
+                bytesExpected={progress?.bytesExpected ?? 0}
+                bytesReceived={progress?.bytesReceived ?? 0}
+                detail={progress ? undefined : "No transfer in progress."}
+                statusLabel={transferStatusLabel}
+              />
             </section>
           </section>
 
           <div className="review-actions ingest-actions">
-            {showTransfer ? (
-              <p aria-live="polite" className="badge" role="status">
-                {flowState === "finalizing" ? "Finalizing upload" : "Uploading in progress"}
-              </p>
-            ) : (
-              <button className="button button-primary interactive-target" type="submit">
-                {uploadLabelForSource(source)}
-              </button>
-            )}
+            {/* The submit control is persistent too: it only relabels and
+                disables while a transfer runs, instead of swapping out. */}
+            <button
+              className="button button-primary interactive-target"
+              disabled={transferBusy}
+              type="submit"
+            >
+              {transferBusy
+                ? flowState === "finalizing"
+                  ? "Finalizing upload..."
+                  : "Uploading..."
+                : uploadLabelForSource(source)}
+            </button>
           </div>
         </form>
       </div>
