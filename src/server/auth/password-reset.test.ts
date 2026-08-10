@@ -142,7 +142,9 @@ describe("requestPasswordReset", () => {
 
     expect(bundle.sqlite.prepare(`SELECT * FROM password_reset_tokens`).all()).toHaveLength(3);
     expect(sendPasswordResetEmail).toHaveBeenCalledTimes(3);
-  });
+  // Twelve sequential reset requests each pay the cost-12 dummy-bcrypt timing
+  // work; under full-suite CPU contention the default 5s timeout is not enough.
+  }, 20000);
 
   it("with smtp configured, issues a token and sends exactly one message", async () => {
     for (const [key, value] of Object.entries(SMTP_ENV)) vi.stubEnv(key, value);
