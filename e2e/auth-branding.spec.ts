@@ -65,7 +65,10 @@ test.describe.serial("auth surface branding", () => {
     expect(nameBox).not.toBeNull();
     expect(markBox).not.toBeNull();
     // The lockup stays on one line at phone width.
-    expect(Math.abs(nameBox!.y - markBox!.y)).toBeLessThan(100);
+    const nameCenterY = nameBox!.y + nameBox!.height / 2;
+    const markCenterY = markBox!.y + markBox!.height / 2;
+    expect(Math.abs(nameCenterY - markCenterY)).toBeLessThan(2);
+    expect(nameBox!.x).toBeGreaterThan(markBox!.x + markBox!.width);
     await expectNoHorizontalOverflow(page);
   });
 });
