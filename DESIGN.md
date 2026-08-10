@@ -208,11 +208,11 @@ The next-action strip appears only when at least one role-valid actionable row e
 
 Every transcript-capable casefile begins directly below the app shell:
 
-1. Sticky case header: back to Work, title, derived workflow state, current revision, assignment summary or snapshot label, unsaved-state indicator, and the admin oversight/action-mode control.
-2. Sticky media transport directly above the transcript: native accessible audio/video controls, current time, jump-back, playback rate, and current segment label - no decorative waveform.
-3. Transcript area: 96 px timestamp gutter with play-from buttons, 128 px speaker field, flexible text, confidence as subordinate text. Editable only in draft state; pending and approved revisions render immutable text. The active playback row combines a visual marker with `aria-current`.
-4. Sticky state action bar showing only state-valid commands for the current principal.
-5. Governance drawer holding policy, provenance, assignment history, revision history, decisions, and audit - collapsed to a labeled rail by default on wide screens.
+1. Case header card: Back to Work exit, title, derived workflow state, current revision, assignment summary or snapshot label, the governance drawer entry (`Governance >`), and the admin oversight/action-mode control.
+2. Media transport directly above the transcript: native accessible audio/video controls, current time, jump-back, playback rate, and current segment label - no decorative waveform. It is pinned on layouts where the page scrolls; on the bounded desktop shell it scrolls with the transcript.
+3. Transcript area: 96 px timestamp gutter with play-from buttons, 128 px speaker field, flexible text, confidence as subordinate text. Editable only in draft state; pending and approved revisions render immutable text. The active playback row combines a visual marker with `aria-current`, and playback keeps the active segment visible inside the transcript scrollport. Segments the viewed revision changed relative to its in-casefile parent revision carry an `Edited vs vN` marker.
+4. Pinned state action bar showing only state-valid commands for the current principal, including the unsaved-state indicator.
+5. Governance drawer holding policy, provenance, assignment history, revision history, decisions, and audit - opened from the case header's `Governance >` control; nothing renders on wide screens while it is closed (no standalone rail), and the open drawer sits beside the transcript.
 
 A recording owner with uploader-only access receives a status casefile: ingest progress, safe metadata, and recovery guidance, with no transcript, media, decisions, or audit content.
 
@@ -272,7 +272,7 @@ Assignments defaults to Active with a History tab showing outcomes and completio
 
 ## Responsive Behavior
 
-- 1100 px and above: full work ledger; casefile is 70/30 transcript and governance; sticky case header, transport, and action bar
+- 1100 px and above: full work ledger; the casefile is a bounded viewport-height shell whose case header and pinned action bar frame one transcript scrollport; an open governance drawer shares the row at 70/30
 - 768 to 1099 px: full governed actions; transcript first in one column; governance opens as a side drawer; ledger becomes a semantic list on narrower widths
 - Phone safety mode (below 768 px width, or coarse pointer with height below 768 px): read-only casefile and administration, semantic ledger lists, compact transport, governance accordions, supported ingest; no governed action bar
 - The transcript begins within 400 px of the document top on desktop and within 500 px on a 390 px phone; there is no page-level horizontal scroll at 320 or 390 px
