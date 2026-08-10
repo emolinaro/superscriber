@@ -52,9 +52,12 @@ describe("operator runbooks", () => {
   it("keeps the no-mail guarantee scannable from the repo", () => {
     const profileDoc = readDocs().find((doc) => doc.file === "no-mail-profile.md");
     expect(profileDoc?.content).toContain("no-mail");
+    // The captain-approved exception: the password-reset seam may use smtp,
+    // but nothing else may. The doc keeps the guarantee verifiable.
+    expect(profileDoc?.content).toContain("password-reset");
 
     const packageJson = readFileSync(join(process.cwd(), "package.json"), "utf8");
-    expect(packageJson).not.toMatch(/nodemailer|smtp|sendmail|mailgun/i);
+    expect(packageJson).not.toMatch(/sendmail|mailgun|postmark|resend|sendgrid/i);
   });
 
   it("documents coordinated OIDC and break-glass role changes", () => {
