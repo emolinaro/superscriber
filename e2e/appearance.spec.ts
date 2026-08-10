@@ -173,6 +173,13 @@ async function applyState(
   state: { stored: string | null; os: "light" | "dark" },
   viewport: (typeof VIEWPORTS)[number],
 ) {
+  // Pin the server copy to the state being rendered: the hook re-POSTs a
+  // divergent local choice, so leftover explicit picks from an earlier state
+  // would otherwise flip a system state to the wrong rendering.
+  const reset = await page.request.post("/api/preferences/theme", {
+    data: { themePreference: state.stored ?? "system" },
+  });
+  expect(reset.ok(), `server theme reset for ${state.name}`).toBe(true);
   await page.setViewportSize({ width: viewport.width, height: viewport.height });
   await page.emulateMedia({ colorScheme: state.os });
   await page.evaluate((stored) => {

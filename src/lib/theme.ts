@@ -113,7 +113,11 @@ export function useThemePreference() {
   const setTheme = useCallback((value: ThemePreference) => {
     localVersionRef.current += 1;
     setThemeState(value);
-    window.localStorage.setItem(STORAGE_KEY, value);
+    try {
+      window.localStorage.setItem(STORAGE_KEY, value);
+    } catch {
+      // Storage blocked: the choice still drives this session's render and POST.
+    }
     applyThemeToDocument(value);
     postThemePreference(value);
   }, []);
