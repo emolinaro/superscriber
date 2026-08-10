@@ -74,6 +74,10 @@ function installRecorderSupport() {
       this.listeners.set(type, current);
     }
 
+    removeEventListener(type: string, listener: MediaRecorderListener) {
+      this.listeners.get(type)?.delete(listener);
+    }
+
     start() {
       this.startCalls += 1;
       this.state = "recording";

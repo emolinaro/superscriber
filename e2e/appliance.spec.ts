@@ -37,6 +37,10 @@ function fakeBrowserRecordingScript() {
       this.listeners.set(type, current);
     }
 
+    removeEventListener(type: string, listener: FakeListener) {
+      this.listeners.get(type)?.delete(listener);
+    }
+
     start() {
       this.state = "recording";
     }
