@@ -41,6 +41,14 @@ export function Modal({
   const descriptionId = useId();
   const dialogRef = useRef<HTMLElement>(null);
   const triggerRef = useRef<HTMLElement | null>(null);
+  // Consumers pass inline onClose arrows, so the identity changes every
+  // render. Without the ref, any re-render (e.g. per-keystroke state in a
+  // dialog form) re-ran this effect and stole focus to the first focusable
+  // control. The effect must key on `open` only; onClose travels via ref.
+  const onCloseRef = useRef(onClose);
+  useEffect(() => {
+    onCloseRef.current = onClose;
+  }, [onClose]);
 
   useEffect(() => {
     if (!open || typeof document === "undefined") {
@@ -58,7 +66,13 @@ export function Modal({
     }
 
     const focusable = dialogRef.current ? getFocusableElements(dialogRef.current) : [];
-    (focusable[0] ?? dialogRef.current)?.focus();
+    // Corner Close is chrome, not a task control: initial focus belongs to
+    // the first content control so keyboard users land on the actual work.
+    const initialFocus =
+      focusable.find((element) => !element.hasAttribute("data-modal-close")) ??
+      focusable[0] ??
+      dialogRef.current;
+    initialFocus?.focus();
 
     function handleKeyDown(event: KeyboardEvent) {
       if (!dialogRef.current) {
@@ -67,7 +81,7 @@ export function Modal({
 
       if (event.key === "Escape") {
         event.preventDefault();
-        onClose();
+        onCloseRef.current();
         return;
       }
 
@@ -105,7 +119,7 @@ export function Modal({
       }
       triggerRef.current?.focus();
     };
-  }, [open, onClose]);
+  }, [open]);
 
   if (!open || typeof document === "undefined") {
     return null;
@@ -117,7 +131,7 @@ export function Modal({
       data-testid={backdropTestId}
       onMouseDown={(event) => {
         if (event.target === event.currentTarget) {
-          onClose();
+          onCloseRef.current();
         }
       }}
     >
@@ -131,14 +145,27 @@ export function Modal({
         tabIndex={-1}
       >
         <div className="modal-header">
-          <h2 className="modal-title" id={titleId}>
-            {title}
-          </h2>
-          {description ? (
-            <p className="modal-description" id={descriptionId}>
-              {description}
-            </p>
-          ) : null}
+          <div className="modal-header__copy">
+            <h2 className="modal-title" id={titleId}>
+              {title}
+            </h2>
+            {description ? (
+              <p className="modal-description" id={descriptionId}>
+                {description}
+              </p>
+            ) : null}
+          </div>
+          {/* Shared chrome corner Close on every dialog; Escape/backdrop
+              unchanged. */}
+          <button
+            aria-label="Close dialog"
+            className="modal-close interactive-target"
+            data-modal-close
+            onClick={() => onCloseRef.current()}
+            type="button"
+          >
+            ×
+          </button>
         </div>
         <div className="modal-content">{children}</div>
       </section>

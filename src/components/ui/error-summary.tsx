@@ -17,12 +17,19 @@ export function ErrorSummary({
 }) {
   const headingId = useId();
   const ref = useRef<HTMLDivElement>(null);
+  // `errors` is rebuilt per render by callers (new array identity every
+  // keystroke while live-editing around a failed submit). Focus must fire
+  // only when the error SET changed - otherwise each keystroke steals focus
+  // from the field being typed in.
+  const lastSignatureRef = useRef<string | null>(null);
+  const signature = errors.map((error) => `${error.fieldId}:${error.message}`).join("|");
 
   useEffect(() => {
-    if (errors.length > 0) {
+    if (errors.length > 0 && signature !== lastSignatureRef.current) {
       ref.current?.focus();
     }
-  }, [errors]);
+    lastSignatureRef.current = signature;
+  }, [errors, signature]);
 
   if (errors.length === 0) {
     return null;

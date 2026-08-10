@@ -67,6 +67,8 @@
 .app-shell__brand {
   display: inline-flex;
   align-items: center;
+  /* The wordmark link must not inherit the UA anchor underline. */
+  text-decoration: none;
 }
 
 .app-shell__nav-list {
@@ -350,10 +352,39 @@
   box-shadow: var(--shadow-1);
 }
 
-.modal-header,
+.modal-header {
+  display: flex;
+  align-items: start;
+  justify-content: space-between;
+  gap: var(--space-3);
+}
+
+.modal-header__copy,
 .modal-content {
   display: grid;
   gap: var(--space-3);
+}
+
+/* Shared chrome corner Close on every dialog. */
+.modal-close {
+  width: 40px;
+  height: 40px;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--color-line);
+  border-radius: var(--radius-control);
+  background: var(--color-paper);
+  color: var(--color-muted);
+  font-size: var(--type-18);
+  line-height: 1;
+  cursor: pointer;
+}
+
+.modal-close:hover {
+  color: var(--color-ink);
+  border-color: var(--color-teal-700);
 }
 
 .modal-title {

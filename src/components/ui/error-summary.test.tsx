@@ -1,9 +1,14 @@
 // @vitest-environment jsdom
 
-import { useId } from "react";
-import { render, screen, waitFor } from "@testing-library/react";
+import { useId, useState } from "react";
+import { cleanup, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
+
+afterEach(() => {
+  cleanup();
+  document.body.innerHTML = "";
+});
 import { EmptyState } from "./empty-state";
 import { ErrorSummary } from "./error-summary";
 import { InlineNotice } from "./inline-notice";
@@ -43,6 +48,39 @@ describe("ErrorSummary", () => {
 
     await user.click(screen.getByRole("link", { name: "Title - Title is required." }));
     expect(screen.getByLabelText("Title")).toHaveFocus();
+  });
+
+  it("never re-steals focus while the same logical errors re-render (typing-focus)", async () => {
+    const user = userEvent.setup();
+
+    function Harness() {
+      const [value, setValue] = useState("");
+      return (
+        <>
+          {/* Callers rebuild the array per render; focus keys on content. */}
+          <ErrorSummary
+            errors={[{ fieldId: "demo-input", label: "Title", message: "Title is required." }]}
+          />
+          <label htmlFor="demo-input">Title</label>
+          <input
+            id="demo-input"
+            onChange={(event) => setValue(event.target.value)}
+            value={value}
+          />
+        </>
+      );
+    }
+
+    render(<Harness />);
+
+    const summary = screen.getByRole("alert", { name: "There is a problem" });
+    await waitFor(() => expect(summary).toHaveFocus());
+
+    await user.click(screen.getByLabelText("Title"));
+    await user.type(screen.getByLabelText("Title"), "abc");
+
+    expect(screen.getByLabelText("Title")).toHaveFocus();
+    expect(screen.getByLabelText("Title")).toHaveValue("abc");
   });
 });
 
