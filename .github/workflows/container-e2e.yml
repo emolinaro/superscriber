@@ -51,6 +51,9 @@ jobs:
       - name: Single-image browser E2E
         run: npm run e2e:container
 
+      - name: Container E2E (reset-mail configured)
+        run: SUPERSCRIBER_E2E_RESET_MAIL=smtp bash scripts/run-e2e-appliance.sh test e2e/password-reset-mail.spec.ts
+
       - name: Upload Playwright failure artifacts
         if: failure()
         uses: actions/upload-artifact@v7
