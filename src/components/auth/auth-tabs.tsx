@@ -2,7 +2,6 @@
 
 import {
   useCallback,
-  useEffect,
   useId,
   useRef,
   useState,
@@ -37,10 +36,15 @@ export function AuthTabs({
 
   // Server-side re-renders (post-form navigations like bootstrap-complete)
   // keep this component instance alive; the server-chosen entry must win
-  // again whenever it changes.
-  useEffect(() => {
+  // again whenever it changes. Syncing during render (React's "adjust
+  // state when a prop changes" pattern) instead of post-commit keeps
+  // pane visibility and pane-heading focus in the same commit, so a
+  // focusOnMount heading never fires while its tabpanel is still hidden.
+  const [appliedInitialEntry, setAppliedInitialEntry] = useState(initialEntry);
+  if (appliedInitialEntry !== initialEntry) {
+    setAppliedInitialEntry(initialEntry);
     setEntry(initialEntry);
-  }, [initialEntry]);
+  }
 
   const tabRefs = useRef<Array<HTMLButtonElement | null>>([]);
 

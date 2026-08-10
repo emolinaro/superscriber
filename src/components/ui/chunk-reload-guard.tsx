@@ -36,13 +36,23 @@ export function ChunkReloadGuard({ reload = defaultReload }: { reload?: () => vo
         return;
       }
 
-      const last = Number(sessionStorage.getItem(MARKER) ?? 0);
+      let last = 0;
+      try {
+        last = Number(sessionStorage.getItem(MARKER) ?? 0);
+      } catch {
+        // Storage blocked (privacy mode, disabled cookies): treat as no marker.
+      }
       const now = Date.now();
       if (now - last < MIN_INTERVAL_MS) {
         return;
       }
 
-      sessionStorage.setItem(MARKER, String(now));
+      try {
+        sessionStorage.setItem(MARKER, String(now));
+      } catch {
+        // Storage blocked: proceed anyway; a reload loop is the lesser harm
+        // compared to a permanently dead tab.
+      }
       reload();
     };
 
