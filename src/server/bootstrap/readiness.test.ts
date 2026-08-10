@@ -73,6 +73,7 @@ describe("getBootstrapReadiness", () => {
       expect.objectContaining({ id: "engine_configuration", state: "ready" }),
       expect.objectContaining({ id: "auth_configuration", state: "ready" }),
       expect.objectContaining({ id: "deployment_profile", state: "ready" }),
+      expect.objectContaining({ id: "reset_mail", state: "ready" }),
     ]);
 
     expect(readiness.checks).toContainEqual(
@@ -128,6 +129,29 @@ describe("getBootstrapReadiness", () => {
     expect(readiness.checks).toContainEqual(
       expect.objectContaining({ id: "deployment_profile", state: "blocked" }),
     );
+  });
+
+  it("reports operator-assisted resets when reset mail is unconfigured", async () => {
+    const readiness = await getBootstrapReadiness();
+    expect(readiness.checks).toContainEqual(
+      expect.objectContaining({
+        id: "reset_mail",
+        state: "ready",
+        detail: expect.stringContaining("operator-assisted"),
+      }),
+    );
+  });
+
+  it("blocks a malformed smtp reset-mail configuration", async () => {
+    process.env.SUPERSCRIBER_RESET_MAIL_MODE = "smtp";
+
+    const readiness = await getBootstrapReadiness();
+
+    expect(readiness.overall).toBe("blocked");
+    expect(readiness.checks).toContainEqual(
+      expect.objectContaining({ id: "reset_mail", state: "blocked" }),
+    );
+    expect(JSON.stringify(readiness)).not.toContain(tempRoot);
   });
 
   it("needs no SMTP settings to be healthy in the no-mail profile", async () => {

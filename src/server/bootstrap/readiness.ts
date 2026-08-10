@@ -7,6 +7,7 @@ import {
   loadDeploymentProfile,
   type AuthConfig,
 } from "@/server/auth/auth-config";
+import { loadResetMailConfig } from "@/server/auth/reset-mail-config";
 import { resolveAuthSecret } from "@/server/auth/secret";
 import { getAppDb, openAppDatabase } from "@/server/db/client";
 import { breakGlassRecoveryCodes, users, webauthnCredentials } from "@/server/db/schema";
@@ -20,7 +21,8 @@ export type BootstrapReadinessCheckId =
   | "auth_secret"
   | "engine_configuration"
   | "auth_configuration"
-  | "deployment_profile";
+  | "deployment_profile"
+  | "reset_mail";
 
 export type BootstrapReadinessCheck = {
   id: BootstrapReadinessCheckId;
@@ -204,6 +206,25 @@ function checkDeploymentProfile(): BootstrapReadinessCheck {
   }
 }
 
+function checkResetMail(): BootstrapReadinessCheck {
+  try {
+    const config = loadResetMailConfig();
+    return ready(
+      "reset_mail",
+      "Reset mail",
+      config.mode === "smtp"
+        ? "Reset mail configured (smtp): reset links are emailed for self-service resets."
+        : "Reset mail not configured: resets run operator-assisted via an administrator.",
+    );
+  } catch (error) {
+    return blocked(
+      "reset_mail",
+      "Reset mail",
+      error instanceof Error ? error.message : "Reset mail configuration failed.",
+    );
+  }
+}
+
 function checkAuthConfiguration(): BootstrapReadinessCheck {
   let config: AuthConfig;
   try {
@@ -304,6 +325,7 @@ export async function getBootstrapReadiness(): Promise<BootstrapReadiness> {
     checkEngineConfiguration(),
     checkAuthConfiguration(),
     checkDeploymentProfile(),
+    checkResetMail(),
   ];
 
   return {
