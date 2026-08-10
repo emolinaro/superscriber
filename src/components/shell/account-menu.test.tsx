@@ -90,8 +90,49 @@ describe("AccountMenu appearance picker", () => {
     });
   });
 
-  it("reflects the boot preference until the server copy lands", async () => {
+  it("keeps and re-POSTs a stored boot choice when the server copy diverges", async () => {
     window.localStorage.setItem("superscriber.theme", "light");
+    let resolveGet!: (response: Response) => void;
+    const fetchSpy = vi
+      .mocked(globalThis.fetch)
+      .mockImplementation((input, init) => {
+        if (init?.method === "POST") {
+          return Promise.resolve(new Response("{}", { status: 200 }));
+        }
+        void input;
+        return new Promise<Response>((resolve) => {
+          resolveGet = resolve;
+        });
+      });
+    const user = userEvent.setup();
+    render(<AccountMenu principal={PRINCIPAL} />);
+
+    await user.click(screen.getByRole("button", { name: "Open account menu" }));
+
+    // Pre-sync: the boot copy drives the picker.
+    expect(await screen.findByRole("radio", { name: "Light" })).toBeChecked();
+
+    // A stored local choice is meaningful: it survives a stale server copy
+    // (its earlier POST failed) and is re-POSTed so the server self-heals.
+    resolveGet(
+      new Response(JSON.stringify({ themePreference: "system" }), {
+        status: 200,
+      }),
+    );
+    expect(await screen.findByRole("radio", { name: "Light" })).toBeChecked();
+    await waitFor(() => {
+      const posts = fetchSpy.mock.calls.filter(
+        ([, init]) => init?.method === "POST",
+      );
+      expect(posts).toHaveLength(1);
+      expect(JSON.parse(String(posts[0]?.[1]?.body))).toEqual({
+        themePreference: "light",
+      });
+    });
+    expect(screen.getByRole("radio", { name: "System" })).not.toBeChecked();
+  });
+
+  it("seeds the picker from the server copy on a fresh device", async () => {
     let resolveGet!: (response: Response) => void;
     vi.mocked(globalThis.fetch).mockImplementation(
       () =>
@@ -103,16 +144,15 @@ describe("AccountMenu appearance picker", () => {
     render(<AccountMenu principal={PRINCIPAL} />);
 
     await user.click(screen.getByRole("button", { name: "Open account menu" }));
+    expect(await screen.findByRole("radio", { name: "System" })).toBeChecked();
 
-    // Pre-sync: the boot copy drives the picker.
-    expect(await screen.findByRole("radio", { name: "Light" })).toBeChecked();
-
-    // The server copy is the durable truth and corrects stale boot state.
+    // With no prior local choice, the server copy is the durable truth and
+    // seeds this device.
     resolveGet(
-      new Response(JSON.stringify({ themePreference: "system" }), {
+      new Response(JSON.stringify({ themePreference: "dark" }), {
         status: 200,
       }),
     );
-    expect(await screen.findByRole("radio", { name: "System" })).toBeChecked();
+    expect(await screen.findByRole("radio", { name: "Dark" })).toBeChecked();
   });
 });
