@@ -123,7 +123,7 @@ Fonts are bundled as WOFF2 inside the appliance (offline posture); nothing fetch
 
 Body is 16 px; dense ledger rows run 14 px; the main casefile title is 32 px desktop and 24 px narrow. No all-caps headings; 12 px uppercase is reserved for short eyebrows.
 
-The authenticated header wordmark is one Newsreader line linked to `/workspace`: `Super` remains sentence case at the muted weight and `scriber` uses the heavier ink weight. The exact Direction B typography, mark geometry, tones, responsive rules, and accessibility invariants are owned by [the editorial single-voice wordmark design](./docs/superpowers/specs/2026-08-09-wordmark-editorial-single-voice-design.md).
+The Superscriber wordmark is one Newsreader line: `Super` remains sentence case at the muted weight and `scriber` uses the heavier ink weight. The authenticated 64 px header uses the small wordmark linked to `/workspace`; the public root auth surface leads its primary card with the unlinked medium wordmark above the page heading in first-run, local, and institutional sign-in modes. The auth surface omits the optional descriptor because its locked light-tone color reaches only about 3.8:1 contrast on paper. The exact Direction B typography, mark geometry, tones, responsive rules, and accessibility invariants are owned by [the editorial single-voice wordmark design](./docs/superpowers/specs/2026-08-09-wordmark-editorial-single-voice-design.md).
 
 ### Color
 
