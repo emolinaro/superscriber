@@ -80,6 +80,31 @@ function createTextExport(
   } satisfies TranscriptExportPayload;
 }
 
+function createMarkdownExport(
+  recording: ApprovedTranscriptExportRecording,
+  revision: ApprovedTranscriptExportRevision,
+) {
+  const lines = [
+    `# ${recording.title}`,
+    "",
+    `- Revision: ${revision.version}`,
+    `- Language: ${recording.languageHint}`,
+    `- Source: ${recording.source}`,
+    revision.approvedAt ? `- Approved: ${revision.approvedAt}` : null,
+    "",
+    ...revision.segments.flatMap((segment) => {
+      const start = formatCaptionTimestamp(segment.startMs, "vtt");
+      const end = formatCaptionTimestamp(segment.endMs, "vtt");
+      return [`**${segment.speakerLabel}** (${start} - ${end})`, "", segment.text, ""];
+    }).filter((line): line is string => line !== null),
+  ];
+
+  return {
+    contentType: "text/markdown; charset=utf-8",
+    body: new TextEncoder().encode(lines.join("\n")),
+  } satisfies TranscriptExportPayload;
+}
+
 function createCaptionExport(
   revision: ApprovedTranscriptExportRevision,
   format: Extract<ApprovedTranscriptExportFormat, "srt" | "vtt">,
@@ -214,6 +239,8 @@ export async function buildApprovedTranscriptExport(params: {
       return createTextExport(params.recording, params.revision);
     case "docx":
       return createDocxExport(params.recording, params.revision);
+    case "md":
+      return createMarkdownExport(params.recording, params.revision);
     case "srt":
     case "vtt":
       return createCaptionExport(params.revision, params.format);

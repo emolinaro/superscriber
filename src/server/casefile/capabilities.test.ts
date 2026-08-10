@@ -755,7 +755,7 @@ const capabilityCases = [
       },
     },
     {
-      name: "admin approver action mode preserves same submitter denial",
+      name: "admin approver action mode passes the submitter veto (captain ruling 2026-08-06)",
       input: {
         principal: principals.admin,
         grant: { kind: "admin_oversight", recordingId: "rec-1" },
@@ -777,8 +777,8 @@ const capabilityCases = [
         canSave: false,
         canSubmit: false,
         canWithdraw: false,
-        canApprove: false,
-        canRequestChanges: false,
+        canApprove: true,
+        canRequestChanges: true,
         canReopen: false,
         canExport: false,
         denials: buildDenials({
@@ -786,8 +786,6 @@ const capabilityCases = [
           canSave: "policy",
           canSubmit: "policy",
           canWithdraw: "not_assigned",
-          canApprove: "same_submitter",
-          canRequestChanges: "same_submitter",
           canReopen: "wrong_revision_state",
           canExport: "wrong_revision_state",
         }),

@@ -1,14 +1,30 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { eq } from "drizzle-orm";
 import type { Principal, TranscriptRevision } from "@/domain/models";
 import { createLocalUser, toPrincipal } from "@/server/auth/service";
-import { listAdministration } from "@/server/administration/service";
+import {
+  deleteRecordingPermanently,
+  listAdministration,
+  recoverRevisionVersion,
+  resetWorkspaceLedger,
+  setWorkspacePolicyProfile,
+} from "@/server/administration/service";
 import { openAppDatabase, type AppDatabase } from "@/server/db/client";
 import {
+  adminActionSessions,
+  approvals,
+  auditEvents,
   authControl,
   externalIdentities,
+  ingestionSessions,
   recordingAssignments,
   recordings,
   revisions,
+  securityEvents,
+  transcriptJobs,
   users,
   workspaces,
 } from "@/server/db/schema";
@@ -641,6 +657,315 @@ describe("listAdministration", () => {
       expect(view.rows.find((row) => row.id === "raw-download")?.uploader).toBe("Denied");
     } finally {
       bundle.sqlite.close();
+    }
+  });
+});
+
+
+describe("policy profile editing (demo-governance-bringback)", () => {
+  it("switches the workspace policy profile, records the audited before/after, and validates input", async () => {
+    const bundle = openAppDatabase(":memory:");
+    try {
+      insertWorkspace(bundle);
+      const admin = await createPrincipal(bundle.db, {
+        displayName: "Ada Admin",
+        email: "ada@example.com",
+        role: "admin",
+      });
+
+      expect(() =>
+        setWorkspacePolicyProfile(
+          { profileId: "nonsense" as never, actorUserId: admin.userId },
+          bundle.db,
+        ),
+      ).toThrowError(expect.objectContaining({ code: "VALIDATION_ERROR" }));
+
+      const noop = setWorkspacePolicyProfile(
+        { profileId: "strict", actorUserId: admin.userId },
+        bundle.db,
+      );
+      expect(noop).toEqual({ profileId: "strict", changed: false });
+      expect(bundle.db.select().from(securityEvents).all()).toHaveLength(0);
+
+      const result = setWorkspacePolicyProfile(
+        { profileId: "reviewable-approved-export", actorUserId: admin.userId },
+        bundle.db,
+      );
+      expect(result).toEqual({ profileId: "reviewable-approved-export", changed: true });
+
+      const workspace = bundle.db.select().from(workspaces).get()!;
+      expect(workspace.policyProfileId).toBe("reviewable-approved-export");
+
+      const events = bundle.db.select().from(securityEvents).all();
+      expect(events).toHaveLength(1);
+      expect(events[0].type).toBe("policy.updated");
+      expect(events[0].userId).toBe(admin.userId);
+      expect(events[0].metadata).toContain("reviewable-approved-export");
+    } finally {
+      bundle.sqlite.close();
+    }
+  });
+});
+
+describe("revision recovery (demo-governance-bringback)", () => {
+  it("recovers an archived revision as the active draft with provenance + audit, and never rewrites history", async () => {
+    const bundle = openAppDatabase(":memory:");
+    try {
+      insertWorkspace(bundle);
+      const admin = await createPrincipal(bundle.db, {
+        displayName: "Ada Admin",
+        email: "ada@example.com",
+        role: "admin",
+      });
+
+      insertRecording(bundle, {
+        recordingId: "rec-1",
+        title: "History casefile",
+        uploadedByUserId: admin.userId,
+        currentRevisionId: "rev-v2",
+        updatedAt: FIXED_NOW,
+      });
+      bundle.db
+        .update(revisions)
+        .set({ version: 2 })
+        .where(eq(revisions.id, "rev-v2"))
+        .run();
+      bundle.db.insert(revisions).values({
+        id: "rev-v1",
+        recordingId: "rec-1",
+        version: 1,
+        state: "superseded",
+        basedOnRevisionId: null,
+        createdByRole: "reviewer",
+        createdByUserId: null,
+        createdAt: FIXED_NOW,
+        submittedByUserId: null,
+        submittedAt: null,
+        approvedAt: null,
+        summary: "Original wording",
+        segmentsJson: JSON.stringify(baseSegments),
+      }).run();
+
+      const result = recoverRevisionVersion(
+        { recordingId: "rec-1", sourceRevisionId: "rev-v1", actorUserId: admin.userId },
+        bundle.db,
+      );
+      expect(result.newVersion).toBe(3);
+
+      const recovered = bundle.db.select().from(revisions).where(eq(revisions.id, result.newRevisionId)).get()!;
+      expect(recovered.state).toBe("draft");
+      expect(recovered.basedOnRevisionId).toBe("rev-v1");
+      expect(recovered.summary).toContain("Recovered from v1");
+      expect(recovered.segmentsJson).toContain("Hello world.");
+
+      // Lineage intact: v1 and v2 still exist.
+      const allVersions = bundle.db.select({ version: revisions.version }).from(revisions).where(eq(revisions.recordingId, "rec-1")).all();
+      expect(allVersions.map((row) => row.version).sort()).toEqual([1, 2, 3]);
+
+      const recordingAfter = bundle.db.select().from(recordings).where(eq(recordings.id, "rec-1")).get()!;
+      expect(recordingAfter.currentRevisionId).toBe(result.newRevisionId);
+      expect(recordingAfter.pendingRevisionId).toBeNull();
+
+      const auditRows = bundle.db.select().from(auditEvents).all();
+      expect(auditRows.some((row) => row.type === "revision.recovered" && row.metadata.includes("rev-v1"))).toBe(true);
+
+      expect(() =>
+        recoverRevisionVersion(
+          { recordingId: "rec-1", sourceRevisionId: result.newRevisionId, actorUserId: admin.userId },
+          bundle.db,
+        ),
+      ).toThrowError(expect.objectContaining({ code: "STATE_CHANGED" }));
+    } finally {
+      bundle.sqlite.close();
+    }
+  });
+});
+
+describe("recording deletion (demo-governance-bringback)", () => {
+  it("deletes the whole casefile, snapshots it before deletion, keeps a single deletion record, and enforces the typed title", async () => {
+    const bundle = openAppDatabase(":memory:");
+    const snapshotDir = mkdtempSync(join(tmpdir(), "superscriber-purge-snapshot-"));
+    try {
+      insertWorkspace(bundle);
+      const admin = await createPrincipal(bundle.db, {
+        displayName: "Ada Admin",
+        email: "ada@example.com",
+        role: "admin",
+      });
+
+      insertRecording(bundle, {
+        recordingId: "rec-del",
+        title: "Delete me now",
+        uploadedByUserId: admin.userId,
+        currentRevisionId: "rev-v2",
+        updatedAt: FIXED_NOW,
+      });
+      bundle.db.insert(auditEvents).values({
+        id: "audit-old",
+        recordingId: "rec-del",
+        workspaceId: "workspace-1",
+        type: "revision.submitted",
+        detail: "Submitted.",
+        actorRole: "admin",
+        actorUserId: admin.userId,
+        metadata: "{}",
+        createdAt: FIXED_NOW,
+      }).run();
+      bundle.db.insert(approvals).values({
+        id: "approval-1",
+        recordingId: "rec-del",
+        revisionId: "rev-v2",
+        state: "approved",
+        actorRole: "approver",
+        actorUserId: null,
+        actorDisplayName: "Approver",
+        effectiveRole: null,
+        adminActionSessionId: null,
+        createdAt: FIXED_NOW,
+        note: null,
+      }).run();
+
+      // Gate: exact title required; a mismatch touches nothing and writes no snapshot.
+      expect(() =>
+        deleteRecordingPermanently(
+          { recordingId: "rec-del", expectedTitle: "delete me now", actorUserId: admin.userId },
+          bundle.db,
+          snapshotDir,
+        ),
+      ).toThrowError(expect.objectContaining({ code: "VALIDATION_ERROR" }));
+      expect(bundle.db.select().from(recordings).all()).toHaveLength(1);
+      expect(bundle.db.select().from(securityEvents).all()).toHaveLength(0);
+
+      const result = deleteRecordingPermanently(
+        { recordingId: "rec-del", expectedTitle: "Delete me now", actorUserId: admin.userId },
+        bundle.db,
+        snapshotDir,
+      );
+      expect(result.title).toBe("Delete me now");
+      expect(result.revisionCount).toBe(1);
+
+      // The pre-wipe snapshot (D-5 compensating control) preserves the casefile
+      // rows outside the database.
+      const snapshot = JSON.parse(readFileSync(result.snapshotPath, "utf8")) as {
+        type: string;
+        actorUserId: string;
+        tables: Record<string, unknown[]>;
+      };
+      expect(snapshot.type).toBe("recording.purge");
+      expect(snapshot.actorUserId).toBe(admin.userId);
+      expect(snapshot.tables.auditEvents).toHaveLength(1);
+      expect(snapshot.tables.approvals).toHaveLength(1);
+      expect(snapshot.tables.revisions).toHaveLength(1);
+      expect(snapshot.tables.recording).toHaveLength(1);
+
+      // Every casefile table is empty for that recording.
+      expect(bundle.db.select().from(recordings).where(eq(recordings.id, "rec-del")).all()).toHaveLength(0);
+      for (const [table, label] of [
+        [revisions, "revisions"],
+        [approvals, "approvals"],
+        [ingestionSessions, "ingestion_sessions"],
+        [transcriptJobs, "transcript_jobs"],
+        [recordingAssignments, "recording_assignments"],
+        [auditEvents, "audit_events"],
+      ] as const) {
+        expect(
+          bundle.db
+            .select()
+            .from(table)
+            .where(eq(table.recordingId, "rec-del"))
+            .all(),
+          label,
+        ).toHaveLength(0);
+      }
+
+      // The surviving deletion record in security_events, pointing at the snapshot.
+      const security = bundle.db.select().from(securityEvents).all();
+      expect(security).toHaveLength(1);
+      expect(security[0].type).toBe("recording.deleted");
+      expect(security[0].detail).toContain("Delete me now");
+      expect(security[0].userId).toBe(admin.userId);
+      expect(security[0].metadata).toContain("rec-del");
+      expect(security[0].metadata).toContain(result.snapshotPath);
+
+      // Unknown recording is a clean NOT_FOUND and writes no snapshot.
+      expect(() =>
+        deleteRecordingPermanently(
+          { recordingId: "rec-nope", expectedTitle: "x", actorUserId: admin.userId },
+          bundle.db,
+          snapshotDir,
+        ),
+      ).toThrowError(expect.objectContaining({ code: "NOT_FOUND" }));
+    } finally {
+      bundle.sqlite.close();
+      rmSync(snapshotDir, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("ledger reset (demo-governance-bringback)", () => {
+  it("wipes governed ledger tables, snapshots them first, keeps one reset record, enforces the phrase", async () => {
+    const bundle = openAppDatabase(":memory:");
+    const snapshotDir = mkdtempSync(join(tmpdir(), "superscriber-reset-snapshot-"));
+    try {
+      insertWorkspace(bundle);
+      const admin = await createPrincipal(bundle.db, {
+        displayName: "Ada Admin",
+        email: "ada@example.com",
+        role: "admin",
+      });
+
+      bundle.db.insert(auditEvents).values({
+        id: "a1", workspaceId: "workspace-1", recordingId: null, type: "recording.created",
+        detail: "x", actorRole: "admin", actorUserId: admin.userId, metadata: "{}", createdAt: FIXED_NOW,
+      }).run();
+      bundle.db.insert(securityEvents).values({
+        id: "s1", type: "recording.deleted", outcome: "success", userId: admin.userId,
+        detail: "old", metadata: "{}", createdAt: FIXED_NOW,
+      }).run();
+
+      expect(() =>
+        resetWorkspaceLedger(
+          { actorUserId: admin.userId, expectedPhrase: "reset required" },
+          bundle.db,
+          snapshotDir,
+        ),
+      ).toThrowError(expect.objectContaining({ code: "VALIDATION_ERROR" }));
+      expect(bundle.db.select().from(auditEvents).all()).toHaveLength(1);
+
+      const result = resetWorkspaceLedger(
+        { actorUserId: admin.userId, expectedPhrase: "RESET REQUIRED" },
+        bundle.db,
+        snapshotDir,
+      );
+      expect(result.before.auditEvents).toBe(1);
+      expect(result.before.securityEvents).toBe(1);
+
+      // The pre-wipe snapshot (D-5 compensating control) holds every cleared row.
+      const snapshot = JSON.parse(readFileSync(result.snapshotPath, "utf8")) as {
+        type: string;
+        tables: Record<string, unknown[]>;
+      };
+      expect(snapshot.type).toBe("ledger.reset");
+      expect(snapshot.tables.auditEvents).toHaveLength(1);
+      expect(snapshot.tables.securityEvents).toHaveLength(1);
+
+      expect(bundle.db.select().from(auditEvents).all()).toHaveLength(0);
+      expect(bundle.db.select().from(approvals).all()).toHaveLength(0);
+      expect(bundle.db.select().from(adminActionSessions).all()).toHaveLength(0);
+      expect(
+        bundle.db.select().from(recordingAssignments).all(),
+      ).toHaveLength(0);
+
+      const surviving = bundle.db.select().from(securityEvents).all();
+      expect(surviving).toHaveLength(1);
+      expect(surviving[0].type).toBe("ledger.reset");
+      expect(surviving[0].userId).toBe(admin.userId);
+      expect(surviving[0].detail).toContain("1 audit events");
+      expect(surviving[0].metadata).toContain("clearedSecurityEvents");
+      expect(surviving[0].metadata).toContain(result.snapshotPath);
+    } finally {
+      bundle.sqlite.close();
+      rmSync(snapshotDir, { recursive: true, force: true });
     }
   });
 });

@@ -6,6 +6,7 @@ import { AccountsSection } from "./accounts-section";
 import { BreakGlassPanel } from "./break-glass-panel";
 import { AssignmentsSection } from "./assignments-section";
 import { PolicySection } from "./policy-section";
+import { DataDisciplineSection } from "./data-discipline-section";
 
 function sectionHref(section: AdministrationSection) {
   return `/administration?section=${section}`;
@@ -55,6 +56,13 @@ export function AdministrationShell({
           >
             Policy
           </a>
+          <a
+            aria-current={section === "discipline" ? "page" : undefined}
+            className="administration-nav__link interactive-target"
+            href={sectionHref("discipline")}
+          >
+            Data discipline
+          </a>
         </div>
       </nav>
 
@@ -80,6 +88,9 @@ export function AdministrationShell({
       ) : null}
       {model.section === "policy" ? (
         <PolicySection model={model} phoneSafetyMode={phoneSafetyMode} />
+      ) : null}
+      {model.section === "discipline" ? (
+        <DataDisciplineSection counts={model.counts} phoneSafetyMode={phoneSafetyMode} />
       ) : null}
     </div>
   );

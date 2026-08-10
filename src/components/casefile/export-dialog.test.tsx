@@ -87,7 +87,7 @@ describe("ExportDialog", () => {
           onSessionRecoveryRequested={onSessionRecoveryRequested}
           open
           recordingId="rec-1"
-          revision={{ version: 3 }}
+          revision={{ version: 3, id: "rev-3" }} revisionOptions={[{ id: "rev-3", version: 3, state: "approved", stateLabel: "Approved" }]} hasApprovedRevision
           {...overrides}
         />
       </>,
@@ -126,7 +126,7 @@ describe("ExportDialog", () => {
             onSessionRecoveryRequested={onSessionRecoveryRequested}
             open={open}
             recordingId="rec-1"
-            revision={{ version: 3 }}
+            revision={{ version: 3, id: "rev-3" }} revisionOptions={[{ id: "rev-3", version: 3, state: "approved", stateLabel: "Approved" }]} hasApprovedRevision
             {...overrides}
           />
         </>
@@ -143,7 +143,7 @@ describe("ExportDialog", () => {
     };
   }
 
-  it("renders the seven grouped formats with approval metadata and legacy fallback", () => {
+  it("renders the eight grouped formats with approval metadata and legacy fallback", () => {
     const { rerender } = render(
       <ExportDialog
         actionModeId={null}
@@ -154,7 +154,7 @@ describe("ExportDialog", () => {
         onSessionRecoveryRequested={vi.fn()}
         open
         recordingId="rec-1"
-        revision={{ version: 3 }}
+        revision={{ version: 3, id: "rev-3" }} revisionOptions={[{ id: "rev-3", version: 3, state: "approved", stateLabel: "Approved" }]} hasApprovedRevision
       />,
     );
 
@@ -165,6 +165,7 @@ describe("ExportDialog", () => {
     expect(screen.getByRole("heading", { name: "Structured data" })).toBeVisible();
     expect(screen.getByRole("button", { name: "DOCX" })).toBeVisible();
     expect(screen.getByRole("button", { name: "TXT" })).toBeVisible();
+    expect(screen.getByRole("button", { name: "MD" })).toBeVisible();
     expect(screen.getByRole("button", { name: "SRT" })).toBeVisible();
     expect(screen.getByRole("button", { name: "VTT" })).toBeVisible();
     expect(screen.getByRole("button", { name: "CSV" })).toBeVisible();
@@ -181,7 +182,7 @@ describe("ExportDialog", () => {
         onSessionRecoveryRequested={vi.fn()}
         open
         recordingId="rec-1"
-        revision={{ version: 3 }}
+        revision={{ version: 3, id: "rev-3" }} revisionOptions={[{ id: "rev-3", version: 3, state: "approved", stateLabel: "Approved" }]} hasApprovedRevision
       />,
     );
 
@@ -211,7 +212,7 @@ describe("ExportDialog", () => {
             onSessionRecoveryRequested={vi.fn()}
             open={open}
             recordingId="rec-1"
-            revision={{ version: 3 }}
+            revision={{ version: 3, id: "rev-3" }} revisionOptions={[{ id: "rev-3", version: 3, state: "approved", stateLabel: "Approved" }]} hasApprovedRevision
           />
         </>
       );
@@ -229,12 +230,12 @@ describe("ExportDialog", () => {
     expect(document.querySelector(".export-backdrop")).toBeInTheDocument();
 
     await user.tab();
-    expect(screen.getByRole("button", { name: "DOCX" })).toHaveFocus();
+    expect(screen.getByRole("combobox", { name: "Revision to export" })).toHaveFocus();
     await user.keyboard("{Escape}");
     await waitFor(() => expect(screen.getByRole("button", { name: "Open export" })).toHaveFocus());
   });
 
-  it("fetches the approved blob, includes actionModeId but never a revision id, and revokes the object url", async () => {
+  it("fetches the selected revision blob, includes actionModeId and revisionId, and revokes the object url", async () => {
     const user = userEvent.setup();
     fetchMock.mockResolvedValue(createSuccessfulExportResponse());
 
@@ -243,14 +244,14 @@ describe("ExportDialog", () => {
 
     await waitFor(() => {
       expect(fetchMock).toHaveBeenCalledWith(
-        "/api/recordings/rec-1/transcript?format=txt&actionModeId=mode-1",
+        "/api/recordings/rec-1/transcript?format=txt&actionModeId=mode-1&revisionId=rev-3",
       );
     });
-    expect(String(fetchMock.mock.calls[0]?.[0])).not.toContain("revisionId");
+    expect(String(fetchMock.mock.calls[0]?.[0])).toContain("revisionId=rev-3");
     expect(anchorClickMock).toHaveBeenCalledTimes(1);
     expect(createObjectUrlMock).toHaveBeenCalledTimes(1);
     expect(revokeObjectUrlMock).toHaveBeenCalledWith("blob:export");
-    expect(onAnnouncement).toHaveBeenCalledWith("Approved revision v3 exported as TXT.");
+    expect(onAnnouncement).toHaveBeenCalledWith("Revision v3 exported as TXT.");
     expect(onClose).toHaveBeenCalledTimes(1);
   });
 
@@ -346,13 +347,18 @@ describe("ExportDialog", () => {
   it("renders inline 403 and 409 errors", async () => {
     const user = userEvent.setup();
     fetchMock
-      .mockResolvedValueOnce({ ok: false, status: 403, headers: new Headers() })
+      .mockResolvedValueOnce({
+        ok: false,
+        status: 403,
+        headers: new Headers(),
+        text: vi.fn().mockResolvedValue(""),
+      })
       .mockResolvedValueOnce({ ok: false, status: 409, headers: new Headers() });
     renderDialog();
 
     await user.click(screen.getByRole("button", { name: "DOCX" }));
     expect(
-      await screen.findByText("Export is no longer allowed for this account or policy."),
+      await screen.findByText(/Administrators: enter the matching action mode first/),
     ).toBeVisible();
 
     await user.click(screen.getByRole("button", { name: "TXT" }));

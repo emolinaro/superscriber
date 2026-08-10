@@ -33,6 +33,7 @@ import {
 import { ConflictPanel } from "./conflict-panel";
 import { ExportDialog } from "./export-dialog";
 import { GovernanceDrawer } from "./governance-drawer";
+import { RecordingDangerZone } from "./recording-danger-zone";
 import { MediaTransport } from "./media-transport";
 import { StateActionBar } from "./state-action-bar";
 import { TranscriptDocument } from "./transcript-document";
@@ -379,6 +380,15 @@ export function CasefileWorkspace({
     phoneSafetyMode &&
     !unresolved;
   const approvedDecision = latestApprovedDecision(casefile);
+  // Export affordance (demo-governance-bringback): the export surface renders
+  // for anyone with export authority OR a plain admin session, even before an
+  // approved revision exists - the dialog carries an honest empty state
+  // instead of the button vanishing.
+  const showExportSurface =
+    casefile.access.kind === "admin_oversight"
+      ? true
+      : !unresolved && casefile.capabilities.canExport;
+  const hasApprovedRevision = casefile.revisions.some((entry) => entry.state === "approved");
   const currentCasefileLatestHref = useMemo(
     () => latestHref(casefile, conflict),
     [casefile, conflict],
@@ -669,6 +679,7 @@ export function CasefileWorkspace({
       {statusPoller}
 
       <CaseHeader
+        allowRevisionNav={casefile.access.kind === "admin_oversight" && casefile.revision !== null}
         casefile={casefile}
         governanceOpen={casefile.revision && !phoneSafetyMode ? governanceOpen : undefined}
         onToggleGovernance={
@@ -751,6 +762,13 @@ export function CasefileWorkspace({
           ) : (
             <CasefileStatusCards casefile={casefile} />
           )}
+
+          {casefile.access.kind === "admin_oversight" && !phoneSafetyMode ? (
+            <RecordingDangerZone
+              recordingId={casefile.recordingId}
+              title={casefile.title}
+            />
+          ) : null}
         </div>
         <GovernanceDrawer
           casefile={casefile}
@@ -762,7 +780,8 @@ export function CasefileWorkspace({
       <StateActionBar
         assignmentLabel={casefile.assignmentLabel}
         canApprove={!unresolved && casefile.capabilities.canApprove}
-        canExport={!unresolved && casefile.capabilities.canExport}
+        canExport={showExportSurface}
+        exportLabel={hasApprovedRevision ? "Export approved transcript" : "Export transcript"}
         canReopen={!unresolved && casefile.capabilities.canReopen}
         canRequestChanges={!unresolved && casefile.capabilities.canRequestChanges}
         canSave={!unresolved && casefile.capabilities.canSave}
@@ -817,17 +836,28 @@ export function CasefileWorkspace({
         />
       ) : null}
 
-      {exportOpen && casefile.revision ? (
+      {exportOpen ? (
         <ExportDialog
           actionModeId={casefile.actionMode?.id ?? null}
-          approvedAt={approvedDecision?.createdAt ?? casefile.revision.approvedAt ?? null}
+          approvedAt={approvedDecision?.createdAt ?? casefile.revision?.approvedAt ?? null}
           approvedBy={approvedDecision?.actorDisplay ?? null}
+          hasApprovedRevision={hasApprovedRevision}
           onAnnouncement={(message) => setLiveMessage(message)}
           onClose={() => setExportOpen(false)}
           onSessionRecoveryRequested={() => setSessionRecoveryOpen(true)}
           open={!phoneSafetyMode}
           recordingId={casefile.recordingId}
-          revision={{ version: casefile.revision.version }}
+          revision={
+            casefile.revision
+              ? { version: casefile.revision.version, id: casefile.revision.id }
+              : null
+          }
+          revisionOptions={casefile.revisions.map((entry) => ({
+            id: entry.id,
+            version: entry.version,
+            state: entry.state,
+            stateLabel: entry.stateLabel,
+          }))}
         />
       ) : null}
 

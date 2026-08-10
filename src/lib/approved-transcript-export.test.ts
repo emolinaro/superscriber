@@ -21,7 +21,7 @@ describe("approved transcript export registry", () => {
       {
         id: "document",
         label: "Document",
-        formats: ["docx", "txt"],
+        formats: ["docx", "txt", "md"],
       },
       {
         id: "captions",
@@ -38,6 +38,7 @@ describe("approved transcript export registry", () => {
     expect(APPROVED_TRANSCRIPT_EXPORT_FORMATS.map((entry) => entry.id)).toEqual([
       "docx",
       "txt",
+      "md",
       "srt",
       "vtt",
       "csv",

@@ -3,6 +3,7 @@
 import { useEffect, useId, useMemo, useState, type KeyboardEvent } from "react";
 import type { CasefileViewModel } from "@/server/casefile/read-model";
 import { Modal } from "@/components/ui/modal";
+import { RevisionHistory } from "./revision-history";
 
 const GOVERNANCE_TABS = ["Policy", "Provenance", "Assignments", "Revisions", "Decisions", "Audit"] as const;
 
@@ -59,17 +60,10 @@ function tabPanel(casefile: CasefileViewModel, tab: GovernanceTab) {
         </ul>
       );
     case "Revisions":
-      return (
-        <ul className="governance-panel__items">
-          {casefile.revisions.map((revision) => (
-            <li key={revision.id}>
-              <strong>v{revision.version}</strong>
-              <span>{revision.stateLabel}</span>
-              <span>{revision.summary}</span>
-            </li>
-          ))}
-        </ul>
-      );
+      // Version history (demo-governance-bringback): full lineage with
+      // snapshot deep links, per-revision "Diff vs active", and the admin
+      // Recover-to-draft action.
+      return <RevisionHistory casefile={casefile} />;
     case "Decisions":
       return (
         <ul className="governance-panel__items">

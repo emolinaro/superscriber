@@ -20,6 +20,20 @@ function resolveDatabasePath() {
   return process.env.SUPERSCRIBER_DB_PATH?.trim() || DEFAULT_DATABASE_PATH;
 }
 
+// Location for the forensic snapshots the destructive governance controls
+// (ledger reset, recording purge) write before any row is deleted. Lives
+// next to the database file so it survives with the appliance data volume
+// and inherits the same file permissions discipline as the data directory.
+export function resolveLedgerSnapshotDir() {
+  if (process.env.SUPERSCRIBER_LEDGER_SNAPSHOT_DIR?.trim()) {
+    return process.env.SUPERSCRIBER_LEDGER_SNAPSHOT_DIR.trim();
+  }
+
+  const dbPath = resolveDatabasePath();
+  const baseDir = dbPath === ":memory:" ? join(process.cwd(), "data") : dirname(dbPath);
+  return join(baseDir, "ledger-snapshots");
+}
+
 export function openAppDatabase(path = resolveDatabasePath()): AppDatabaseBundle {
   if (path !== ":memory:") {
     mkdirSync(dirname(path), { recursive: true });

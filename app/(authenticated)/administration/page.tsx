@@ -13,7 +13,7 @@ function firstValue(value: string | string[] | undefined) {
 
 function parseAdministrationSection(value: string | string[] | undefined): AdministrationSection {
   const section = firstValue(value);
-  if (section === "assignments" || section === "policy") {
+  if (section === "assignments" || section === "policy" || section === "discipline") {
     return section;
   }
 

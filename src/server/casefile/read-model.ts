@@ -517,10 +517,16 @@ function visibleRevisions(
   revisionMap: Map<string, TranscriptRevision>,
   userDisplayMap: Map<string, string>,
   cutoff: string | null,
+  includeSegments = false,
 ) {
+  // Version history (demo-governance-bringback): the history rows carry their
+  // own segment snapshots so the Revisions drawer can diff any archived
+  // revision against the active one without a second fetch.
   return Array.from(revisionMap.values())
     .filter((revision) => !cutoff || revision.createdAt <= cutoff)
-    .map((revision) => toRevisionViewModel(revision, userDisplayMap));
+    .map((revision) =>
+      toRevisionViewModel(revision, userDisplayMap, { includeSegments }),
+    );
 }
 
 function visibleDecisions(decisionRows: ApprovalRecord[], cutoff: string | null) {
@@ -825,14 +831,22 @@ export function getCasefile(
   const ingestionSession = loadIngestionSession(db, recording);
   const transcriptJob = loadTranscriptJob(db, recording);
   const cutoff = loadCompletedCutoff(grant, db);
+  // Version history (demo-governance-bringback): the ?revision=<id> deep link
+  // must honor the contract for admins (oversight may inspect any archived
+  // revision); completed grants pin to their recorded snapshot; active
+  // assignments stay pinned to the CURRENT revision.
+  const requestedRow =
+    options.revisionId != null ? revisionMap.get(options.revisionId) ?? null : null;
   const selectedRevision =
     grant.kind === "uploader_status"
       ? null
       : grant.kind === "completed_reviewer" || grant.kind === "completed_approver"
         ? revisionMap.get(grant.revisionId) ?? null
-        : recording.currentRevisionId
-          ? revisionMap.get(recording.currentRevisionId) ?? null
-          : null;
+        : options.revisionId && requestedRow && grant.kind === "admin_oversight"
+          ? requestedRow
+          : recording.currentRevisionId
+            ? revisionMap.get(recording.currentRevisionId) ?? null
+            : null;
   const { actionMode, actionModeExpired } = safeResolveActionMode(
     principal,
     recording.id,
@@ -920,7 +934,7 @@ export function getCasefile(
     revisions:
       grant.kind === "uploader_status"
         ? []
-        : visibleRevisions(revisionMap, userDisplayMap, cutoff),
+        : visibleRevisions(revisionMap, userDisplayMap, cutoff, true),
     assignments:
       grant.kind === "uploader_status"
         ? []

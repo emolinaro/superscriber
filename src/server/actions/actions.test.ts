@@ -133,7 +133,10 @@ import {
   assignRecordingAction,
   changeAccountRoleAction,
   createUserAction,
+  deleteRecordingAction,
+  resetLedgerAction,
   unassignRecordingAction,
+  updateWorkspacePolicyAction,
 } from "@/server/actions/administration-actions";
 import { AccountRoleChangeServiceError } from "@/server/administration/account-role-service";
 import {
@@ -507,6 +510,25 @@ describe("typed administration actions", () => {
         },
       },
     });
+  });
+
+  it("keeps the destructive governance controls behind an admin gate (demo-governance-bringback)", async () => {
+    // Reviewer-held sessions cannot reach the wipe, the purge, or the policy
+    // switch; the typed confirmations alone are not a boundary.
+    const reviewer = { ...adminPrincipal, role: "reviewer" } as unknown as typeof adminPrincipal;
+    getActivePrincipalMock.mockResolvedValue(reviewer);
+
+    for (const attempt of [
+      () => resetLedgerAction({ expectedPhrase: "RESET REQUIRED" }),
+      () => deleteRecordingAction({ recordingId: "rec-1", expectedTitle: "x" }),
+      () => updateWorkspacePolicyAction({ profileId: "reviewable-approved-export" }),
+    ]) {
+      const result = await attempt();
+      expect(result.ok).toBe(false);
+      if (!result.ok) {
+        expect(result.code).toBe("ACCESS_DENIED");
+      }
+    }
   });
 
   it("updates assignments without redirects", async () => {

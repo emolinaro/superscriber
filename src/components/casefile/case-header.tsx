@@ -1,6 +1,15 @@
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import type { CasefileViewModel } from "@/server/casefile/read-model";
 import { formatRoleLabel } from "@/lib/format";
+
+function buildRecordingHref(recordingId: string, revisionId?: string | null) {
+  if (!revisionId) {
+    return `/recordings/${recordingId}`;
+  }
+
+  return `/recordings/${recordingId}?revision=${encodeURIComponent(revisionId)}`;
+}
 
 /**
  * Casefile UX batch (header gutter + governance placement): one bordered card
@@ -11,13 +20,18 @@ import { formatRoleLabel } from "@/lib/format";
  */
 export function CaseHeader({
   casefile,
+  allowRevisionNav = false,
   governanceOpen = false,
   onToggleGovernance,
 }: {
   casefile: CasefileViewModel;
+  /** Version history (demo-governance-bringback): admin oversight gets a
+     revision snapshot navigator next to the Revision fact. */
+  allowRevisionNav?: boolean;
   governanceOpen?: boolean;
   onToggleGovernance?: () => void;
 }) {
+  const router = useRouter();
   const revisionLabel = casefile.revision ? `v${casefile.revision.version}` : "-";
 
   return (
@@ -54,7 +68,40 @@ export function CaseHeader({
           </div>
           <div>
             <dt>Revision</dt>
-            <dd data-testid="current-revision">{revisionLabel}</dd>
+            <dd data-testid="current-revision">
+              {revisionLabel}
+              {allowRevisionNav && casefile.revisions.length > 1 ? (
+                <span className="case-header__revision-nav" role="group" aria-label="Revision navigation">
+                  {" "}(
+                  <select
+                    aria-label="Choose a revision snapshot"
+                    className="case-header__revision-select"
+                    onChange={(event) => {
+                      const chosen = casefile.revisions.find(
+                        (revision) => revision.id === event.currentTarget.value,
+                      );
+                      if (!chosen) {
+                        return;
+                      }
+                      router.push(
+                        buildRecordingHref(
+                          casefile.recordingId,
+                          chosen.id === casefile.revision?.id ? undefined : chosen.id,
+                        ),
+                      );
+                    }}
+                    value={casefile.revision?.id ?? ""}
+                  >
+                    {casefile.revisions.map((revision) => (
+                      <option key={revision.id} value={revision.id}>
+                        v{revision.version} · {revision.stateLabel}
+                      </option>
+                    ))}
+                  </select>
+                  )
+                </span>
+              ) : null}
+            </dd>
           </div>
           <div>
             <dt>Assignment</dt>

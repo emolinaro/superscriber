@@ -945,7 +945,11 @@ export function requestChangesCommand(
     assertPendingDecisionState(db, state.recording, pending, input.expectedPendingRevisionId);
     const reason = validateGovernedReason(input.reason);
 
-    if (pending.submittedByUserId === state.actor.userId) {
+    // Captain ruling 2026-08-06 (corr superscriber-demo-20260805): the veto
+    // binds non-admin roles only; an administrator acting under an approver
+    // action-mode session may decide a revision they submitted. The decision
+    // row still attributes actor + effective role + action-mode session.
+    if (pending.submittedByUserId === state.actor.userId && state.actor.actorRole !== "admin") {
       throw new CasefileCommandError(
         "SELF_APPROVAL_FORBIDDEN",
         "Submitters cannot approve or request changes on their own revisions.",
@@ -1026,7 +1030,11 @@ export function approveRevisionCommand(
     assertPendingDecisionState(db, state.recording, pending, input.expectedPendingRevisionId);
     const note = validateApprovalNote(input.note);
 
-    if (pending.submittedByUserId === state.actor.userId) {
+    // Captain ruling 2026-08-06 (corr superscriber-demo-20260805): same
+    // supersession as requestChangesCommand - the veto binds non-admin roles
+    // only; an administrator acting under an approver action-mode session may
+    // decide a revision they submitted. Attribution is recorded on the row.
+    if (pending.submittedByUserId === state.actor.userId && state.actor.actorRole !== "admin") {
       throw new CasefileCommandError(
         "SELF_APPROVAL_FORBIDDEN",
         "Submitters cannot approve or request changes on their own revisions.",

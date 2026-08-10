@@ -12,6 +12,7 @@ import { Modal } from "@/components/ui/modal";
 
 const FORMAT_DESCRIPTIONS: Record<ApprovedTranscriptExportFormat, string> = {
   docx: "Formatted handoff for policy-approved document editing.",
+  md: "Readable Markdown with speaker labels and exact segment timings.",
   txt: "Plain text export for simple archival or handoff.",
   srt: "Subtitle cues with numbered timestamps for timed playback.",
   vtt: "Web caption cues for browser and streaming workflows.",
@@ -44,6 +45,8 @@ export function ExportDialog({
   open,
   recordingId,
   revision,
+  revisionOptions,
+  hasApprovedRevision,
 }: {
   actionModeId: string | null;
   approvedAt: string | null;
@@ -53,25 +56,41 @@ export function ExportDialog({
   onSessionRecoveryRequested: () => void;
   open: boolean;
   recordingId: string;
-  revision: { version: number };
+  revision: { version: number; id: string } | null;
+  /** Version history (demo-governance-bringback): revision picker for the
+     export surface. */
+  revisionOptions: Array<{ id: string; version: number; state: string; stateLabel: string }>;
+  /** Export affordance (demo-governance-bringback): honest empty state when
+     nothing is approved yet. */
+  hasApprovedRevision: boolean;
 }) {
   const [pendingFormat, setPendingFormat] = useState<ApprovedTranscriptExportFormat | null>(null);
   const [selectedFormat, setSelectedFormat] = useState<ApprovedTranscriptExportFormat | null>(null);
+  const approvedDefault =
+    revisionOptions.find((option) => option.state === "approved")?.id
+    ?? revision?.id
+    ?? revisionOptions[0]?.id
+    ?? "";
+  const [selectedRevisionId, setSelectedRevisionId] = useState(approvedDefault);
   const [error, setError] = useState<string | null>(null);
   const buttonRefs = useRef(new Map<ApprovedTranscriptExportFormat, HTMLButtonElement>());
   const pendingRef = useRef(false);
   const isPending = pendingFormat !== null;
   const metadataCopy = useMemo(() => {
-    if (approvedBy) {
+    if (approvedBy && revision) {
       return `${approvedBy} approved revision v${revision.version}.`;
     }
 
-    if (approvedAt) {
+    if (approvedAt && revision) {
       return `Legacy approval metadata is incomplete for revision v${revision.version}. Approved at ${formatDateTimeUtc(approvedAt)}.`;
     }
 
-    return "Legacy approval metadata is incomplete for this revision.";
-  }, [approvedAt, approvedBy, revision.version]);
+    if (revision) {
+      return "Legacy approval metadata is incomplete for this revision.";
+    }
+
+    return "No revision exists yet for this casefile.";
+  }, [approvedAt, approvedBy, revision?.version]);
 
   useEffect(() => {
     if (!error || !selectedFormat) {
@@ -89,6 +108,7 @@ export function ExportDialog({
       setPendingFormat(null);
       setSelectedFormat(null);
       setError(null);
+      setSelectedRevisionId(approvedDefault);
     }
   }, [open]);
 
@@ -111,19 +131,23 @@ export function ExportDialog({
     setError(null);
 
     try {
-      const response = await fetch(
+      const exportUrl =
         buildApprovedTranscriptExportUrl(
           `/api/recordings/${recordingId}/transcript`,
           format,
           actionModeId,
-        ),
-      );
+        ) + `&revisionId=${encodeURIComponent(selectedRevisionId)}`;
+
+      const response = await fetch(exportUrl);
 
       if (!response.ok) {
         if (response.status === 401) {
           onSessionRecoveryRequested();
         } else if (response.status === 403) {
-          setError("Export is no longer allowed for this account or policy.");
+          const serverMessage = (await response.text()).trim();
+          setError(
+            `${serverMessage ? `${serverMessage} ` : "Export is not allowed under the current authority. "}Administrators: enter the matching action mode first, then retry the download - attribution stays intact.`,
+          );
         } else if (response.status === 409) {
           setError("This casefile no longer has an active approved revision.");
         } else {
@@ -134,7 +158,10 @@ export function ExportDialog({
 
       const blob = await response.blob();
       triggerObjectUrlDownload(blob, fileNameFromDisposition(response.headers, format));
-      onAnnouncement(`Approved revision v${revision.version} exported as ${format.toUpperCase()}.`);
+      const exportedVersion =
+        revisionOptions.find((option) => option.id === selectedRevisionId)?.version
+        ?? revision?.version;
+      onAnnouncement(`Revision v${exportedVersion} exported as ${format.toUpperCase()}.`);
       onClose();
     } catch {
       setError("Export could not be prepared. Try again.");
@@ -159,9 +186,41 @@ export function ExportDialog({
         </button>
       </div>
 
+      {hasApprovedRevision ? null : (
+        <InlineNotice tone="info">
+          No approved revision yet - the default export target (approved transcript) unlocks
+          once a revision is approved. Revision snapshots below remain exportable under the
+          usual authority and stay attributed in the audit.
+        </InlineNotice>
+      )}
+
       <div className="stack-tight export-dialog__meta">
-        <p>Approved revision v{revision.version}</p>
+        <p>
+          {revision
+            ? `Approved revision v${revision.version}`
+            : "No revision exists yet for this casefile."}
+        </p>
         <p>{metadataCopy}</p>
+        <div className="field">
+          <label className="field-label" htmlFor="export-revision">
+            Revision to export
+          </label>
+          <select
+            id="export-revision"
+            onChange={(event) => setSelectedRevisionId(event.currentTarget.value)}
+            value={selectedRevisionId}
+          >
+            {revisionOptions.map((option) => (
+              <option key={option.id} value={option.id}>
+                v{option.version} · {option.stateLabel}
+              </option>
+            ))}
+          </select>
+          <span className="field-note">
+            Defaults to the approved revision; archived exports are attributed identically in
+            the audit event.
+          </span>
+        </div>
       </div>
 
       {error ? <InlineNotice tone="danger">{error}</InlineNotice> : null}

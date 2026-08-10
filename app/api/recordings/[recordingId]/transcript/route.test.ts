@@ -410,6 +410,55 @@ describe("GET /api/recordings/[recordingId]/transcript", () => {
     expect(rows[0]?.metadata).toContain('"format":"txt"');
   });
 
+  it("exports any named revision under the same authority, with revision attribution (demo-governance-bringback)", async () => {
+    // D-3 contract delta: export no longer means "the active approved record"
+    // - any revision id of the casefile is exportable by an export-authorized
+    // principal, and the audit event carries the revision identity.
+    const bundle = getAppDbBundle();
+    bundle.db.insert(revisions).values({
+      id: "rev-draft",
+      recordingId: "rec-1",
+      version: 4,
+      state: "draft",
+      basedOnRevisionId: "rev-approved",
+      createdByRole: "reviewer",
+      createdByUserId: null,
+      createdAt: "2026-08-01T12:20:00.000Z",
+      submittedByUserId: null,
+      submittedAt: null,
+      approvedAt: null,
+      summary: "Draft in flight.",
+      segmentsJson: serializeSegments(baseSegments),
+    }).run();
+
+    const response = await GET(
+      new Request(
+        "https://example.test/api/recordings/rec-1/transcript?format=md&revisionId=rev-draft",
+      ),
+      { params: Promise.resolve({ recordingId: "rec-1" }) },
+    );
+
+    expect(response.status).toBe(200);
+    expect(response.headers.get("content-disposition")).toBe(
+      'attachment; filename="Recording-1-v4.md"',
+    );
+    expect(buildApprovedTranscriptExportMock).toHaveBeenCalledWith({
+      format: "md",
+      recording: expect.objectContaining({ id: "rec-1" }),
+      revision: expect.objectContaining({
+        id: "rev-draft",
+        version: 4,
+        state: "draft",
+      }),
+    });
+
+    const rows = exportAuditRows();
+    expect(rows).toHaveLength(1);
+    expect(rows[0]?.detail).toContain("from revision v4");
+    expect(rows[0]?.metadata).toContain('"revisionId":"rev-draft"');
+    expect(rows[0]?.metadata).toContain('"revisionVersion":4');
+  });
+
   it("does not audit when byte generation fails", async () => {
     buildApprovedTranscriptExportMock.mockRejectedValue(
       new Error("filesystem read failed for temp export"),
