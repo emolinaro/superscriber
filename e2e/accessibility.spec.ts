@@ -60,11 +60,6 @@ test.describe.serial("accessibility workflows", () => {
       .fill("Accessibility duties changed safely.");
     await expectNoViolations(page, "dirty account role editor");
 
-    await page.goto("/ingest");
-    await expectNoViolations(page, "ingest upload surface");
-    await page.getByLabel("Record audio").check();
-    await expectNoViolations(page, "ingest record audio capture controls");
-
     const recordingId = await uploadFixture(page, { title: "Accessible governed record" });
     await createAndAssignUsers(page, recordingId);
     await openAssignedDraft(page, reviewerUser);
@@ -90,6 +85,14 @@ test.describe.serial("accessibility workflows", () => {
     await expectNoViolations(page, "admin assignments");
     await page.goto("/administration?section=policy");
     await expectNoViolations(page, "admin policy");
+  });
+
+  test("passes axe across ingest upload and recording controls", async ({ page }) => {
+    await bootstrapAndLogin(page, adminUser);
+    await page.goto("/ingest");
+    await expectNoViolations(page, "ingest upload surface");
+    await page.getByLabel("Record audio").check();
+    await expectNoViolations(page, "ingest record audio capture controls");
   });
 
   test("supports keyboard focus restoration, 200 percent zoom, and reduced motion", async ({ page }) => {
