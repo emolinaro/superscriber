@@ -138,7 +138,7 @@ const DEFAULT_AUDIT_WORKSPACE = {
   policyProfileId: DEFAULT_AUDIT_POLICY_PROFILE.id,
 };
 
-function ensureAuditWorkspace(db: AppDatabase) {
+export function ensureAuditWorkspace(db: AppDatabase) {
   const existing = db.select({ id: workspaces.id }).from(workspaces).get();
   if (existing) {
     return existing;
