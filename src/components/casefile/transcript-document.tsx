@@ -42,11 +42,10 @@ export function TranscriptDocument({
   // or history-based read-only states keep their own, separate story.
   const segmentsRef = useRef<HTMLDivElement>(null);
 
-  // Playback follow: keep the active segment visible inside the transcript
-  // list only (never scroll the window or outer chrome). The list lives in a
-  // bounded scrollport on desktop; when it is not scrollable (short lists,
-  // stacked layouts) the active row is already fully visible and the
-  // adjustment is a no-op.
+  // Playback follow: keep the active segment visible inside the nearest
+  // scrollport (the bounded .casefile-main scrollport on desktop, the window
+  // elsewhere). The segments list itself is never a scroller - the bounded
+  // shell keeps .casefile-main as the single scrollport.
   useEffect(() => {
     const container = segmentsRef.current;
     if (!container || !activeSegmentId) {
@@ -57,22 +56,9 @@ export function TranscriptDocument({
       return;
     }
 
-    const margin = 12;
-    const containerRect = container.getBoundingClientRect();
-    const rowRect = row.getBoundingClientRect();
-    let delta = 0;
-    if (rowRect.top < containerRect.top + margin) {
-      delta = rowRect.top - containerRect.top - margin;
-    } else if (rowRect.bottom > containerRect.bottom - margin) {
-      delta = rowRect.bottom - containerRect.bottom + margin;
-    }
-    if (delta === 0 || container.scrollHeight <= container.clientHeight) {
-      return;
-    }
-
     const reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
-    container.scrollBy({
-      top: delta,
+    row.scrollIntoView({
+      block: "nearest",
       behavior: reducedMotion ? "auto" : "smooth",
     });
   }, [activeSegmentId]);

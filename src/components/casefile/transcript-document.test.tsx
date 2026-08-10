@@ -2,11 +2,30 @@
 
 import userEvent from "@testing-library/user-event";
 import { cleanup, render, screen } from "@testing-library/react";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { baseSegments } from "./test-fixtures";
 import { TranscriptDocument } from "./transcript-document";
 
 describe("TranscriptDocument", () => {
+  let scrollIntoViewMock: ReturnType<typeof vi.fn>;
+  let reducedMotion: boolean;
+
+  beforeEach(() => {
+    reducedMotion = false;
+    scrollIntoViewMock = vi.fn();
+    window.HTMLElement.prototype.scrollIntoView = scrollIntoViewMock;
+    window.matchMedia = vi.fn().mockImplementation((query: string) => ({
+      matches: reducedMotion,
+      media: query,
+      onchange: null,
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
+      addListener: vi.fn(),
+      removeListener: vi.fn(),
+      dispatchEvent: vi.fn(),
+    }));
+  });
+
   afterEach(() => {
     cleanup();
   });
@@ -124,6 +143,66 @@ describe("TranscriptDocument", () => {
     expect(
       screen.queryByText(/Review and decisions require a tablet or desktop\./),
     ).toBeNull();
+  });
+
+  it("scrolls the active row into the nearest scrollport as playback advances", () => {
+    const { rerender } = render(
+      <TranscriptDocument
+        activeSegmentId={null}
+        editable={false}
+        onSeek={vi.fn()}
+        onUpdateSpeaker={vi.fn()}
+        onUpdateText={vi.fn()}
+        phoneSafetyMode={false}
+        segments={baseSegments}
+        summary="Ready for review."
+        onSummaryChange={vi.fn()}
+      />,
+    );
+
+    expect(scrollIntoViewMock).not.toHaveBeenCalled();
+
+    rerender(
+      <TranscriptDocument
+        activeSegmentId="seg-2"
+        editable={false}
+        onSeek={vi.fn()}
+        onUpdateSpeaker={vi.fn()}
+        onUpdateText={vi.fn()}
+        phoneSafetyMode={false}
+        segments={baseSegments}
+        summary="Ready for review."
+        onSummaryChange={vi.fn()}
+      />,
+    );
+
+    expect(scrollIntoViewMock).toHaveBeenCalledTimes(1);
+    expect(scrollIntoViewMock).toHaveBeenCalledWith({
+      block: "nearest",
+      behavior: "smooth",
+    });
+  });
+
+  it("uses an instant follow-scroll under prefers-reduced-motion", () => {
+    reducedMotion = true;
+    render(
+      <TranscriptDocument
+        activeSegmentId="seg-2"
+        editable={false}
+        onSeek={vi.fn()}
+        onUpdateSpeaker={vi.fn()}
+        onUpdateText={vi.fn()}
+        phoneSafetyMode={false}
+        segments={baseSegments}
+        summary="Ready for review."
+        onSummaryChange={vi.fn()}
+      />,
+    );
+
+    expect(scrollIntoViewMock).toHaveBeenCalledWith({
+      block: "nearest",
+      behavior: "auto",
+    });
   });
 
   it("marks segments the viewed revision edited with an 'Edited vs vN' badge", () => {

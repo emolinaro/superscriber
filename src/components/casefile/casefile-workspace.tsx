@@ -667,9 +667,11 @@ export function CasefileWorkspace({
 
       <CaseHeader
         casefile={casefile}
-        governanceOpen={casefile.revision ? governanceOpen : undefined}
+        governanceOpen={casefile.revision && !phoneSafetyMode ? governanceOpen : undefined}
         onToggleGovernance={
-          casefile.revision ? () => setGovernanceOpen((current) => !current) : undefined
+          casefile.revision && !phoneSafetyMode
+            ? () => setGovernanceOpen((current) => !current)
+            : undefined
         }
       />
 
