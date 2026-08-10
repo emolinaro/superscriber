@@ -60,6 +60,11 @@ test.describe.serial("accessibility workflows", () => {
       .fill("Accessibility duties changed safely.");
     await expectNoViolations(page, "dirty account role editor");
 
+    await page.goto("/ingest");
+    await expectNoViolations(page, "ingest upload surface");
+    await page.getByLabel("Record audio").check();
+    await expectNoViolations(page, "ingest record audio capture controls");
+
     const recordingId = await uploadFixture(page, { title: "Accessible governed record" });
     await createAndAssignUsers(page, recordingId);
     await openAssignedDraft(page, reviewerUser);
