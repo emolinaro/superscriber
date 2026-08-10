@@ -42,6 +42,9 @@ perl -pi -e "s{\\]\\(\\./docs/operators/\\)}{]($github_tree/docs/operators)}g" *
 perl -pi -e "s{\\]\\(\\./(app|src/components|src/domain|src/server|data|worker|scripts)/\\)}{]($github_tree/\$1)}g" index.md
 #  - the LICENSE file link points at the repo blob
 perl -pi -e "s{\\]\\(\\./LICENSE\\)}{]($github_blob/LICENSE)}g" *.md
+#  - dev-process specs/plans (docs/superpowers/) are not staged into the
+#    site, so links into them point at the repo blob
+perl -pi -e "s{\\]\\(\\./docs/superpowers/([A-Za-z0-9_./-]+\\.md)\\)}{]($github_blob/docs/superpowers/\$1)}g" *.md operators/*.md
 #  - the README logo (raw HTML, cannot be rewritten by the renderer) uses the
 #    static asset staged into website/static/img/
 perl -pi -e 's{src="\./app/icon\.svg"}{src="/superscriber/img/icon.svg"}g' index.md
