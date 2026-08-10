@@ -123,7 +123,7 @@ Fonts are bundled as WOFF2 inside the appliance (offline posture); nothing fetch
 
 Body is 16 px; dense ledger rows run 14 px; the main casefile title is 32 px desktop and 24 px narrow. No all-caps headings; 12 px uppercase is reserved for short eyebrows.
 
-The Superscriber wordmark is one Newsreader line: `Super` remains sentence case at the muted weight and `scriber` uses the heavier ink weight. The authenticated 64 px header uses the small wordmark linked to `/workspace`; the public root auth surface leads its primary card with the unlinked medium wordmark above the page heading in first-run, local, and institutional sign-in modes. The auth surface omits the optional descriptor because its locked light-tone color reaches only about 3.8:1 contrast on paper. The exact Direction B typography, mark geometry, tones, responsive rules, and accessibility invariants are owned by [the editorial single-voice wordmark design](./docs/superpowers/specs/2026-08-09-wordmark-editorial-single-voice-design.md).
+The Superscriber wordmark is one Newsreader line: `Super` remains sentence case at the muted weight and `scriber` uses the heavier ink weight. The authenticated 64 px header uses the small wordmark linked to `/workspace`; the public root auth landing leads its deep-teal brand hero with the unlinked large wordmark in the inverse tone, above the hero headline. The descriptor appears on that inverse hero, where its contrast is AA over the deep teal - it stays off paper surfaces, where its locked light-tone color reaches only about 3.8:1. The exact Direction B typography, mark geometry, tones, responsive rules, and accessibility invariants are owned by [the editorial single-voice wordmark design](./docs/superpowers/specs/2026-08-09-wordmark-editorial-single-voice-design.md).
 
 ### Color
 
@@ -180,12 +180,13 @@ Primary navigation is exact: uploader gets Work and Ingest; reviewer and approve
 
 ### First-Run And Login
 
-- First-run setup is a dedicated one-time gate before normal login
+- The public root landing pairs a deep-teal brand hero (inverse large wordmark, headline, and mode fact pills) with an account card split into two explicit doors via an APG tab pair: Sign up for first-time admission and Sign in for returning users
+- First-run setup is a one-time gate: with no account on the appliance the Sign up door leads with the bootstrap ceremony; once an account exists the Sign up door explains administrator-provisioned admission and Sign in is the default
 - First-run flow has exactly three jobs:
   1. confirm appliance/environment readiness
   2. create the first admin
   3. hand off to normal login
-- Daily login is a separate steady-state screen
+- Daily login lives behind the Sign in door in steady state; server-rendered notices (session expired, forced re-login, bootstrap complete) place focus on the visible pane's heading, matching the pre-restyle focus contract
 - A concurrent bootstrap that loses the race converts to login with a completion notice; it never creates a second admin
 - Deployments may enable institutional sign-in through Authentik OIDC (`dual` or `authentik-primary` modes): the steady-state login then adds an institutional sign-in button, and in `authentik-primary` plain-password sign-in is disabled for everyone - the single break-glass admin enters only through the emergency ceremony (management network boundary, password plus WebAuthn or recovery code; see [`docs/operators/break-glass.md`](./docs/operators/break-glass.md)). Operator configuration lives in [`docs/operators/`](./docs/operators/); mail is disabled by default, with one scoped password-reset exception (see [`docs/operators/no-mail-profile.md`](./docs/operators/no-mail-profile.md)). Self-service and administrator password reset are covered by [`docs/operators/password-reset.md`](./docs/operators/password-reset.md)
 
@@ -296,7 +297,7 @@ These requirements apply to the auth, work inbox, ingest, casefile, export, and 
 ### Auth And First-Run
 
 - Login and bootstrap screens are fully keyboard-operable without pointer input
-- Focus lands on the page heading or first invalid field after navigation/submit
+- Focus lands on the visible pane heading or first invalid field after navigation/submit
 - Wrong-password and expired-session errors are announced and tied to the relevant form
 - Successful logout returns focus to the login heading or first actionable control
 
