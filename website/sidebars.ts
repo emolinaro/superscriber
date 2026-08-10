@@ -20,6 +20,7 @@ const sidebars: SidebarsConfig = {
         'operators/identity-linking',
         'operators/key-and-certificate-rotation',
         'operators/no-mail-profile',
+        'operators/password-reset',
         'operators/auth-outage',
         'operators/auth-rollback',
         'operators/break-glass',
