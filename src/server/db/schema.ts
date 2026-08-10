@@ -204,6 +204,41 @@ export const breakGlassRecoveryCodes = sqliteTable("break_glass_recovery_codes",
   rotatedAt: text("rotated_at"),
 });
 
+export const PASSWORD_RESET_TOKEN_SOURCES = ["self_service", "admin"] as const;
+export type PasswordResetTokenSource = (typeof PASSWORD_RESET_TOKEN_SOURCES)[number];
+
+export const PASSWORD_RESET_TOKEN_DELIVERIES = ["email", "operator_handoff"] as const;
+export type PasswordResetTokenDelivery = (typeof PASSWORD_RESET_TOKEN_DELIVERIES)[number];
+
+export const passwordResetTokens = sqliteTable(
+  "password_reset_tokens",
+  {
+    id: text("id").primaryKey(),
+    userId: text("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "restrict" }),
+    tokenHash: text("token_hash").notNull(),
+    source: text("source", { enum: PASSWORD_RESET_TOKEN_SOURCES })
+      .$type<PasswordResetTokenSource>()
+      .notNull(),
+    delivery: text("delivery", { enum: PASSWORD_RESET_TOKEN_DELIVERIES })
+      .$type<PasswordResetTokenDelivery>()
+      .notNull(),
+    requestedByUserId: text("requested_by_user_id").references(() => users.id, {
+      onDelete: "set null",
+    }),
+    createdAt: text("created_at").notNull(),
+    expiresAt: text("expires_at").notNull(),
+    usedAt: text("used_at"),
+    invalidatedAt: text("invalidated_at"),
+    invalidatedReason: text("invalidated_reason"),
+  },
+  (table) => ({
+    tokenHashUnique: uniqueIndex("password_reset_tokens_hash_unique").on(table.tokenHash),
+    userIdx: index("password_reset_tokens_user_idx").on(table.userId),
+  }),
+);
+
 export const breakGlassCeremonies = sqliteTable(
   "break_glass_ceremonies",
   {
