@@ -1,6 +1,9 @@
 import { compare, hash } from "bcryptjs";
-import { loadAuthConfig } from "@/server/auth/auth-config";
-import { loadResetMailConfig } from "@/server/auth/reset-mail-config";
+import { AuthConfigError, loadAuthConfig } from "@/server/auth/auth-config";
+import {
+  loadResetMailConfig,
+  type ResetMailConfig,
+} from "@/server/auth/reset-mail-config";
 import { sendPasswordResetEmail } from "@/server/auth/reset-mailer";
 import { recordSecurityEvent } from "@/server/auth/security-events";
 import { normalizeEmail } from "@/server/auth/validation";
@@ -99,8 +102,28 @@ export async function requestPasswordReset(
     return;
   }
 
-  const config = loadResetMailConfig();
+  let config: ResetMailConfig;
+  try {
+    config = loadResetMailConfig();
+  } catch (error) {
+    if (!(error instanceof AuthConfigError)) {
+      throw error;
+    }
+    await dummyCompare();
+    safeRecord(
+      {
+        type: "password.reset.requested",
+        outcome: "error",
+        userId: eligibility.userId,
+        detail: "Password reset request accepted; mail seam misconfigured.",
+        metadata: { delivery: "misconfigured" },
+      },
+      db,
+    );
+    return;
+  }
   if (config.mode === "none") {
+    await dummyCompare();
     safeRecord(
       {
         type: "password.reset.requested",
@@ -201,7 +224,18 @@ export async function completePasswordReset(
     runImmediateGovernedTransaction((db, nowIso) => {
       const current = loadRedeemableToken(params.rawToken, db, new Date(nowIso));
       if (!current.ok) {
-        throw new RedeemStateChangedError(current.ok ? "" : current.reason);
+        throw new RedeemStateChangedError("state_changed");
+      }
+      const target = db
+        .select({ isActive: users.isActive, passwordHash: users.passwordHash })
+        .from(users)
+        .where(eq(users.id, current.token.userId))
+        .get();
+      if (!target || !target.isActive) {
+        throw new RedeemStateChangedError("inactive_target");
+      }
+      if (target.passwordHash?.startsWith("disabled:")) {
+        throw new RedeemStateChangedError("credential_disabled");
       }
       markResetTokenUsed(current.token.id, db, nowIso);
       db.update(users)
@@ -228,7 +262,7 @@ export async function completePasswordReset(
     }, bundle);
   } catch (error) {
     if (error instanceof RedeemStateChangedError) {
-      return deny("state_changed");
+      return deny(error.message || "state_changed");
     }
     throw error;
   }

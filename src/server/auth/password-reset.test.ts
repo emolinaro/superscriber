@@ -129,6 +129,29 @@ describe("requestPasswordReset", () => {
     expect(message.resetUrl).toMatch(/^https:\/\/app\.test\/reset\//);
   });
 
+  it("treats a malformed mail seam as unavailable and records an error event", async () => {
+    vi.stubEnv("SUPERSCRIBER_RESET_MAIL_MODE", "smtp");
+    vi.stubEnv("SUPERSCRIBER_RESET_MAIL_SMTP_HOST", "");
+    vi.stubEnv("SUPERSCRIBER_RESET_MAIL_SMTP_PORT", "");
+    vi.stubEnv("SUPERSCRIBER_RESET_MAIL_FROM_ADDRESS", "");
+    vi.stubEnv("SUPERSCRIBER_RESET_MAIL_PASSWORD_FILE", "");
+    const bundle = openAppDatabase(":memory:");
+    seedUser(bundle.sqlite, "user-1");
+
+    await requestPasswordReset(
+      { email: "user-1@example.com", ip: "127.0.0.1", origin: null },
+      bundle.db,
+    );
+
+    expect(bundle.sqlite.prepare(`SELECT * FROM password_reset_tokens`).all()).toHaveLength(0);
+    expect(sendPasswordResetEmail).not.toHaveBeenCalled();
+    expect(securityEventRows(bundle.sqlite)[0]).toMatchObject({
+      type: "password.reset.requested",
+      outcome: "error",
+      userId: "user-1",
+    });
+  });
+
   it("send failure records mail_failed and keeps the token valid", async () => {
     for (const [key, value] of Object.entries(SMTP_ENV)) vi.stubEnv(key, value);
     vi.mocked(sendPasswordResetEmail).mockRejectedValueOnce(new Error("smtp down"));
@@ -260,6 +283,60 @@ describe("completePasswordReset", () => {
       .prepare(`SELECT password_hash AS h FROM users WHERE id = 'bg-admin'`)
       .get() as { h: string };
     expect(stillHash.h).toBe("hash");
+  });
+
+  it("denies redemption when the target was deactivated after issuance", async () => {
+    const bundle = openAppDatabase(":memory:");
+    seedUser(bundle.sqlite, "user-1");
+    const issued = issueResetToken(
+      { userId: "user-1", source: "admin", delivery: "operator_handoff" },
+      bundle.db,
+    );
+    bundle.sqlite.prepare(`UPDATE users SET is_active = 0 WHERE id = 'user-1'`).run();
+
+    const result = await completePasswordReset(
+      { rawToken: issued.rawToken, password: "NewPassword!234", ip: "10.3.3.3" },
+      bundle,
+    );
+
+    expect(result).toEqual({ ok: false, message: PASSWORD_RESET_COPY.REDEEM_FAILURE });
+    const row = bundle.sqlite
+      .prepare(`SELECT password_hash AS h FROM users WHERE id = 'user-1'`)
+      .get() as { h: string };
+    expect(row.h).toBe("hash");
+    const denials = securityEventRows(bundle.sqlite).filter(
+      (e) => e.type === "password.reset.redeem_denied",
+    );
+    expect(denials).toHaveLength(1);
+    expect(denials[0]!.metadata).toContain("inactive_target");
+  });
+
+  it("denies redemption when the credential was retired to the disabled sentinel after issuance", async () => {
+    const bundle = openAppDatabase(":memory:");
+    seedUser(bundle.sqlite, "user-1");
+    const issued = issueResetToken(
+      { userId: "user-1", source: "self_service", delivery: "email" },
+      bundle.db,
+    );
+    bundle.sqlite
+      .prepare(`UPDATE users SET password_hash = 'disabled:abc123' WHERE id = 'user-1'`)
+      .run();
+
+    const result = await completePasswordReset(
+      { rawToken: issued.rawToken, password: "NewPassword!234", ip: "10.4.4.4" },
+      bundle,
+    );
+
+    expect(result).toEqual({ ok: false, message: PASSWORD_RESET_COPY.REDEEM_FAILURE });
+    const row = bundle.sqlite
+      .prepare(`SELECT password_hash AS h FROM users WHERE id = 'user-1'`)
+      .get() as { h: string };
+    expect(row.h).toBe("disabled:abc123");
+    const denials = securityEventRows(bundle.sqlite).filter(
+      (e) => e.type === "password.reset.redeem_denied",
+    );
+    expect(denials).toHaveLength(1);
+    expect(denials[0]!.metadata).toContain("credential_disabled");
   });
 
   it("rate limits redemption failures per IP", async () => {
