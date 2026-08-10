@@ -36,7 +36,7 @@ export SUPERSCRIBER_E2E_CONTAINER_DB_PATH="${SUPERSCRIBER_E2E_CONTAINER_DB_PATH:
 
 # The OIDC fake provider runs as a sidecar sharing the app container's network
 # namespace, so the app, the browser, and the suite all see one identical
-# issuer: http://127.0.0.1:4105/ (loopback inside the shared netns, published
+# issuer: http://127.0.0.1:${OIDC_PORT}/ (loopback inside the shared netns, published
 # to the host for Playwright).
 OIDC_PORT="${SUPERSCRIBER_E2E_OIDC_PORT:-4105}"
 OIDC_SIDECAR="${CONTAINER_NAME}-oidc"
@@ -138,7 +138,7 @@ JSON
     --detach \
     --name "${CONTAINER_NAME}" \
     --publish "${PORT}:3000" \
-    --publish "${OIDC_PORT}:4105" \
+    --publish "${OIDC_PORT}:${OIDC_PORT}" \
     --volume "${DATA_DIR}:/app/data" \
     --volume "${OIDC_DIR}:/run/oidc:ro" \
     --env NEXTAUTH_URL="${APP_URL}" \
@@ -172,7 +172,7 @@ JSON
     --network "container:${CONTAINER_NAME}" \
     --entrypoint node \
     --volume "${OIDC_DIR}/fake-oidc-sidecar.mjs:/fake-oidc-sidecar.mjs:ro" \
-    "${IMAGE}" /fake-oidc-sidecar.mjs 4105 >/dev/null
+    "${IMAGE}" /fake-oidc-sidecar.mjs "${OIDC_PORT}" >/dev/null
 
   local oidc_attempts=0
   until python3 "${REPO_ROOT}/scripts/http_probe.py" "http://127.0.0.1:${OIDC_PORT}/.well-known/openid-configuration"; do
