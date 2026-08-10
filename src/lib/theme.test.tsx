@@ -181,6 +181,46 @@ describe("useThemePreference", () => {
     expect(window.localStorage.getItem(STORAGE_KEY)).toBe("system");
   });
 
+  it("keeps and re-POSTs a stored local choice the server never saw", async () => {
+    // An earlier setTheme POST failed offline; the stale server copy must
+    // not stomp the local choice on the next mount, and the hook re-POSTs
+    // the local choice so the server self-heals.
+    window.localStorage.setItem(STORAGE_KEY, "dark");
+    applyThemeToDocument(readBootTheme());
+    const get = deferred<Response>();
+    const fetchSpy = vi
+      .spyOn(globalThis, "fetch")
+      .mockImplementation((input, init) => {
+        if (init?.method === "POST") {
+          return Promise.resolve(new Response("{}", { status: 200 }));
+        }
+        void input;
+        return get.promise as Promise<Response>;
+      });
+
+    render(<Probe />);
+    expect(await screen.findByTestId("theme")).toHaveTextContent("dark");
+
+    await act(async () => {
+      get.resolve(
+        new Response(JSON.stringify({ themePreference: "light" }), {
+          status: 200,
+        }),
+      );
+    });
+
+    expect((await screen.findByTestId("theme")).textContent).toBe("dark");
+    expect(document.documentElement.getAttribute("data-theme")).toBe("dark");
+    expect(window.localStorage.getItem(STORAGE_KEY)).toBe("dark");
+    const repost = fetchSpy.mock.calls
+      .map((call) => call[1])
+      .find((init) => init?.method === "POST");
+    expect(repost).toBeDefined();
+    expect(JSON.parse(String(repost?.body))).toEqual({
+      themePreference: "dark",
+    });
+  });
+
   it("keeps a local choice made while the server sync was in flight", async () => {
     const get = deferred<Response>();
     const fetchSpy = vi

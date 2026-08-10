@@ -7,6 +7,8 @@ import { useCallback, useEffect, useRef, useState } from "react";
 //     bootstrap script so the first frame is already correct;
 //  2. users.theme_preference (server, durable per-user): synced by this hook
 //     - GET on shell mount seeds fresh devices, POST on change persists.
+//     A stored local choice that disagrees with the server (an earlier
+//     POST failed) wins and is re-POSTed so the server self-heals.
 // Values: "system" (follow OS) | "light" | "dark". data-theme on <html> is
 // the rendering contract (tokens.css); "system" removes the attribute.
 
@@ -37,6 +39,14 @@ export function applyThemeToDocument(theme: ThemePreference) {
   root.style.colorScheme = theme === "system" ? "" : theme;
 }
 
+function postThemePreference(value: ThemePreference) {
+  void fetch("/api/preferences/theme", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ themePreference: value }),
+  }).catch(() => undefined);
+}
+
 export function useThemePreference() {
   const [theme, setThemeState] = useState<ThemePreference>("system");
   // Local-mutation counter: setTheme bumps it, and the GET resolution
@@ -60,19 +70,38 @@ export function useThemePreference() {
         }
         if (localVersionRef.current !== versionAtStart) {
           // The local copy won a race while the fetch was in flight - the
-          // newest local intent wins and was persisted by its setter.
+          // newest local intent wins and its setter already fired the POST.
           return;
         }
         const value =
           body.themePreference === "light" || body.themePreference === "dark"
             ? body.themePreference
             : "system";
-        setThemeState(value);
-        if (readBootTheme() === value) {
+        let stored: string | null = null;
+        try {
+          stored = window.localStorage.getItem(STORAGE_KEY);
+        } catch {
+          stored = null;
+        }
+        const local =
+          stored === "light" || stored === "dark" || stored === "system"
+            ? stored
+            : null;
+        if (local === null) {
+          // No prior local choice: the server copy seeds this device.
+          setThemeState(value);
+          if (stored !== null || value !== "system") {
+            window.localStorage.setItem(STORAGE_KEY, value);
+            applyThemeToDocument(value);
+          }
           return;
         }
-        window.localStorage.setItem(STORAGE_KEY, value);
-        applyThemeToDocument(value);
+        setThemeState(local);
+        if (local !== value) {
+          // The stored local choice never reached the server (its POST
+          // failed); keep it visible and re-POST so the server self-heals.
+          postThemePreference(local);
+        }
       })
       .catch(() => undefined);
 
@@ -86,11 +115,7 @@ export function useThemePreference() {
     setThemeState(value);
     window.localStorage.setItem(STORAGE_KEY, value);
     applyThemeToDocument(value);
-    void fetch("/api/preferences/theme", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ themePreference: value }),
-    }).catch(() => undefined);
+    postThemePreference(value);
   }, []);
 
   return { theme, setTheme };
