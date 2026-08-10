@@ -1240,4 +1240,119 @@ describe("IngestFlow", () => {
       );
     });
   });
+
+  it("locks the picker and source switcher during a batch and frees them - and capture - afterwards", async () => {
+    const user = userEvent.setup();
+
+    let releaseChunk!: () => void;
+    const chunkGate = new Promise<void>((resolve) => {
+      releaseChunk = resolve;
+    });
+
+    vi.mocked(fetch).mockImplementation((input) => {
+      const url = String(input);
+      if (url === "/api/ingest/sessions") {
+        return mockJsonResponse({ ok: true, status: buildStatus() });
+      }
+      if (url.includes("/chunk")) {
+        return chunkGate.then(() =>
+          mockJsonResponse({
+            ok: true,
+            status: buildStatus({ bytesReceived: 6, progressPercent: 100, nextAction: "finalize" }),
+          }),
+        );
+      }
+      if (url.includes("/finalize")) {
+        return mockJsonResponse({
+          ok: true,
+          nextPath: "/workspace",
+          status: buildStatus({ nextAction: "none", progressPercent: 100 }),
+        });
+      }
+      return Promise.reject(new Error(`Unexpected fetch: ${url}`));
+    });
+
+    renderFlow();
+    await user.type(screen.getByLabelText("Title"), "Batch gating");
+    await user.selectOptions(screen.getByLabelText("Language"), "english");
+    const input = screen.getByLabelText("Audio or video file", {
+      selector: "input",
+    }) as HTMLInputElement;
+    await user.upload(input, [
+      new File([new ArrayBuffer(6)], "alpha.wav", { type: "audio/wav" }),
+      new File([new ArrayBuffer(6)], "delta.wav", { type: "audio/wav" }),
+    ]);
+
+    await user.click(screen.getByRole("button", { name: "Upload file" }));
+
+    await waitFor(() => {
+      expect(input).toBeDisabled();
+    });
+    expect(screen.getByRole("radio", { name: /Upload file/ })).toBeDisabled();
+    expect(screen.getByRole("radio", { name: /Record audio/ })).toBeDisabled();
+
+    releaseChunk();
+    await waitFor(() => {
+      expect(
+        screen.getByText("Batch complete: 2 recordings queued for transcription."),
+      ).toBeVisible();
+    });
+
+    expect(input).toBeEnabled();
+    expect(screen.getByRole("radio", { name: /Upload file/ })).toBeEnabled();
+
+    await user.click(screen.getByRole("radio", { name: /Record audio/ }));
+    expect(screen.getByRole("button", { name: "Start recording" })).toBeEnabled();
+  });
+
+  it("clears a stale resume notice once the batch supersedes the pending ingest", async () => {
+    const user = userEvent.setup();
+    mockBatchServer();
+
+    window.localStorage.setItem(
+      "superscriber.pendingIngest",
+      JSON.stringify({
+        sessionId: "session-stale",
+        fileName: "stale.wav",
+        fileSize: 6,
+        fileType: "audio/wav",
+        fileLastModified: 1234,
+        source: "upload",
+      }),
+    );
+    vi.mocked(fetch).mockImplementationOnce(() =>
+      mockJsonResponse({
+        ok: true,
+        status: buildStatus({ sessionId: "session-stale", bytesReceived: 3, progressPercent: 50 }),
+      }),
+    );
+
+    renderFlow();
+
+    expect(
+      await screen.findByText("Resume upload for stale.wav from 3 B committed."),
+    ).toBeVisible();
+
+    await user.type(screen.getByLabelText("Title"), "Batch supersedes");
+    await user.selectOptions(screen.getByLabelText("Language"), "english");
+    const input = screen.getByLabelText("Audio or video file", {
+      selector: "input",
+    }) as HTMLInputElement;
+    await user.upload(input, [
+      new File([new ArrayBuffer(6)], "alpha.wav", { type: "audio/wav" }),
+      new File([new ArrayBuffer(6)], "delta.wav", { type: "audio/wav" }),
+    ]);
+
+    await user.click(screen.getByRole("button", { name: "Upload file" }));
+
+    await waitFor(() => {
+      expect(
+        screen.getByText("Batch complete: 2 recordings queued for transcription."),
+      ).toBeVisible();
+    });
+    expect(
+      screen.queryByText("Resume upload for stale.wav from 3 B committed."),
+    ).not.toBeInTheDocument();
+    expect(window.localStorage.getItem("superscriber.pendingIngest")).toBeNull();
+  });
 });

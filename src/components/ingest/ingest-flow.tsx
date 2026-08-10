@@ -464,6 +464,7 @@ export function IngestFlow({
     }
 
     clearPendingIngest();
+    setResumeNotice(null);
     setUploadFiles([]);
     setUploadFile(null);
     setFlowState("complete");
@@ -595,6 +596,7 @@ export function IngestFlow({
 
         <form className="ingest-form" onSubmit={handleSubmit}>
           <SourceChoice
+            disabled={transferBusy}
             onChange={(nextSource) => {
               setSource(nextSource);
               if (nextSource !== "record") {
@@ -675,6 +677,7 @@ export function IngestFlow({
                   aria-describedby={errors.file ? "upload-file-error" : "upload-file-note"}
                   aria-invalid={errors.file ? "true" : "false"}
                   className="interactive-target"
+                  disabled={transferBusy}
                   id="upload-file"
                   multiple
                   onChange={(event) => {
@@ -705,7 +708,7 @@ export function IngestFlow({
               <div className="field" id="recording-capture">
                 <p className="field-label">Record audio</p>
                 <CaptureAudio
-                  disabled={flowState !== "idle"}
+                  disabled={transferBusy}
                   onRecordingCleared={() => setRecordedFile(null)}
                   onRecordingReady={(file) => setRecordedFile(file)}
                 />
