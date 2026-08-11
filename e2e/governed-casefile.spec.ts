@@ -64,6 +64,10 @@ test.describe.serial("governed casefile workflows", () => {
   test("moves one revision through withdrawal, changes, approval, export, and reopen", async ({
     page,
   }) => {
+    // Under loaded hosts the 90s default was observed to expire on the export
+    // byte-generation loop (DOCX rendering is CPU-heavy); same guard class as
+    // the action-mode test below.
+    test.setTimeout(240_000);
     await bootstrapAndLogin(page, adminUser);
     const recordingId = await uploadFixture(page, { title: "Governed lifecycle casefile" });
     await createAndAssignUsers(page, recordingId);
