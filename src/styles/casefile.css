@@ -701,6 +701,13 @@ html {
 
   .casefile-main[data-revision="true"] .media-transport__wave-stage {
     padding: var(--space-1);
+    min-height: calc(84px + var(--space-2));
+  }
+
+  .casefile-main[data-revision="true"] .media-transport__wave-overlay {
+    top: calc(var(--space-1) + 1px);
+    left: calc(var(--space-1) + 1px);
+    right: calc(var(--space-1) + 1px);
   }
 
   .casefile-main[data-revision="true"] .media-transport {
