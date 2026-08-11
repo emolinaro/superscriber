@@ -1,4 +1,4 @@
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { expect, test } from "@playwright/test";
 import {
@@ -39,6 +39,22 @@ function activeAdminCount() {
   )[0]!.count;
 }
 
+function evidencePath(filename: string) {
+  const evidenceDir = process.env.NO_MISTAKES_EVIDENCE_DIR?.trim();
+  if (!evidenceDir) {
+    return null;
+  }
+  mkdirSync(evidenceDir, { recursive: true });
+  return join(evidenceDir, filename);
+}
+
+async function captureEvidenceScreenshot(page: import("@playwright/test").Page, filename: string) {
+  const path = evidencePath(filename);
+  if (path) {
+    await page.screenshot({ path, fullPage: true });
+  }
+}
+
 test.describe.serial("administrator recovery", () => {
   test.afterAll(() => {
     // Restore the shared fixture surface for every later spec: the original
@@ -68,6 +84,7 @@ test.describe.serial("administrator recovery", () => {
       page.getByText(/no active administrator remains/i).first(),
     ).toBeVisible();
     await expect(page.getByLabel("Operator claim token")).toBeVisible();
+    await captureEvidenceScreenshot(page, "01-administrator-recovery-pane.png");
 
     const tokenPath = adminClaimTokenPath();
     expect(existsSync(tokenPath)).toBe(true);
@@ -94,6 +111,7 @@ test.describe.serial("administrator recovery", () => {
         exact: true,
       }),
     ).toBeVisible();
+    await captureEvidenceScreenshot(attackerPage, "02-public-attacker-refused.png");
     await attackerContext.close();
 
     expect(activeAdminCount()).toBe(0);
@@ -145,6 +163,7 @@ test.describe.serial("administrator recovery", () => {
         "Administrator recovery is complete. Sign in with the admin account you just claimed.",
       ),
     ).toBeVisible();
+    await captureEvidenceScreenshot(page, "03-recovery-complete.png");
 
     // The proof is consumed on use.
     expect(existsSync(adminClaimTokenPath())).toBe(false);
@@ -153,6 +172,7 @@ test.describe.serial("administrator recovery", () => {
     await expect(page.getByRole("navigation", { name: "Primary" })).toContainText(
       "Administration",
     );
+    await captureEvidenceScreenshot(page, "04-recovered-admin-signed-in.png");
 
     const successes = queryRuntimeRows<{ outcome: string; user_id: string }>(
       "select outcome, user_id from security_events where type = ? and outcome = ?",
@@ -169,5 +189,41 @@ test.describe.serial("administrator recovery", () => {
       page.getByRole("heading", { name: "First-time access" }),
     ).toBeVisible();
     await expect(page.getByLabel("Operator claim token")).toHaveCount(0);
+    await captureEvidenceScreenshot(page, "05-recovery-door-closed.png");
+
+    const stateEvidencePath = evidencePath("admin-recovery-state.json");
+    if (stateEvidencePath) {
+      const recoveryUser = queryRuntimeRows<{
+        email: string;
+        role: string;
+        isActive: number;
+      }>("select email, role, is_active as isActive from users where email = ?", [
+        recoveryAdmin.email,
+      ]);
+      const events = queryRuntimeRows<{
+        outcome: string;
+        sourceZone: string;
+        detail: string;
+        metadata: string;
+      }>(
+        `select outcome, source_zone as sourceZone, detail, metadata
+           from security_events where type = ? order by created_at asc`,
+        ["admin.recovery_claim"],
+      );
+      writeFileSync(
+        stateEvidencePath,
+        `${JSON.stringify(
+          {
+            recoveryUser,
+            activeAdminCount: activeAdminCount(),
+            claimTokenExistsAfterSuccess: existsSync(adminClaimTokenPath()),
+            events,
+          },
+          null,
+          2,
+        )}\n`,
+        "utf8",
+      );
+    }
   });
 });
