@@ -2,6 +2,7 @@ import "@fontsource-variable/public-sans";
 import "@fontsource-variable/newsreader";
 import "@fontsource/ibm-plex-mono/500.css";
 import type { Metadata } from "next";
+import { ChunkReloadGuard } from "@/components/ui/chunk-reload-guard";
 import "./globals.css";
 
 export const metadata: Metadata = {
@@ -28,6 +29,7 @@ export default function RootLayout({
         />
       </head>
       <body>
+        <ChunkReloadGuard />
         <div id="app-root">{children}</div>
       </body>
     </html>

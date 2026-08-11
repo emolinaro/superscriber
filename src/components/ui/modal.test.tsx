@@ -47,10 +47,13 @@ describe("Modal", () => {
     expect(document.querySelector("#app-root")).toHaveAttribute("inert");
     expect(document.body).toHaveStyle({ overflow: "hidden" });
 
+    // Initial focus belongs to the first content control (not chrome).
+    expect(screen.getByRole("button", { name: "Secondary action" })).toHaveFocus();
     await user.tab();
     expect(screen.getByRole("button", { name: "Close modal" })).toHaveFocus();
+    // The chrome corner Close participates at the end of the cycle.
     await user.tab();
-    expect(screen.getByRole("button", { name: "Secondary action" })).toHaveFocus();
+    expect(screen.getByRole("button", { name: "Close dialog" })).toHaveFocus();
 
     await user.keyboard("{Escape}");
     expect(screen.getByRole("button", { name: "Open" })).toHaveFocus();

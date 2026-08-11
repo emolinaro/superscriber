@@ -303,6 +303,43 @@ textarea[aria-invalid="true"] {
   background: var(--color-info-bg);
 }
 
+/* Status banner used by the auth surface, emergency access, and the
+   break-glass panel. The v0.3.0 shell split dropped these rules along with
+   the logo styles; restored on current tokens (borders mixed from the tone
+   foreground so they follow dark mode). */
+.banner {
+  margin: 0;
+  padding: var(--space-3) var(--space-4);
+  border: 1px solid var(--color-line);
+  border-radius: var(--radius-control);
+  background: var(--color-paper);
+  color: var(--color-ink);
+}
+
+.banner[data-tone="ok"] {
+  border-color: color-mix(in srgb, var(--color-success-fg) 25%, transparent);
+  background: var(--color-success-bg);
+  color: var(--color-success-fg);
+}
+
+.banner[data-tone="warn"] {
+  border-color: color-mix(in srgb, var(--color-warning-fg) 25%, transparent);
+  background: var(--color-warning-bg);
+  color: var(--color-warning-fg);
+}
+
+.banner[data-tone="danger"] {
+  border-color: color-mix(in srgb, var(--color-danger-fg) 25%, transparent);
+  background: var(--color-danger-bg);
+  color: var(--color-danger-fg);
+}
+
+.banner[data-tone="info"] {
+  border-color: color-mix(in srgb, var(--color-info-fg) 25%, transparent);
+  background: var(--color-info-bg);
+  color: var(--color-info-fg);
+}
+
 @media (max-width: 767px), (max-height: 767px) and (pointer: coarse) {
   :root {
     --page-gutter: 16px;

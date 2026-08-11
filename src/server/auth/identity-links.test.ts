@@ -30,7 +30,7 @@ function setup() {
 
 function linkRows(sqlite: import("better-sqlite3").Database) {
   return sqlite
-    .prepare(`SELECT user_id AS userId, issuer, subject, status, change_reason AS changeReason FROM external_identities ORDER BY linked_at, id`)
+    .prepare(`SELECT user_id AS userId, issuer, subject, status, change_reason AS changeReason FROM external_identities ORDER BY linked_at, rowid`)
     .all() as Array<{ userId: string; issuer: string; subject: string; status: string; changeReason: string }>;
 }
 

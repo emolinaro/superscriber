@@ -547,7 +547,7 @@ export async function ensureLocalAccount(page: Page, user: LocalUser) {
 
   if (await dialog.isVisible()) {
     if (await accountVisible(page, user)) {
-      await dialog.getByRole("button", { name: "Close" }).click();
+      await dialog.getByRole("button", { name: "Close", exact: true }).click();
       await expect(dialog).toHaveCount(0);
       await expect(page.getByRole("cell", { name: user.email })).toBeVisible();
       return;
