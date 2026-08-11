@@ -136,15 +136,13 @@ function LedgerTable({
               <UpdatedTime row={row} />
             </td>
             <td>
-              {row.actionLabel !== null ? (
-                <Link
-                  aria-label={row.title}
-                  className="recording-action interactive-target"
-                  href={row.href}
-                >
-                  {row.actionLabel}
-                </Link>
-              ) : null}
+              <Link
+                aria-label={row.title}
+                className="recording-action interactive-target"
+                href={row.href}
+              >
+                {row.actionLabel ?? "Open record"}
+              </Link>
             </td>
           </tr>
         ))}
@@ -212,15 +210,13 @@ function LedgerList({
                   </dd>
                 </div>
               </dl>
-              {row.actionLabel !== null ? (
-                <Link
-                  aria-label={row.title}
-                  className="recording-action interactive-target"
-                  href={row.href}
-                >
-                  {row.actionLabel}
-                </Link>
-              ) : null}
+              <Link
+                aria-label={row.title}
+                className="recording-action interactive-target"
+                href={row.href}
+              >
+                {row.actionLabel ?? "Open record"}
+              </Link>
             </article>
           </li>
         );

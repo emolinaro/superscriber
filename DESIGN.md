@@ -203,6 +203,8 @@ All roles share one ledger framework with role-specific tabs, a state-aware next
 - Approver: `To decide`, `Waiting`, `Completed`
 - Admin: `All`, `Needs attention`, `Review`, `Approval`, `Approved`
 
+Every desktop ledger row and narrow card exposes exactly one casefile link. Its accessible name is the recording title, while its visible text is the server-provided role action or `Open record` when no role action applies. Clicking anywhere in the row or card follows that link; keyboard users retain the single labeled link as the focus target. The next-action strip remains a separate, role-valid shortcut and never inherits the row-wide target.
+
 The next-action strip appears only when at least one role-valid actionable row exists; it never falls back to a waiting, completed, approved, or merely visible recording, and the Completed tab is excluded from actionable counts. State badges always combine text with an icon or shape; datetimes display as explicit UTC.
 
 ### Ingest

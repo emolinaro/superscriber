@@ -243,6 +243,21 @@
   text-align: center;
 }
 
+/* Scope the overlay to ledger containers because the next-action strip reuses
+   .recording-action and must keep its own hit area. The link remains the only
+   keyboard and assistive-technology target. */
+.recording-table tbody tr,
+.recording-card {
+  position: relative;
+}
+
+.recording-table tbody .recording-action::after,
+.recording-card .recording-action::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+}
+
 .recording-list {
   list-style: none;
   display: grid;
