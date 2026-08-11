@@ -66,13 +66,27 @@ describe("model catalog route (demo-model-tier-picker)", () => {
 
     const body = (await response.json()) as {
       tiers: Array<{ id: string; available: boolean; default: boolean }>;
-      defaultModel: string;
+      configuredModel: string;
+      defaultModel: string | null;
     };
     expect(body.tiers).toHaveLength(9);
     const byId = Object.fromEntries(body.tiers.map((tier) => [tier.id, tier]));
     expect(byId.tiny.available).toBe(true);
     expect(byId.tiny.default).toBe(true);
     expect(byId["large-v3"].available).toBe(false);
+    expect(body.configuredModel).toBe("small");
     expect(body.defaultModel).toBe("tiny");
+  });
+
+  it("keeps an unavailable configured model separate from the nullable picker default", async () => {
+    vi.mocked(getActivePrincipal).mockResolvedValue(UPLOADER);
+    process.env.SUPERSCRIBER_TRANSCRIBE_MODEL = "large-v3";
+
+    const response = await callGet();
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({
+      configuredModel: "large-v3",
+      defaultModel: null,
+    });
   });
 });

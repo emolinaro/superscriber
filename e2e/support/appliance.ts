@@ -1,7 +1,7 @@
 import { execFileSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, readdirSync, rmSync, statSync, unlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { dirname, join } from "node:path";
+import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path";
 import Database from "better-sqlite3";
 import { expect, type Locator, type Page } from "@playwright/test";
 
@@ -352,17 +352,43 @@ with open(os.path.join(dir_path, "config.json"), "w", encoding="utf8") as handle
     return;
   }
 
-  // Host lane: the server process resolves models/ against its own cwd, which
-  // may be the repo root (npm run start is not usable with output:standalone)
-  // or the .next/standalone dir (node .next/standalone/server.js). Cover both.
-  for (const base of [
-    join(process.cwd(), "models", tierId),
-    join(process.cwd(), ".next", "standalone", "models", tierId),
-  ]) {
-    mkdirSync(base, { recursive: true });
-    writeFileSync(join(base, "model.bin"), "bin");
-    writeFileSync(join(base, "config.json"), "{}");
+  const base = join(hostRuntimeModelRoot(), tierId);
+  mkdirSync(base, { recursive: true });
+  writeFileSync(join(base, "model.bin"), "bin");
+  writeFileSync(join(base, "config.json"), "{}");
+}
+
+function hostRuntimeModelRoot() {
+  const e2eRoot = process.env.SUPERSCRIBER_E2E_MODEL_DIR?.trim();
+  const serverRoot = process.env.SUPERSCRIBER_TRANSCRIBE_MODEL_DIR?.trim();
+  if (!e2eRoot || !serverRoot || resolve(e2eRoot) !== resolve(serverRoot)) {
+    throw new Error(
+      "Host E2E requires matching SUPERSCRIBER_E2E_MODEL_DIR and SUPERSCRIBER_TRANSCRIBE_MODEL_DIR values.",
+    );
   }
+
+  const root = resolve(e2eRoot);
+  const safeParent = resolve(process.cwd(), ".tmp");
+  const relativeRoot = relative(safeParent, root);
+  if (
+    !relativeRoot ||
+    relativeRoot.startsWith("..") ||
+    isAbsolute(relativeRoot) ||
+    !basename(root).startsWith("e2e-models.")
+  ) {
+    throw new Error("Host E2E model directories must use .tmp/e2e-models.<run-id>.");
+  }
+  return root;
+}
+
+export function resetRuntimeModelTiers() {
+  if (!e2eContainerName()) {
+    rmSync(hostRuntimeModelRoot(), { recursive: true, force: true });
+  }
+}
+
+export function cleanupRuntimeModelTiers() {
+  resetRuntimeModelTiers();
 }
 
 export function queryRuntimeRows<Row>(sql: string, params: string[]): Row[] {

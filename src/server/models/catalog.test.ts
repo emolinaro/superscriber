@@ -46,9 +46,8 @@ describe("model catalog (demo-model-tier-picker)", () => {
 
     const catalog = listModelCatalog();
     expect(catalog.tiers.every((tier) => !tier.available)).toBe(true);
-    // Configured default not provisioned -> no default tier; catalog stays
-    // honest (falls back to the configured name so ops sees the intent).
-    expect(catalog.defaultModel).toBe("large-v3");
+    expect(catalog.configuredModel).toBe("large-v3");
+    expect(catalog.defaultModel).toBeNull();
     expect(catalog.tiers.every((tier) => !tier.default)).toBe(true);
   });
 
@@ -56,10 +55,11 @@ describe("model catalog (demo-model-tier-picker)", () => {
     snapshotEnv();
     const root = mkdtempSync(join(tmpdir(), "model-catalog-full-"));
     provision(root, "tiny", "small", "large-v3-turbo");
-    delete process.env.SUPERSCRIBER_TRANSCRIBE_MODEL;
+    process.env.SUPERSCRIBER_TRANSCRIBE_MODEL = "medium";
     process.env.SUPERSCRIBER_TRANSCRIBE_MODEL_DIR = root;
 
     const catalog = listModelCatalog();
+    expect(catalog.configuredModel).toBe("medium");
     expect(isModelProvisioned("small")).toBe(true);
     expect(isModelProvisioned("large-v3")).toBe(false);
     expect(isModelProvisioned("not-a-model")).toBe(false);
@@ -88,6 +88,9 @@ describe("model catalog (demo-model-tier-picker)", () => {
     process.env.SUPERSCRIBER_TRANSCRIBE_MODEL_DIR = root;
     process.env.SUPERSCRIBER_TRANSCRIBE_MODEL = "small";
 
-    expect(listModelCatalog().defaultModel).toBe("small");
+    expect(listModelCatalog()).toMatchObject({
+      configuredModel: "small",
+      defaultModel: "small",
+    });
   });
 });

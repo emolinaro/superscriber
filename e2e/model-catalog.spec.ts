@@ -3,8 +3,10 @@ import {
   adminUser,
   bootstrapAndLogin,
   buildSilentWavBuffer,
+  cleanupRuntimeModelTiers,
   provisionRuntimeModelTier,
   queryRuntimeRows,
+  resetRuntimeModelTiers,
   setUploadFile,
 } from "./support/appliance";
 
@@ -25,6 +27,14 @@ const CATALOG_TIERS = [
 ];
 
 test.describe.serial("model catalog tier picker (demo-model-tier-picker)", () => {
+  test.beforeAll(() => {
+    resetRuntimeModelTiers();
+  });
+
+  test.afterAll(() => {
+    cleanupRuntimeModelTiers();
+  });
+
   test("shows all nine faster-whisper tiers with unprovisioned ones disabled, and none preselected", async ({
     page,
   }) => {
@@ -43,6 +53,7 @@ test.describe.serial("model catalog tier picker (demo-model-tier-picker)", () =>
     await advanced.getByText("Advanced settings").click();
     const modelSelect = advanced.locator("#recording-model");
     await expect(modelSelect).toBeEnabled();
+    await expect(modelSelect).toHaveValue("");
 
     for (const tierId of CATALOG_TIERS) {
       const option = modelSelect.locator(`option[value="${tierId}"]`);
@@ -63,7 +74,7 @@ test.describe.serial("model catalog tier picker (demo-model-tier-picker)", () =>
 
     const tinyOption = refreshedSelect.locator(`option[value="tiny"]`);
     await expect(tinyOption).toBeEnabled();
-    expect(await tinyOption.textContent()).toContain("default (best quality on this host)");
+    expect(await tinyOption.textContent()).toContain("default");
     // Best-quality provisioned tier is preselected by the server answer.
     await expect(refreshedSelect).toHaveValue("tiny");
 

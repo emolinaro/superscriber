@@ -1,9 +1,11 @@
 import importlib.util
 import sys
 import tempfile
+import weakref
 from pathlib import Path
 from types import SimpleNamespace
 import unittest
+from unittest.mock import patch
 
 
 def load_worker_main():
@@ -68,9 +70,12 @@ class TranscriberLanguageBoundaryTest(unittest.TestCase):
     def test_transcribe_passes_normalized_language_code_to_model(self):
         worker_main = load_worker_main()
         fake_model = FakeModel()
-        transcriber = worker_main.Transcriber(SimpleNamespace(device="cpu"))
+        transcriber = worker_main.Transcriber(
+            SimpleNamespace(device="cpu", model_name="tiny")
+        )
         transcriber._model = fake_model
         transcriber._model_path = Path("/tmp/tiny")
+        transcriber._model_name = "tiny"
 
         with tempfile.NamedTemporaryFile() as media_file:
             _summary, segments, diarization_status = transcriber.transcribe(
@@ -83,6 +88,61 @@ class TranscriberLanguageBoundaryTest(unittest.TestCase):
         self.assertEqual(fake_model.calls[0]["language"], "en")
         self.assertEqual(len(segments), 1)
         self.assertEqual(diarization_status, "degraded")
+
+
+class TranscriberModelLifecycleTest(unittest.TestCase):
+    def test_releases_the_loaded_model_before_switching_and_reloads_default_after_failure(self):
+        worker_main = load_worker_main()
+        config = worker_main.WorkerConfig(
+            base_url="http://localhost",
+            worker_id="worker-test",
+            poll_seconds=1,
+            heartbeat_seconds=1,
+            model_name="small",
+            model_root=Path("/models"),
+            offline=True,
+            allow_runtime_download=False,
+            allow_stub_fallback=False,
+            secret=None,
+            device="cpu",
+            device_reason="test",
+            compute_type="int8",
+        )
+        transcriber = worker_main.Transcriber(config)
+        loaded_default = FakeModel()
+        loaded_default_ref = weakref.ref(loaded_default)
+        transcriber._model = loaded_default
+        transcriber._model_path = Path("/models/small")
+        transcriber._model_name = "small"
+        del loaded_default
+
+        constructed = []
+        loaded_default_alive = []
+
+        def build_model(model_path, **_kwargs):
+            constructed.append(Path(model_path).name)
+            if Path(model_path).name == "tiny":
+                loaded_default_alive.append(loaded_default_ref() is not None)
+                raise RuntimeError("override failed to load")
+            return FakeModel()
+
+        faster_whisper = SimpleNamespace(WhisperModel=build_model)
+        with (
+            patch.object(
+                worker_main,
+                "ensure_local_model",
+                side_effect=lambda active_config: active_config.model_path,
+            ),
+            patch.object(worker_main, "configure_model_environment"),
+            patch.dict(sys.modules, {"faster_whisper": faster_whisper}),
+        ):
+            model, model_path, used_default_instead = transcriber._load_model("tiny")
+
+        self.assertIsInstance(model, FakeModel)
+        self.assertEqual(model_path, Path("/models/small"))
+        self.assertTrue(used_default_instead)
+        self.assertEqual(loaded_default_alive, [False])
+        self.assertEqual(constructed, ["tiny", "small"])
 
 
 if __name__ == "__main__":

@@ -1358,6 +1358,7 @@ describe("IngestFlow", () => {
 });
 
 const MODEL_CATALOG = {
+  configuredModel: "small",
   defaultModel: "large-v3-turbo",
   tiers: [
     {
@@ -1384,11 +1385,15 @@ const MODEL_CATALOG = {
   ],
 };
 
-function mockCatalogServer() {
+function mockCatalogServer(catalog: typeof MODEL_CATALOG | {
+  configuredModel: string;
+  defaultModel: null;
+  tiers: typeof MODEL_CATALOG.tiers;
+} = MODEL_CATALOG) {
   vi.mocked(fetch).mockImplementation((input, init) => {
     const url = String(input);
     if (url === "/api/models/catalog") {
-      return mockJsonResponse(MODEL_CATALOG);
+      return mockJsonResponse(catalog);
     }
     if (url === "/api/ingest/sessions" && init?.method === "POST") {
       return mockJsonResponse({ ok: true, status: buildStatus() });
@@ -1448,7 +1453,7 @@ describe("model tier picker (demo-model-tier-picker)", () => {
     }) as HTMLOptionElement;
     expect(unprovisioned.disabled).toBe(true);
     expect(
-      screen.getByRole("option", { name: "large-v3-turbo - default (best quality on this host)" }),
+      screen.getByRole("option", { name: "large-v3-turbo - default" }),
     ).toBeEnabled();
     expect(screen.getByRole("option", { name: "tiny" })).toBeEnabled();
     // The server-named default is preselected.
@@ -1458,6 +1463,47 @@ describe("model tier picker (demo-model-tier-picker)", () => {
     expect(screen.getByRole("list", { name: "Model speed and quality notes" })).toHaveTextContent(
       "large-v3: Best accuracy; high-stakes recordings · Slowest on CPU (largest model) - not provisioned here",
     );
+    expect(screen.getByText("Configured worker model: small.")).toBeVisible();
+    expect(screen.getByText(/If it cannot run, the worker falls back/)).toHaveTextContent(
+      "revision summary",
+    );
+  });
+
+  it("keeps the selection empty when no tier is provisioned", async () => {
+    const user = userEvent.setup();
+    mockCatalogServer({
+      configuredModel: "large-v3",
+      defaultModel: null,
+      tiers: MODEL_CATALOG.tiers.map((tier) => ({
+        ...tier,
+        available: false,
+        default: false,
+      })),
+    });
+    renderFlow();
+
+    await user.click(screen.getByText("Advanced settings"));
+    const select = await screen.findByRole("combobox", { name: "Transcription model" });
+    await waitFor(() => expect(select).toBeEnabled());
+    expect(select).toHaveValue("");
+    expect(screen.getByRole("option", { name: "No provisioned models available" })).toBeEnabled();
+
+    await user.type(screen.getByLabelText("Title"), "Unprovisioned host interview");
+    await user.selectOptions(screen.getByLabelText("Language"), "english");
+    await user.upload(
+      screen.getByLabelText("Audio or video file"),
+      new File(["abcdef"], "clip.wav", { type: "audio/wav" }),
+    );
+    await user.click(screen.getByRole("button", { name: "Upload file" }));
+
+    await waitFor(() => expect(mockPush).toHaveBeenCalled());
+    const sessionCall = vi
+      .mocked(fetch)
+      .mock.calls.find(
+        ([input, init]) => String(input) === "/api/ingest/sessions" && init?.method === "POST",
+      );
+    const body = JSON.parse(String(sessionCall?.[1]?.body)) as Record<string, unknown>;
+    expect(body.transcriptModel).toBeNull();
   });
 
   it("sends the chosen tier on the ingest session and leaves untouched picks at the engine default", async () => {

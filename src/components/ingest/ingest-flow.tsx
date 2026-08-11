@@ -86,7 +86,8 @@ export function IngestFlow({
       available: boolean;
       default: boolean;
     }>;
-    defaultModel: string;
+    configuredModel: string;
+    defaultModel: string | null;
   } | null>(null);
   const [transcriptModel, setTranscriptModel] = useState("");
   // The picker accepts a batch; uploadFile stays the primary file so the
@@ -128,11 +129,12 @@ export function IngestFlow({
           return;
         }
         setModelCatalog(catalog);
-        setTranscriptModel((current) =>
-          current && catalog.tiers.some((tier: { id: string }) => tier.id === current)
-            ? current
-            : catalog.defaultModel,
-        );
+        setTranscriptModel((current) => {
+          const currentTier = catalog.tiers.find(
+            (tier: { id: string; available: boolean }) => tier.id === current,
+          );
+          return currentTier?.available ? current : catalog.defaultModel ?? "";
+        });
       })
       .catch(() => undefined);
   }, []);
@@ -729,6 +731,9 @@ export function IngestFlow({
                 value={transcriptModel}
               >
                 {!modelCatalog ? <option value="">Checking available models...</option> : null}
+                {modelCatalog && !modelCatalog.defaultModel ? (
+                  <option value="">No provisioned models available</option>
+                ) : null}
                 {modelCatalog
                   ? modelCatalog.tiers.map((tier) => (
                       <option
@@ -737,7 +742,7 @@ export function IngestFlow({
                         value={tier.id}
                       >
                         {tier.id}
-                        {tier.default ? " - default (best quality on this host)" : ""}
+                        {tier.default ? " - default" : ""}
                         {!tier.available ? " - not available on this host" : ""}
                       </option>
                     ))
@@ -754,9 +759,13 @@ export function IngestFlow({
                 </ul>
               ) : null}
               <p className="field-note" id="recording-model-note">
-                Overrides only the transcription engine for this recording; the worker runs
-                exactly what you select (server-checked against provisioned models).
+                The selected model is requested for this recording. If it cannot run, the worker
+                falls back to the configured default or stub engine and discloses that in the
+                revision summary.
               </p>
+              {modelCatalog ? (
+                <p className="field-note">Configured worker model: {modelCatalog.configuredModel}.</p>
+              ) : null}
             </div>
           </details>
 

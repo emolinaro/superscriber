@@ -48,7 +48,8 @@ export function isModelProvisioned(tierId: string): boolean {
 
 export function listModelCatalog(): {
   tiers: ModelTier[];
-  defaultModel: string;
+  configuredModel: string;
+  defaultModel: string | null;
 } {
   const tiers = TIER_META.map((tier) => ({
     ...tier,
@@ -56,16 +57,17 @@ export function listModelCatalog(): {
     default: false,
   }));
 
-  const configuredDefault = (process.env.SUPERSCRIBER_TRANSCRIBE_MODEL || "").trim();
-  let defaultModel = "";
-  if (configuredDefault && tiers.some((tier) => tier.id === configuredDefault && tier.available)) {
-    defaultModel = configuredDefault;
+  const configuredModel =
+    (process.env.SUPERSCRIBER_TRANSCRIBE_MODEL || "").trim() || "small";
+  let defaultModel: string | null = null;
+  if (tiers.some((tier) => tier.id === configuredModel && tier.available)) {
+    defaultModel = configuredModel;
   } else {
     // Best available quality wins the default.
     const best = [...tiers]
       .filter((tier) => tier.available)
       .sort((a, b) => b.qualityRank - a.qualityRank)[0];
-    defaultModel = best ? best.id : configuredDefault || "small";
+    defaultModel = best?.id ?? null;
   }
 
   return {
@@ -75,6 +77,7 @@ export function listModelCatalog(): {
       // even when the configured name exists - the UI stays honest.
       default: tier.available && tier.id === defaultModel,
     })),
+    configuredModel,
     defaultModel,
   };
 }
