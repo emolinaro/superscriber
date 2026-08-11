@@ -21,7 +21,7 @@ It runs as a single-institution deployment with local accounts, SQLite persisten
 - Governed decision commands - save draft, submit, withdraw submission, request changes, approve, reopen - with the submitter barred from deciding their own revision
 - Admin read-only oversight by default, plus an explicit, record-bound, audited reviewer/approver action mode for casefile work
 - Append-only assignment history, with approval completing all active assignments atomically
-- Unified resumable ingest (1 MiB chunks) for upload and browser audio recording
+- Unified resumable ingest (1 MiB chunks) for upload and browser audio recording, with host-verified faster-whisper model selection under Advanced settings
 - Audited, policy-gated transcript export in `DOCX`, `TXT`, `MD`, `SRT`, `VTT`, `CSV`, `TSV`, and `JSON` - defaulting to the approved record, with revision-picker export of any revision under the same authority
 - Phone safety mode: status, inbox, read-only casefile, and supported ingest on phones; governed actions require a tablet or desktop
 - SQLite-backed workflow persistence with mounted media storage
@@ -206,6 +206,16 @@ For the internal worker, the main model/runtime controls are:
 - `SUPERSCRIBER_TRANSCRIBE_OFFLINE`
 - `SUPERSCRIBER_TRANSCRIBE_ALLOW_RUNTIME_DOWNLOAD`
 - `SUPERSCRIBER_TRANSCRIBE_ALLOW_STUB_FALLBACK`
+
+`SUPERSCRIBER_TRANSCRIBE_MODEL` names the configured worker default. The ingest model catalog checks `SUPERSCRIBER_TRANSCRIBE_MODEL_DIR` on every request and treats a tier as provisioned only when `<model-dir>/<tier>/model.bin` and `<model-dir>/<tier>/config.json` both exist. When you override the model directory, give the app and worker the same value. Advanced settings disables every unprovisioned tier; it initially selects the configured model when that tier is provisioned, or the best-quality provisioned tier otherwise.
+
+Prefetch another supported tier into the shared model directory by setting it for the prefetch command, for example:
+
+```bash
+SUPERSCRIBER_TRANSCRIBE_MODEL=tiny npm run worker:prefetch
+```
+
+The selected tier is stored with the recording, included as `transcriptModel` in internal-worker claims, and exposed as `recording.transcriptModel` in webhook dispatches. If a stored override can no longer be provisioned or cannot be loaded, the internal worker falls back to its configured default and says so in the revision summary; the configured default itself remains load-or-fail. Explicit stub mode also identifies its fallback in the summary.
 
 For webhook mode, configure:
 
