@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 
-import { cleanup, render, screen } from "@testing-library/react";
+import { cleanup, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { baseSegments, createCasefile } from "./test-fixtures";
@@ -194,9 +194,10 @@ describe("RevisionHistory (demo-governance-bringback)", () => {
       await screen.findByRole("button", { name: "Recover v1 as active draft" }),
     );
 
+    const dialog = screen.getByRole("dialog", { name: "Recover revision" });
     expect(
-      await screen.findByText("That revision is already the active one."),
-    ).toBeVisible();
+      await within(dialog).findByRole("alert"),
+    ).toHaveTextContent("That revision is already the active one.");
     expect(mockRecover).toHaveBeenCalledTimes(1);
   });
 });

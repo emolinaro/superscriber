@@ -208,7 +208,6 @@ describe("ExportDialog", () => {
             revisionId: "rev-2",
             state: "approved",
             actorDisplay: "Approver Example",
-            createdAt: "2026-08-01T12:40:00.000Z",
           },
         ]}
         onAnnouncement={vi.fn()}

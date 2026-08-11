@@ -181,8 +181,6 @@ export function RevisionHistory({ casefile }: { casefile: CasefileViewModel }) {
         })}
       </ul>
 
-      {error ? <InlineNotice tone="danger">{error}</InlineNotice> : null}
-
       <Modal
         onClose={() => {
           if (!pending) {
@@ -200,6 +198,7 @@ export function RevisionHistory({ casefile }: { casefile: CasefileViewModel }) {
               rewritten). The summary keeps the recovery's provenance, and the audit event records
               the actor and the recovered-from version.
             </p>
+            {error ? <InlineNotice tone="danger">{error}</InlineNotice> : null}
             <div className="button-row modal-actions-row">
               <button
                 className="button button-secondary"

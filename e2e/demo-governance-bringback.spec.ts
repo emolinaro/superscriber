@@ -1,4 +1,4 @@
-import { existsSync, readdirSync } from "node:fs";
+import { existsSync, readdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { expect, test } from "@playwright/test";
 import {
@@ -102,6 +102,86 @@ test.describe.serial("demo governance bring-back", () => {
     await openGovernanceTab(page, "Audit");
     await expect(page.getByText("admin.action_mode.entered").first()).toBeVisible();
     await expect(page.getByText("approval.approved").first()).toBeVisible();
+  });
+
+  test("pending submission blocks recovery without changing its pointer or lineage", async ({
+    page,
+  }, testInfo) => {
+    await bootstrapAndLogin(page, adminUser);
+    const recordingId = await uploadFixture(page, {
+      title: "Pending recovery guard record",
+    });
+
+    await openCasefile(page, recordingId);
+    await waitForReviewerModeEntry(page);
+    await enterAdminActionMode(page, "reviewer", "Prepare a pending recovery conflict.");
+    await saveEditedDraft(page, "Pending recovery guard draft.");
+    await page.getByRole("button", { name: "Submit for approval" }).click();
+    const submitDialog = page.getByRole("dialog", { name: "Submit for approval" });
+    await submitDialog
+      .getByRole("button", { name: "Submit for approval" })
+      .last()
+      .click();
+    await expect(page.getByText("Pending approval", { exact: true }).first()).toBeVisible();
+    await page.getByRole("button", { name: "Exit action mode" }).click();
+
+    const statusBeforeResponse = await page.request.get(
+      `/api/recordings/${recordingId}/status`,
+    );
+    expect(statusBeforeResponse.ok()).toBeTruthy();
+    const statusBefore = (await statusBeforeResponse.json()) as {
+      workflowStage: string;
+      currentRevisionVersion: number;
+      currentRevisionId: string;
+      pendingRevisionId: string;
+    };
+    expect(statusBefore.workflowStage).toBe("pending_approval");
+    expect(statusBefore.currentRevisionVersion).toBe(2);
+    expect(statusBefore.pendingRevisionId).toBe(statusBefore.currentRevisionId);
+
+    await openGovernanceTab(page, "Revisions");
+    const rows = page.locator(".revision-history__row");
+    await expect(rows).toHaveCount(2);
+    const pendingRow = rows.filter({ hasText: "v2" });
+    await expect(pendingRow).toContainText("Pending approval");
+    await expect(pendingRow).toContainText("Active");
+
+    await page.getByTestId("recover-v1").click();
+    const recoverDialog = page.getByRole("dialog", { name: "Recover revision" });
+    await recoverDialog
+      .getByRole("button", { name: "Recover v1 as active draft" })
+      .click();
+    const stateChangedMessage =
+      "A submission is pending; resolve it before recovering an older revision.";
+    await expect(
+      recoverDialog.getByRole("alert").filter({ hasText: stateChangedMessage }),
+    ).toBeVisible();
+    await page.screenshot({
+      fullPage: true,
+      path: testInfo.outputPath("pending-recovery-rejection.png"),
+    });
+    await recoverDialog.getByRole("button", { name: "Close dialog" }).click();
+
+    const statusAfterResponse = await page.request.get(
+      `/api/recordings/${recordingId}/status`,
+    );
+    expect(statusAfterResponse.ok()).toBeTruthy();
+    const statusAfter = (await statusAfterResponse.json()) as typeof statusBefore;
+    expect(statusAfter).toMatchObject(statusBefore);
+    await expect(rows).toHaveCount(2);
+    await expect(pendingRow).toContainText("Pending approval");
+    await expect(pendingRow).toContainText("Active");
+
+    await openGovernanceTab(page, "Revisions");
+    await rows.first().scrollIntoViewIfNeeded();
+    await page.screenshot({
+      fullPage: true,
+      path: testInfo.outputPath("pending-recovery-lineage-unchanged.png"),
+    });
+    writeFileSync(
+      testInfo.outputPath("pending-recovery-status.json"),
+      `${JSON.stringify(statusAfter, null, 2)}\n`,
+    );
   });
 
   test("version history, any-revision export, recovery, policy editing, purge, ledger reset", async ({ page }) => {
