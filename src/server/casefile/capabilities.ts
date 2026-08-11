@@ -341,6 +341,10 @@ export function deriveCasefileCapabilities(
   const exportAuthority = hasExportAuthority(input, actionMode);
   const submitterId = currentSubmitterId(input);
   const isSubmitter = submitterId === input.principal.userId;
+  // Captain ruling 2026-08-06: the self-approval veto binds non-admin roles
+  // only; administrators may decide revisions they submitted (attribution is
+  // carried on the decision row via actor + action-mode session).
+  const selfApprovalVetoed = isSubmitter && input.principal.role !== "admin";
   const adminOversight = isAdminOversight(input, actionMode);
   const pending = isPending(input);
   const approved = isApproved(input);
@@ -380,7 +384,7 @@ export function deriveCasefileCapabilities(
       current &&
       pending &&
       submitterId !== null &&
-      !isSubmitter &&
+      !selfApprovalVetoed &&
       policy.canApprove,
     canRequestChanges:
       !adminOversight &&
@@ -388,7 +392,7 @@ export function deriveCasefileCapabilities(
       current &&
       pending &&
       submitterId !== null &&
-      !isSubmitter &&
+      !selfApprovalVetoed &&
       policy.canApprove,
     canReopen:
       !adminOversight &&

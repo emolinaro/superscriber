@@ -2,7 +2,7 @@ const APPROVED_TRANSCRIPT_EXPORT_FORMAT_GROUP_DEFINITIONS = [
   {
     id: "document",
     label: "Document",
-    formats: ["docx", "txt"],
+    formats: ["docx", "txt", "md"],
   },
   {
     id: "captions",

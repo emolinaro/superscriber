@@ -1,11 +1,52 @@
+"use client";
+
+import { useState, useTransition } from "react";
+import { useRouter } from "next/navigation";
+import { POLICY_PROFILES, type PolicyProfileId } from "@/domain/models";
+import { InlineNotice } from "@/components/ui/inline-notice";
+import { updateWorkspacePolicyAction } from "@/server/actions/administration-actions";
 import type { AdministrationPolicyViewModel } from "@/server/administration/service";
 
+const PROFILE_LABELS: Record<PolicyProfileId, string> = {
+  strict: "Strict",
+  "reviewable-approved-export": "Reviewable approved export",
+};
+
+/**
+ * Policy profile editing (demo-governance-bringback): the profile is the
+ * workspace's one governed setting - previously surface-readable only.
+ * Admin-authored edits persist through the server action and write a redacted
+ * policy.updated security event (actor + from/to).
+ */
 export function PolicySection({
   model,
+  phoneSafetyMode,
 }: {
   model: AdministrationPolicyViewModel;
   phoneSafetyMode: boolean;
 }) {
+  const router = useRouter();
+  const [profileId, setProfileId] = useState<PolicyProfileId>(model.profile.id);
+  const [notice, setNotice] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [pending, startTransition] = useTransition();
+
+  const dirty = profileId !== model.profile.id;
+
+  function save() {
+    setNotice(null);
+    setError(null);
+    startTransition(async () => {
+      const result = await updateWorkspacePolicyAction({ profileId });
+      if (!result.ok) {
+        setError(result.message);
+        return;
+      }
+      setNotice(result.notice ?? "Workspace policy profile updated.");
+      router.refresh();
+    });
+  }
+
   return (
     <section className="panel panel-strong administration-section stack" aria-labelledby="policy-heading">
       <div className="panel-inner stack administration-section__body">
@@ -21,6 +62,40 @@ export function PolicySection({
           <strong>{model.profile.label}</strong>
           <span>{model.profile.id}</span>
         </div>
+
+        {!phoneSafetyMode ? (
+          <div className="field" data-testid="policy-editor">
+            <label className="field-label" htmlFor="policy-profile">
+              Workspace policy profile
+            </label>
+            <select
+              id="policy-profile"
+              onChange={(event) => setProfileId(event.currentTarget.value as PolicyProfileId)}
+              value={profileId}
+            >
+              {POLICY_PROFILES.map((id) => (
+                <option key={id} value={id}>
+                  {PROFILE_LABELS[id]}
+                </option>
+              ))}
+            </select>
+            <span className="field-note">
+              Applies to every casefile immediately; capability tables below describe the active profile.
+            </span>
+            <div className="button-row">
+              <button
+                className="button button-primary"
+                disabled={!dirty || pending}
+                onClick={save}
+                type="button"
+              >
+                {pending ? "Applying..." : "Apply policy"}
+              </button>
+            </div>
+            {notice ? <InlineNotice tone="success">{notice}</InlineNotice> : null}
+            {error ? <InlineNotice tone="danger">{error}</InlineNotice> : null}
+          </div>
+        ) : null}
 
         <div className="administration-table-wrap">
           <table className="administration-table administration-policy-table">

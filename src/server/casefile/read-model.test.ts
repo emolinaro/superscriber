@@ -487,6 +487,104 @@ describe("getCasefile", () => {
     }
   });
 
+  it("carries segment bodies on the revision history rows (demo-governance-bringback)", async () => {
+    const { bundle, nextReviewer } = await setupLifecycleFixture();
+
+    try {
+      const casefile = getCasefile(nextReviewer, "rec-1", {}, bundle.db);
+      expect(casefile?.revisions.length).toBeGreaterThan(1);
+      for (const revision of casefile!.revisions) {
+        expect(Array.isArray(revision.segments)).toBe(true);
+        expect(revision.segments!.length).toBeGreaterThan(0);
+      }
+    } finally {
+      bundle.sqlite.close();
+    }
+  });
+
+  it("lets admin oversight deep-link any archived revision while assignees stay pinned (demo-governance-bringback)", async () => {
+    const { bundle, admin, nextReviewer, approvedRevisionId, reopenedRevisionId } =
+      await setupLifecycleFixture();
+
+    try {
+      const deepLinked = getCasefile(
+        admin,
+        "rec-1",
+        { revisionId: approvedRevisionId },
+        bundle.db,
+      );
+      expect(deepLinked?.revision?.id).toBe(approvedRevisionId);
+      expect(deepLinked?.revision?.segments).toBeDefined();
+      // The viewed snapshot is archived, but the view model still exposes the
+      // LIVE ledger-active revision id separately so the UI can distinguish
+      // 'currently viewed' from 'active' (governance copy on deep links).
+      expect(deepLinked?.activeRevisionId).toBe(reopenedRevisionId);
+
+      // The default view is unaffected.
+      const defaultView = getCasefile(admin, "rec-1", {}, bundle.db);
+      expect(defaultView?.revision?.id).toBe(reopenedRevisionId);
+      expect(defaultView?.activeRevisionId).toBe(reopenedRevisionId);
+
+      // An active assignee ignores the deep link: pinned to the current revision.
+      const reviewerView = getCasefile(
+        nextReviewer,
+        "rec-1",
+        { revisionId: approvedRevisionId },
+        bundle.db,
+      );
+      expect(reviewerView?.revision?.id).toBe(reopenedRevisionId);
+      expect(reviewerView?.activeRevisionId).toBe(reopenedRevisionId);
+    } finally {
+      bundle.sqlite.close();
+    }
+  });
+
+  it("marks edited segments against the viewed revision's parent (demo-governance-bringback)", async () => {
+    const { bundle, nextReviewer, reopenedRevisionId } = await setupLifecycleFixture();
+
+    try {
+      // Craft a child draft off the reopened revision with one edited segment.
+      const current = bundle.db
+        .select()
+        .from(revisions)
+        .where(eq(revisions.id, reopenedRevisionId))
+        .get()!;
+      const segs = JSON.parse(current.segmentsJson) as Array<Record<string, unknown>>;
+      segs[0] = { ...segs[0], text: "Edited wording." };
+      bundle.db
+        .insert(revisions)
+        .values({
+          id: "rev-child",
+          recordingId: "rec-1",
+          version: current.version + 1,
+          state: "draft",
+          basedOnRevisionId: current.id,
+          createdByRole: "reviewer",
+          createdByUserId: null,
+          createdAt: current.createdAt,
+          submittedByUserId: null,
+          submittedAt: null,
+          approvedAt: null,
+          summary: current.summary,
+          segmentsJson: JSON.stringify(segs),
+        })
+        .run();
+      bundle.db
+        .update(recordings)
+        .set({ currentRevisionId: "rev-child", pendingRevisionId: null })
+        .where(eq(recordings.id, "rec-1"))
+        .run();
+
+      const casefile = getCasefile(nextReviewer, "rec-1", {}, bundle.db);
+      expect(casefile?.diffHighlight).toEqual({
+        parentVersion: current.version,
+        editedSegmentIds: [(segs[0] as { id: string }).id],
+      });
+    } finally {
+      bundle.sqlite.close();
+    }
+  });
+
   it("returns current admin oversight with no governed capabilities outside action mode", async () => {
     const { bundle, admin, reopenedRevisionId } = await setupLifecycleFixture();
 

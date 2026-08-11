@@ -143,10 +143,33 @@ export async function GET(
     );
   }
 
+  // Any-revision export (demo-governance-bringback): an explicit revisionId
+  // stays within the same export authority set; default remains the approved
+  // revision. Exports of non-approved revisions are audited with the revision
+  // identity on the export.issued event.
+  const requestedRevisionId = searchParams.get("revisionId")?.trim() || null;
+  let exportRevision = loaded.approvedRevision;
+  if (requestedRevisionId && requestedRevisionId !== loaded.approvedRevision?.id) {
+    const row = loaded.bundle.db
+      .select()
+      .from(revisions)
+      .where(
+        sql`${revisions.id} = ${requestedRevisionId} AND ${revisions.recordingId} = ${recordingId}`,
+      )
+      .get();
+    if (!row) {
+      return new NextResponse("Requested transcript revision is not available for export.", {
+        status: 409,
+      });
+    }
+    exportRevision = toRevision(row);
+  }
+
   if (
-    !loaded.approvedRevision ||
-    loaded.approvedRevision.state !== "approved" ||
-    loaded.recording.currentRevisionId !== loaded.approvedRevision.id
+    !exportRevision ||
+    (exportRevision.id === loaded.approvedRevision?.id &&
+      (exportRevision.state !== "approved" ||
+        loaded.recording.currentRevisionId !== exportRevision.id))
   ) {
     return new NextResponse("No approved transcript is available for export.", {
       status: 409,
@@ -156,7 +179,7 @@ export async function GET(
   const payload = await buildApprovedTranscriptExport({
     format,
     recording: loaded.recording,
-    revision: loaded.approvedRevision,
+    revision: exportRevision,
   }).catch(() => null);
   if (!payload) {
     return new NextResponse("Approved transcript export failed.", {
@@ -174,14 +197,15 @@ export async function GET(
     const currentRevision = loaded.bundle.db
       .select()
       .from(revisions)
-      .where(eq(revisions.id, loaded.approvedRevision!.id))
+      .where(eq(revisions.id, exportRevision.id))
       .get();
     if (
       !currentRecording ||
       !currentRevision ||
-      currentRevision.state !== "approved" ||
-      currentRecording.approvedRevisionId !== loaded.approvedRevision?.id ||
-      currentRecording.currentRevisionId !== loaded.approvedRevision?.id
+      (exportRevision.id === loaded.approvedRevision?.id &&
+        (currentRevision.state !== "approved" ||
+          currentRecording.approvedRevisionId !== exportRevision.id ||
+          currentRecording.currentRevisionId !== exportRevision.id))
     ) {
       return false;
     }
@@ -191,11 +215,13 @@ export async function GET(
       recordingId,
       actor,
       type: "export.issued",
-      detail: `Approved transcript exported as ${format}.`,
+      detail: `Transcript exported as ${format}${exportRevision.state === "approved" ? "" : ` from revision v${exportRevision.version}`}.`,
       metadata: {
-        expectedApprovedRevisionId: loaded.approvedRevision.id,
+        expectedApprovedRevisionId: loaded.approvedRevision?.id,
         format,
         actionModeId,
+        revisionId: exportRevision.id,
+        revisionVersion: exportRevision.version,
       },
       createdAt: now,
     });
@@ -220,7 +246,7 @@ export async function GET(
     headers: {
       "cache-control": "no-store",
       "content-type": payload.contentType,
-      "content-disposition": `attachment; filename="${safeBase}-approved-v${loaded.approvedRevision.version}.${format}"`,
+      "content-disposition": `attachment; filename="${exportRevision.id === loaded.approvedRevision?.id ? `${safeBase}-approved-v${exportRevision.version}` : `${safeBase}-v${exportRevision.version}`}.${format}"`,
     },
   });
 }

@@ -370,7 +370,7 @@ describe("GET /api/recordings/[recordingId]/transcript", () => {
 
     const response = await GET(
       new Request(
-        `https://example.test/api/recordings/rec-1/transcript?format=txt&actionModeId=${actionMode.id}&revisionId=rev-legacy`,
+        `https://example.test/api/recordings/rec-1/transcript?format=txt&actionModeId=${actionMode.id}`,
       ),
       { params: Promise.resolve({ recordingId: "rec-1" }) },
     );
@@ -408,6 +408,69 @@ describe("GET /api/recordings/[recordingId]/transcript", () => {
     });
     expect(rows[0]?.metadata).toContain('"expectedApprovedRevisionId":"rev-approved"');
     expect(rows[0]?.metadata).toContain('"format":"txt"');
+  });
+
+  it("rejects an explicit revision id outside the recording without exporting or auditing", async () => {
+    const response = await GET(
+      new Request(
+        "https://example.test/api/recordings/rec-1/transcript?format=txt&revisionId=rev-legacy",
+      ),
+      { params: Promise.resolve({ recordingId: "rec-1" }) },
+    );
+
+    expect(response.status).toBe(409);
+    expect(await response.text()).toBe("Requested transcript revision is not available for export.");
+    expect(buildApprovedTranscriptExportMock).not.toHaveBeenCalled();
+    expect(exportAuditRows()).toHaveLength(0);
+  });
+
+  it("exports any named revision under the same authority, with revision attribution (demo-governance-bringback)", async () => {
+    // D-3 contract delta: export no longer means "the active approved record"
+    // - any revision id of the casefile is exportable by an export-authorized
+    // principal, and the audit event carries the revision identity.
+    const bundle = getAppDbBundle();
+    bundle.db.insert(revisions).values({
+      id: "rev-draft",
+      recordingId: "rec-1",
+      version: 4,
+      state: "draft",
+      basedOnRevisionId: "rev-approved",
+      createdByRole: "reviewer",
+      createdByUserId: null,
+      createdAt: "2026-08-01T12:20:00.000Z",
+      submittedByUserId: null,
+      submittedAt: null,
+      approvedAt: null,
+      summary: "Draft in flight.",
+      segmentsJson: serializeSegments(baseSegments),
+    }).run();
+
+    const response = await GET(
+      new Request(
+        "https://example.test/api/recordings/rec-1/transcript?format=md&revisionId=rev-draft",
+      ),
+      { params: Promise.resolve({ recordingId: "rec-1" }) },
+    );
+
+    expect(response.status).toBe(200);
+    expect(response.headers.get("content-disposition")).toBe(
+      'attachment; filename="Recording-1-v4.md"',
+    );
+    expect(buildApprovedTranscriptExportMock).toHaveBeenCalledWith({
+      format: "md",
+      recording: expect.objectContaining({ id: "rec-1" }),
+      revision: expect.objectContaining({
+        id: "rev-draft",
+        version: 4,
+        state: "draft",
+      }),
+    });
+
+    const rows = exportAuditRows();
+    expect(rows).toHaveLength(1);
+    expect(rows[0]?.detail).toContain("from revision v4");
+    expect(rows[0]?.metadata).toContain('"revisionId":"rev-draft"');
+    expect(rows[0]?.metadata).toContain('"revisionVersion":4');
   });
 
   it("does not audit when byte generation fails", async () => {

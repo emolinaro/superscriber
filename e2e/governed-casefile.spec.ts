@@ -64,6 +64,10 @@ test.describe.serial("governed casefile workflows", () => {
   test("moves one revision through withdrawal, changes, approval, export, and reopen", async ({
     page,
   }) => {
+    // Under loaded hosts the 90s default was observed to expire on the export
+    // byte-generation loop (DOCX rendering is CPU-heavy); same guard class as
+    // the action-mode test below.
+    test.setTimeout(240_000);
     await bootstrapAndLogin(page, adminUser);
     const recordingId = await uploadFixture(page, { title: "Governed lifecycle casefile" });
     await createAndAssignUsers(page, recordingId);
@@ -164,7 +168,11 @@ test.describe.serial("governed casefile workflows", () => {
     await openCasefile(page, recordingId);
     await expect(page.getByText("Reopened", { exact: true }).first()).toBeVisible();
     await expect(await currentRevisionLabel(page)).not.toBe(approvedRevision);
-    await expect(page.getByRole("button", { name: "Export approved transcript" })).toHaveCount(0);
+    // Export affordance (demo-governance-bringback): admin oversight keeps the
+    // export surface visible; the previously approved revision stays
+    // exportable while the act of exporting it outside action mode still
+    // fails closed at the route.
+    await expect(page.getByRole("button", { name: "Export approved transcript" })).toBeVisible();
 
     await page.goto("/administration?section=assignments");
     await page.getByRole("button", { name: "Assign work" }).click();
@@ -234,7 +242,11 @@ test.describe.serial("governed casefile workflows", () => {
       firstTranscriptRow(page).getByRole("textbox", { name: /Transcript for segment 1, / }),
     ).toHaveCount(0);
     await expect(firstTranscriptRow(page).getByText("Admin reviewer mode draft.")).toBeVisible();
-    await expect(page.getByRole("button", { name: "Enter approver action mode" })).toHaveCount(0);
+    // Captain ruling 2026-08-06 (demo-governance-bringback, D-4): the admin
+    // identity carries every role - the approver action-mode entry now stays
+    // available even for an admin-submitted pending revision, with full
+    // attribution on the decision row.
+    await expect(page.getByRole("button", { name: "Enter approver action mode" })).toBeVisible();
 
     const reviewerEntry = page.getByRole("button", { name: "Enter reviewer action mode" });
     if ((await reviewerEntry.count()) > 0) {

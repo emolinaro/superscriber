@@ -79,6 +79,21 @@ describe("approved transcript export formatter", () => {
     expect(vttText).toContain("00:01:02.000 --> 01:01:01.000");
   });
 
+  it("formats Markdown with heading, metadata, and per-segment speaker/timings", async () => {
+    const md = await buildApprovedTranscriptExport({
+      format: "md",
+      recording,
+      revision,
+    });
+
+    expect(md.contentType).toBe("text/markdown; charset=utf-8");
+    const text = decodeBody(md.body);
+    expect(text.startsWith(`# ${recording.title}`)).toBe(true);
+    expect(text).toContain(`- Revision: ${revision.version}`);
+    expect(text).toContain(`- Approved: ${revision.approvedAt}`);
+    expect(text).toContain("**Speaker 1** (00:00:01.234 - 00:00:05.678)");
+  });
+
   it("escapes CSV and TSV fields and keeps JSON metadata plus segment shape stable", async () => {
     const csv = await buildApprovedTranscriptExport({
       format: "csv",

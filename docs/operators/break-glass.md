@@ -3,8 +3,11 @@
 The break-glass account is the single local administrator usable in
 `authentik-primary` mode, intended only for IdP-outage or governance incidents.
 It remains a normal `admin` principal: governed work stays read-only until the
-existing record-bound action mode is entered, and it cannot approve its own
-submission.
+existing record-bound action mode is entered. Under the captain ruling of
+2026-08-06 an administrator acting under an approver action-mode session may
+decide a revision they submitted; the self-approval veto binds non-admin
+roles only. Attribution is recorded on the decision row (acting identity,
+effective role, and the action-mode session id with its purpose).
 
 ## Controls in force
 

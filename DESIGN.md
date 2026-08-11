@@ -38,7 +38,7 @@ Progress is never collapsed into one uncontrolled status string. The UI derives 
 1. **Integrity state:** capturing, uploading, verifying, verified, verification failed, or interrupted.
 2. **Transcript job state:** queued, running, partial result, completed, failed, or cancelled.
 3. **Current revision state:** draft, pending approval, or none.
-4. **Active approved pointer:** the revision currently approved for export, or none.
+4. **Active approved pointer:** the currently approved revision (and default export target), or none.
 5. **Assignment state:** active, completed, or removed, per reviewer/approver activation.
 
 Historical revision terminal states are `superseded`, `withdrawn`, and `changes_requested`; `approved` stays on an approved revision even after a reopen, and the recording's `approvedRevisionId` decides whether it is the active approved record.
@@ -52,10 +52,11 @@ Every governed command carries an expected revision identifier and runs in one d
 - **Save draft** - only while the current revision is a draft; supersedes the prior draft and creates the next numbered draft with complete segment content. The full segment array is submitted on save; there is no per-keystroke serialization.
 - **Submit revision** - saves dirty content first, then marks the draft `pending_approval` and records `submittedAt`/`submittedByUserId`.
 - **Withdraw submission** - only the recorded submitter, only while pending, with a required 10-500 character reason. The pending revision becomes historical and its content is cloned into a new draft.
-- **Request changes** - any authorized approver who is not the submitter, with a required reason. The pending revision becomes historical and its content is cloned into a new draft; assignments stay active.
-- **Approve** - any authorized approver who is not the submitter, with an optional note. Locks the revision, sets `approvedRevisionId`, and completes every active reviewer and approver assignment in the same transaction.
+- **Request changes** - any authorized approver who is not the submitter, with a required reason. The pending revision becomes historical and its content is cloned into a new draft; assignments stay active. *(Captain ruling 2026-08-06, corr superscriber-demo-20260805, supersedes the not-the-submitter clause for admins: an administrator in approver action mode may decide a revision they submitted.)*
+- **Approve** - any authorized approver who is not the submitter, with an optional note. Locks the revision, sets `approvedRevisionId`, and completes every active reviewer and approver assignment in the same transaction. *(Same supersession applies: the submitting administrator may approve under approver action mode.)*
 - **Reopen** - requires an active approved revision and a required reason. Keeps the old revision historically approved, clears `approvedRevisionId`, clones the approved content into a new draft, and does not reactivate completed assignments.
-- **Export** - builds the selected format from the active approved revision, appends an audited `export.issued` event, and returns `Cache-Control: no-store` bytes. Export never changes workflow state.
+- **Export** - builds the selected format from the chosen revision snapshot, appends an audited `export.issued` event, and returns `Cache-Control: no-store` bytes. Export never changes workflow state. *(Demo-governance bring-back, 2026-08-10: the export target widened from "the active approved record" to any revision of the casefile; the default remains the approved revision, non-approved exports render a `from revision vN` audit detail and a `-vN` (not `-approved-vN`) filename, and every export row pins the exported revision id + version.)*
+- **Recover revision (admin)** - when no submission is pending, an administrator may recover any archived revision into a new active draft: the recovery clones the source content into the next numbered draft under `basedOnRevisionId`, the summary names the recovered-from version, and the lineage is never rewritten - recovery appends a row and an audited `revision.recovered` event. If `pendingRevisionId` is set, recovery rejects with `STATE_CHANGED` and leaves the pending pointer and revision lineage untouched so the pending decision can be resolved through the normal commands.
 
 Submit, withdraw, request changes, approve, and reopen never mutate transcript text on the submitted or approved revision. Transition-created drafts preserve the prior summary and segments through `basedOnRevisionId`. The legacy `rejected` state is no longer written; existing rejected records display as `Changes requested (legacy)`.
 
@@ -72,7 +73,7 @@ Approval therefore clears active work without erasing provenance or breaking app
 
 ### Identity and separation of duties
 
-Every submission stores `submittedByUserId`. Approval and request changes are forbidden to the submitting user, including an admin switching from reviewer to approver action mode; the UI suppresses decision controls with an explanation and the server independently rejects the command. Legacy pending revisions without a submitter identity cannot be withdrawn but can be decided by an authorized approver, with the missing identity noted in audit metadata.
+Every submission stores `submittedByUserId`. Approval and request changes are forbidden to the submitting user for non-admin roles; the UI suppresses decision controls with an explanation and the server independently rejects the command. *(Captain ruling 2026-08-06, corr superscriber-demo-20260805, supersedes the admin sentence that previously applied here: the admin identity carries all roles on a casefile - an administrator may submit in reviewer action mode and then approve the same revision in approver action mode. Full attribution is preserved: the decision row records the acting identity, the effective role, the action-mode session id, and its purpose/expiry; the veto still binds reviewer/approver/uploader roles.)* Legacy pending revisions without a submitter identity cannot be withdrawn but can be decided by an authorized approver, with the missing identity noted in audit metadata.
 
 ### Admin oversight and action mode
 
@@ -169,12 +170,13 @@ The Superscriber wordmark is one Newsreader line: `Super` remains sentence case 
 | `/` | First-run setup when no user exists; steady-state login otherwise | Public |
 | `/workspace` | Role-aware work inbox | Every authenticated role |
 | `/ingest` | Focused upload or supported browser-record flow | Uploader and admin |
-| `/recordings/[recordingId]` | Current casefile or an authorized historical approved snapshot | Principals with an access grant |
+| `/recordings/[recordingId]` | Current casefile or an authorized historical revision snapshot | Principals with an access grant |
 | `/administration?section=accounts` | Local account directory and creation | Admin |
 | `/administration?section=assignments` | Active assignments and assignment history | Admin |
-| `/administration?section=policy` | Read-only active policy profile and permission matrix | Admin |
+| `/administration?section=policy` | Active policy profile (admin-editable) and permission matrix | Admin |
+| `/administration?section=discipline` | Governed ledger counts and the typed-phrase ledger reset | Admin |
 
-Casefile URLs accept `revision=<revisionId>` for an authorized historical approved snapshot and `actionMode=<adminActionSessionId>` to activate a validated admin action mode. Neither grants access by itself; the server validates both against the signed-in user, recording, assignment history, and action session.
+Casefile URLs accept `revision=<revisionId>` for an authorized historical revision snapshot and `actionMode=<adminActionSessionId>` to activate a validated admin action mode. Neither grants access by itself; the server validates both against the signed-in user, recording, assignment history, and action session.
 
 Primary navigation is exact: uploader gets Work and Ingest; reviewer and approver get Work; admin gets Work, Ingest, and Administration. An admin action mode never changes the navigation or account identity.
 
@@ -217,20 +219,22 @@ Every transcript-capable casefile begins directly below the app shell:
 
 A recording owner with uploader-only access receives a status casefile: ingest progress, safe metadata, and recovery guidance, with no transcript, media, decisions, or audit content.
 
-### Approved export
+### Transcript export
 
-- Approved export stays anchored to the approved casefile action bar, not a separate reporting screen
-- Export appears only when the current revision is approved and the policy profile and principal grant allow download
-- The chooser is a portal-rendered viewport modal (bounded bottom sheet on compact tablet) grouped into Document (`DOCX`, `TXT`), Captions (`SRT`, `VTT`), and Structured data (`CSV`, `TSV`, `JSON`)
+- Export stays anchored to the casefile action bar, not a separate reporting screen
+- The export surface is always visible to export-authorized principals (admins additionally see it under plain oversight); before any approval exists it carries an honest empty state and a generic `Export transcript` label
+- The chooser is a portal-rendered viewport modal (bounded bottom sheet on compact tablet) grouped into Document (`DOCX`, `TXT`, `MD`), Captions (`SRT`, `VTT`), and Structured data (`CSV`, `TSV`, `JSON`), with a revision picker defaulting to the approved revision (demo-governance bring-back: any-revision export under the unchanged export authority)
 - Each successful download records actor, effective role, revision, format, and UTC time before bytes are returned
 
 ### Administration
 
-Administration has secondary navigation for Accounts, Assignments, and Policy; the selected section is the page's `h1` and only its task is shown. Accounts supports search, a create-account drawer, an inline role dropdown on every row, and a Reset password control whose governed behavior is owned by [`docs/operators/password-reset.md`](./docs/operators/password-reset.md). Selecting a role other than the persisted role reveals a required 10-500 character Change reason field plus explicit Save role and Cancel actions. Administrators may change any account, including their own, but an active administrator cannot be demoted when no other active administrator remains. The designated break-glass administrator cannot be demoted until the designation moves, and active assignments whose recorded role conflicts with the requested role block the change with a link to the filtered assignment ledger.
+Administration has secondary navigation for Accounts, Assignments, Policy, and Data discipline; the selected section is the page's `h1` and only its task is shown. Accounts supports search, a create-account drawer, an inline role dropdown on every row, and a Reset password control whose governed behavior is owned by [`docs/operators/password-reset.md`](./docs/operators/password-reset.md). Selecting a role other than the persisted role reveals a required 10-500 character Change reason field plus explicit Save role and Cancel actions. Administrators may change any account, including their own, but an active administrator cannot be demoted when no other active administrator remains. The designated break-glass administrator cannot be demoted until the designation moves, and active assignments whose recorded role conflicts with the requested role block the change with a link to the filtered assignment ledger.
 
 The server remains authoritative for role changes. One immediate database transaction reloads actor and target, compares the expected role, enforces active-admin, break-glass, and assignment compatibility, updates the local `users.role`, increments `auth_version`, revokes every active target session, appends the canonical audit event with actor, target, old role, new role, reason, and UTC time, and advances governed state. Any failure rolls the whole operation back. A committed change requires the target to sign in again. The local user row is the role authority for local and OIDC-linked identities; OIDC admission fails closed until exactly one direct Authentik group maps to the new local role and never rewrites the local role or identity link.
 
-Assignments defaults to Active with a History tab showing outcomes and completion revisions; `Assign work` explains whether an assignment is actionable now or waiting for a compatible state. Policy is read-only: the active profile and the permission matrix, including the note that phone safety mode removes governed mutations and export. Phone safety mode keeps account, assignment, break-glass, and policy facts visible while omitting all administration mutation controls, including the Accounts row password-reset control. Account deactivation remains deliberately not rendered.
+Assignments defaults to Active with a History tab showing outcomes and completion revisions; `Assign work` explains whether an assignment is actionable now or waiting for a compatible state. Policy shows the active profile and the permission matrix, and the profile itself is editable by administrators (demo-governance bring-back): an Apply commits immediately and appends a redacted `policy.updated` security event with actor and before/after. Data discipline counts the governed ledger rows and offers the typed-phrase (`RESET REQUIRED`) ledger reset (demo-governance bring-back): audit events, decision rows, governance action sessions, ended assignments, and security events are cleared in one transaction while recordings, revisions, users, active assignments, live sessions, and media survive; exactly one `ledger.reset` record survives the wipe, and every cleared row is first written to a JSON export snapshot under `data/ledger-snapshots/` (compensating control from the demo-rulings decision: no wipe leaves the forensic trail only in the table it deletes). Phone safety mode keeps account, assignment, break-glass, and policy facts visible while omitting all administration mutation controls, including the Accounts row password-reset control. Account deactivation remains deliberately not rendered.
+
+On the casefile, admin oversight additionally carries a Danger zone (demo-governance bring-back): permanent deletion of the recording and its whole casefile behind a typed-title confirmation (server-rechecked). The purge removes revisions, decisions, assignments, jobs, audit rows, and the media blob, leaves exactly one `recording.deleted` security record, and snapshots all removed rows to `data/ledger-snapshots/` before deletion. The casefile's Revisions governance tab is a full version history: every revision row shows state, timestamps, and summary; archived rows deep-link to a read-only snapshot; an inline `Diff vs active` reveals segment-level differences; and administrators recover archived content through the [governed recovery command](#revision-and-decision-commands).
 
 ## Interaction And Copy Rules
 
@@ -267,7 +271,7 @@ Assignments defaults to Active with a History tab showing outcomes and completio
 |---|---|---|
 | Stale revision conflict | "This recording changed since you opened it", loaded and current revision ids, and what changed; local text preserved | Reload and reconcile (with explicit discard confirmation) |
 | Save blocked by lock/approval | Explicit lock reason and current approval state | View latest approved/reopened state |
-| Self-decision forbidden | Decision controls absent; separation-of-duties explanation | None (a different person must decide) |
+| Self-decision forbidden | Decision controls absent; separation-of-duties explanation | None for non-admin roles (a different person must decide); administrators act under approver action mode per the 2026-08-06 captain ruling |
 | Admin action mode expired | Action controls removed, edits preserved in memory | Re-enter action mode |
 | Pending (submitter) | `Withdraw submission` available until an approver acts | Withdraw (with required reason) or wait |
 

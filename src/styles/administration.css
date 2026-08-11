@@ -273,3 +273,30 @@
   width: 100%;
   height: 56px;
 }
+
+/* Ledger reset (demo-governance-bringback): readout for the Data discipline
+   pane. */
+.discipline-section__counts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-3) var(--space-6);
+  margin: 0;
+}
+
+.discipline-section__counts > div {
+  display: grid;
+  gap: 2px;
+}
+
+.discipline-section__counts dt {
+  font-size: var(--type-12);
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--color-muted);
+}
+
+.discipline-section__counts dd {
+  margin: 0;
+  font-family: var(--font-mono);
+  font-size: var(--type-20);
+}

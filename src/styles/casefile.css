@@ -671,6 +671,113 @@ html {
   }
 }
 
+/* Version history (demo-governance-bringback): the Revisions drawer tab. */
+.revision-history__row {
+  display: grid;
+  gap: var(--space-1);
+  padding: var(--space-2) 0;
+  border-bottom: 1px solid var(--color-line);
+}
+
+.revision-history__head {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-2);
+  flex-wrap: wrap;
+}
+
+.revision-history__head strong {
+  grid-row: 1;
+}
+
+.revision-history__date {
+  color: var(--color-muted);
+  font-size: var(--type-12);
+}
+
+.revision-history__summary {
+  margin: 0;
+  color: var(--color-muted);
+  font-size: var(--type-14);
+}
+
+.revision-history__diff {
+  list-style: none;
+  display: grid;
+  gap: var(--space-1);
+  margin: var(--space-2) 0 0;
+  padding: 0;
+}
+
+.revision-history__diff-row {
+  display: grid;
+  grid-template-columns: 6rem 1fr;
+  gap: var(--space-2);
+  padding: var(--space-2);
+  border: 1px solid var(--color-line);
+  border-radius: var(--radius-control);
+}
+
+.revision-history__diff-row[data-marker="changed"],
+.revision-history__diff-row[data-marker="added"] {
+  background: var(--color-warning-bg);
+}
+
+.revision-history__diff-row[data-marker="removed"] {
+  background: var(--color-danger-bg);
+}
+
+.revision-history__diff-marker {
+  font-weight: 700;
+}
+
+.revision-history__diff-before {
+  color: var(--color-danger-fg);
+  text-decoration: line-through;
+}
+
+.revision-history__diff-after {
+  color: var(--color-success-fg);
+}
+
+/* Recording purge (demo-governance-bringback): admin danger zone on the
+   casefile. Red edge keeps it visually isolated from governed surfaces. */
+.danger-zone {
+  border: 1px solid color-mix(in srgb, var(--color-danger-fg) 55%, transparent);
+  border-radius: var(--radius-surface);
+  padding: var(--space-4);
+  margin-top: var(--space-6);
+  display: grid;
+  gap: var(--space-3);
+}
+
+.danger-zone__title {
+  font-size: 0.95rem;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  color: var(--color-danger-fg);
+  margin: 0;
+}
+
+.danger-zone__note {
+  margin: 0;
+  color: var(--color-muted);
+}
+
+/* Export affordance (demo-governance-bringback): revision navigator next to
+   the Revision fact. */
+.case-header__revision-nav {
+  margin-left: var(--space-2);
+}
+
+.case-header__revision-select {
+  display: inline-block;
+  width: auto;
+  min-height: var(--space-6);
+  padding: 0 var(--space-2);
+  font-size: var(--type-12);
+}
+
 /* demo-diff-highlights (casefile UX batch): inline banner on segments the
    viewed revision edited relative to its parent revision. */
 .transcript-segment__diff-flag {

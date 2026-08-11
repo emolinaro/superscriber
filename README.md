@@ -22,7 +22,7 @@ It runs as a single-institution deployment with local accounts, SQLite persisten
 - Admin read-only oversight by default, plus an explicit, record-bound, audited reviewer/approver action mode for casefile work
 - Append-only assignment history, with approval completing all active assignments atomically
 - Unified resumable ingest (1 MiB chunks) for upload and browser audio recording
-- Audited, policy-gated approved transcript export in `DOCX`, `TXT`, `SRT`, `VTT`, `CSV`, `TSV`, and `JSON`
+- Audited, policy-gated transcript export in `DOCX`, `TXT`, `MD`, `SRT`, `VTT`, `CSV`, `TSV`, and `JSON` - defaulting to the approved record, with revision-picker export of any revision under the same authority
 - Phone safety mode: status, inbox, read-only casefile, and supported ingest on phones; governed actions require a tablet or desktop
 - SQLite-backed workflow persistence with mounted media storage
 - Internal Python worker with GPU-preferred transcription when compatible hardware is available
@@ -65,6 +65,10 @@ For UI-only development, that is enough. For the default internal transcription 
 On a tablet or desktop, an administrator can open **Administration > Accounts** and choose a role from any account row, including their own. A changed selection requires a 10-500 character reason and an explicit **Save role** or **Cancel** action. The server rejects a final-active-admin demotion, a break-glass custodian demotion, or a change that conflicts with active assignments and explains the required recovery step.
 
 A successful save atomically records the role-change audit, increments the account's authorization version, and revokes all of that account's active sessions. The affected person must sign in again. Phone safety mode keeps the same account facts visible but does not render role or other administration mutation controls.
+
+### Data discipline and destructive controls
+
+**Administration > Policy** lets an administrator switch the workspace policy profile (strict vs reviewable-approved-export); every change is applied immediately and audited with actor and before/after. **Administration > Data discipline** counts the governed ledger rows and hosts the typed-phrase (`RESET REQUIRED`) ledger reset, and each casefile shows administrators a **Danger zone** with a typed-title permanent purge. Both destructive controls write a JSON snapshot of every row they are about to delete into `data/ledger-snapshots/` (row-level copies outside the database, mode `0600`) before the delete transaction runs, and each leaves exactly one surviving security record (`ledger.reset` / `recording.deleted`) that names the snapshot path.
 
 ## Local Non-Docker Runtime
 

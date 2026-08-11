@@ -18,6 +18,12 @@ import {
   removeRecordingAssignment,
   type AccountDirectoryEntry,
 } from "@/server/access/service";
+import {
+  deleteRecordingPermanently,
+  recoverRevisionVersion,
+  resetWorkspaceLedger,
+  setWorkspacePolicyProfile,
+} from "@/server/administration/service";
 import { createLocalUser } from "@/server/auth/service";
 import { localUserSchema } from "@/server/auth/validation";
 import { CasefileCommandError } from "@/server/casefile/errors";
@@ -327,6 +333,127 @@ export async function unassignRecordingAction(
   input: UnassignRecordingInput,
 ): Promise<CommandResult<AdministrationMutationResult>> {
   return removeRecordingAssignmentAction(input);
+}
+
+// Policy profile editing (demo-governance-bringback): the workspace policy
+// profile is editable by admins from the Policy administration section.
+export async function updateWorkspacePolicyAction(input: {
+  profileId: string;
+}): Promise<CommandResult<{ profileId: string }>> {
+  const principal = await getActivePrincipal();
+  if (!principal) {
+    return authExpiredResult();
+  }
+
+  try {
+    requireAdmin(principal.role);
+    const result = setWorkspacePolicyProfile({
+      profileId: input.profileId as never,
+      actorUserId: principal.userId,
+    });
+    revalidatePath("/administration");
+    return {
+      ok: true,
+      data: { profileId: result.profileId },
+      notice: result.changed
+        ? "Workspace policy profile updated."
+        : "That policy profile is already in force.",
+    };
+  } catch (error) {
+    return toCommandResultError(error);
+  }
+}
+
+// Version history (demo-governance-bringback): admin recovery of an archived
+// revision into a new active draft.
+export async function recoverRevisionAction(input: {
+  recordingId: string;
+  sourceRevisionId: string;
+}): Promise<CommandResult<AdministrationMutationResult>> {
+  const principal = await getActivePrincipal();
+  if (!principal) {
+    return authExpiredResult();
+  }
+
+  try {
+    requireAdmin(principal.role);
+    const result = recoverRevisionVersion({
+      recordingId: input.recordingId,
+      sourceRevisionId: input.sourceRevisionId,
+      actorUserId: principal.userId,
+    });
+    return {
+      ok: true,
+      data: {
+        href: `/recordings/${input.recordingId}`,
+        userId: principal.userId,
+      },
+      notice: `Recovered archived content into active draft v${result.newVersion}; history kept.`,
+    };
+  } catch (error) {
+    return toCommandResultError(error);
+  }
+}
+
+// Recording purge (demo-governance-bringback): admin-only permanent deletion
+// of a recording and its casefile. The typed-confirm discipline is enforced
+// server-side again, so a client cannot bypass the gate.
+export async function deleteRecordingAction(input: {
+  recordingId: string;
+  expectedTitle: string;
+}): Promise<CommandResult<AdministrationMutationResult>> {
+  const principal = await getActivePrincipal();
+  if (!principal) {
+    return authExpiredResult();
+  }
+
+  try {
+    requireAdmin(principal.role);
+    const result = deleteRecordingPermanently({
+      recordingId: input.recordingId,
+      expectedTitle: input.expectedTitle,
+      actorUserId: principal.userId,
+    });
+    return {
+      ok: true,
+      data: {
+        href: "/workspace",
+        userId: principal.userId,
+      },
+      notice: `Permanently deleted "${result.title}" and ${result.revisionCount} revision${result.revisionCount === 1 ? "" : "s"}; the ledger retains one deletion record and the pre-delete export snapshot.`,
+    };
+  } catch (error) {
+    return toCommandResultError(error);
+  }
+}
+
+// Ledger reset (demo-governance-bringback): admin-only, double-gated (base
+// role + typed phrase, both rechecked server-side), with the pre-wipe export
+// snapshot compensating control.
+export async function resetLedgerAction(input: {
+  expectedPhrase: string;
+}): Promise<CommandResult<AdministrationMutationResult>> {
+  const principal = await getActivePrincipal();
+  if (!principal) {
+    return authExpiredResult();
+  }
+
+  try {
+    requireAdmin(principal.role);
+    const result = resetWorkspaceLedger({
+      actorUserId: principal.userId,
+      expectedPhrase: input.expectedPhrase,
+    });
+    revalidatePath("/administration");
+    return {
+      ok: true,
+      data: { href: "/administration?section=discipline", userId: principal.userId },
+      notice:
+        `Ledger reset complete: ${result.before.auditEvents} audit, ${result.before.decisionRows} decision, ${result.before.govActionSessions} governance sessions, ${result.before.endedAssignments} ended-assignment, and ${result.before.securityEvents} security rows cleared; one reset record survived and the pre-wipe export snapshot is on disk.`,
+    };
+  } catch (error) {
+    return toCommandResultError(error);
+  }
 }
 
 export async function createUserFormAction(formData: FormData) {

@@ -1,9 +1,23 @@
 // @vitest-environment jsdom
 
 import { cleanup, render, screen } from "@testing-library/react";
-import { afterEach, describe, expect, it } from "vitest";
+import userEvent from "@testing-library/user-event";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import type { AdministrationPolicyViewModel } from "@/server/administration/service";
 import { PolicySection } from "./policy-section";
+
+const { mockUpdate, mockRefresh } = vi.hoisted(() => ({
+  mockUpdate: vi.fn(),
+  mockRefresh: vi.fn(),
+}));
+
+vi.mock("next/navigation", () => ({
+  useRouter: () => ({ refresh: mockRefresh }),
+}));
+
+vi.mock("@/server/actions/administration-actions", () => ({
+  updateWorkspacePolicyAction: mockUpdate,
+}));
 
 const model: AdministrationPolicyViewModel = {
   section: "policy",
@@ -29,9 +43,12 @@ const model: AdministrationPolicyViewModel = {
 describe("PolicySection", () => {
   afterEach(() => {
     cleanup();
+    vi.clearAllMocks();
   });
 
-  it("renders the complete read-only policy matrix without save controls", () => {
+  // The profile IS editable by admins now (demo-governance-bringback); the
+  // matrix and the editor coexist - the editor commits via Apply.
+  it("renders the complete policy matrix with the profile editor", () => {
     render(<PolicySection model={model} phoneSafetyMode={false} />);
 
     for (const name of [
@@ -48,14 +65,57 @@ describe("PolicySection", () => {
     ]) {
       expect(screen.getByRole("rowheader", { name })).toBeVisible();
     }
-    expect(screen.queryByRole("button", { name: "Save policy" })).not.toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "Update policy" })).not.toBeInTheDocument();
+    const editor = screen.getByLabelText("Workspace policy profile");
+    expect(editor).toBeVisible();
+    expect(editor).toHaveValue("strict");
+    const apply = screen.getByRole("button", { name: "Apply policy" });
+    expect(apply).toBeDisabled(); // nothing to apply until the selection changes
   });
 
-  it("keeps policy facts visible on phone", () => {
+  it("keeps policy facts visible on phone while the editor hides with phone safety", () => {
     render(<PolicySection model={model} phoneSafetyMode={true} />);
 
     expect(screen.getAllByRole("rowheader", { name: "Phone safety" })[0]).toBeVisible();
-    expect(screen.queryByRole("button", { name: "Save policy" })).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("Workspace policy profile")).not.toBeInTheDocument();
+  });
+
+  it("applies the selection through the server action on click", async () => {
+    const user = userEvent.setup();
+    mockUpdate.mockResolvedValueOnce({
+      ok: true,
+      data: { profileId: "reviewable-approved-export" },
+      notice: "Workspace policy profile updated.",
+    });
+    render(<PolicySection model={model} phoneSafetyMode={false} />);
+
+    await user.selectOptions(
+      screen.getByLabelText("Workspace policy profile"),
+      "reviewable-approved-export",
+    );
+    const apply = screen.getByRole("button", { name: "Apply policy" });
+    expect(apply).toBeEnabled();
+    await user.click(apply);
+
+    expect(mockUpdate).toHaveBeenCalledWith({ profileId: "reviewable-approved-export" });
+    expect(await screen.findByText("Workspace policy profile updated.")).toBeVisible();
+    expect(mockRefresh).toHaveBeenCalled();
+  });
+
+  it("surfaces a server-side rejection inline", async () => {
+    const user = userEvent.setup();
+    mockUpdate.mockResolvedValueOnce({
+      ok: false,
+      code: "VALIDATION_ERROR",
+      message: "Unknown policy profile.",
+    });
+    render(<PolicySection model={model} phoneSafetyMode={false} />);
+
+    await user.selectOptions(
+      screen.getByLabelText("Workspace policy profile"),
+      "reviewable-approved-export",
+    );
+    await user.click(screen.getByRole("button", { name: "Apply policy" }));
+
+    expect(await screen.findByText("Unknown policy profile.")).toBeVisible();
   });
 });

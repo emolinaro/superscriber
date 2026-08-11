@@ -89,6 +89,7 @@ export default async function RecordingPage({
       enterAdminActionModeAction={enterAdminActionModeAction}
       exitAdminActionModeAction={exitAdminActionModeAction}
       initialCasefile={casefile}
+      pageNotice={safeQueryValue(resolvedSearch.notice)}
       reopenAction={reopenRevisionAction}
       requestChangesAction={requestChangesAction}
       saveAction={saveDraftAction}

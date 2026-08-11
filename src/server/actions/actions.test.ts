@@ -26,6 +26,7 @@ const {
   adminIssuePasswordResetMock,
   sendPasswordResetEmailMock,
   headersMock,
+  deleteRecordingPermanentlyMock,
 } = vi.hoisted(() => ({
   getActivePrincipalMock: vi.fn(),
   getActiveSessionMock: vi.fn(),
@@ -48,6 +49,7 @@ const {
   adminIssuePasswordResetMock: vi.fn(),
   sendPasswordResetEmailMock: vi.fn(),
   headersMock: vi.fn(() => new Map([["origin", "https://app.test"]])),
+  deleteRecordingPermanentlyMock: vi.fn(),
 }));
 
 vi.mock("next/headers", () => ({
@@ -114,6 +116,11 @@ vi.mock("@/server/administration/account-role-service", async (importOriginal) =
   changeAccountRole: changeAccountRoleMock,
 }));
 
+vi.mock("@/server/administration/service", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/server/administration/service")>()),
+  deleteRecordingPermanently: deleteRecordingPermanentlyMock,
+}));
+
 vi.mock("@/server/casefile/action-mode", () => ({
   enterActionMode: enterActionModeMock,
   exitActionMode: exitActionModeMock,
@@ -133,7 +140,10 @@ import {
   assignRecordingAction,
   changeAccountRoleAction,
   createUserAction,
+  deleteRecordingAction,
+  resetLedgerAction,
   unassignRecordingAction,
+  updateWorkspacePolicyAction,
 } from "@/server/actions/administration-actions";
 import { AccountRoleChangeServiceError } from "@/server/administration/account-role-service";
 import {
@@ -506,6 +516,44 @@ describe("typed administration actions", () => {
           activeAssignmentCount: 0,
         },
       },
+    });
+  });
+
+  it("keeps the destructive governance controls behind an admin gate (demo-governance-bringback)", async () => {
+    // Reviewer-held sessions cannot reach the wipe, the purge, or the policy
+    // switch; the typed confirmations alone are not a boundary.
+    const reviewer = { ...adminPrincipal, role: "reviewer" } as unknown as typeof adminPrincipal;
+    getActivePrincipalMock.mockResolvedValue(reviewer);
+
+    for (const attempt of [
+      () => resetLedgerAction({ expectedPhrase: "RESET REQUIRED" }),
+      () => deleteRecordingAction({ recordingId: "rec-1", expectedTitle: "x" }),
+      () => updateWorkspacePolicyAction({ profileId: "reviewable-approved-export" }),
+    ]) {
+      const result = await attempt();
+      expect(result.ok).toBe(false);
+      if (!result.ok) {
+        expect(result.code).toBe("ACCESS_DENIED");
+      }
+    }
+  });
+
+  it("returns the workspace destination after a permanent recording deletion", async () => {
+    getActivePrincipalMock.mockResolvedValue(adminPrincipal);
+    deleteRecordingPermanentlyMock.mockReturnValue({
+      title: "Quarterly Review",
+      revisionCount: 1,
+    });
+
+    await expect(
+      deleteRecordingAction({
+        recordingId: "rec-1",
+        expectedTitle: "Quarterly Review",
+      }),
+    ).resolves.toMatchObject({
+      ok: true,
+      data: { href: "/workspace", userId: "admin-1" },
+      notice: 'Permanently deleted "Quarterly Review" and 1 revision; the ledger retains one deletion record and the pre-delete export snapshot.',
     });
   });
 

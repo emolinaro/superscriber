@@ -254,4 +254,30 @@ describe("TranscriptDocument", () => {
       screen.getByRole("textbox", { name: "Transcript for segment 2, 00:10-00:20" }),
     ).toHaveFocus();
   });
+
+  it("flags segments edited versus the parent revision (demo-governance-bringback)", () => {
+    render(
+      <TranscriptDocument
+        activeSegmentId={null}
+        editable
+        onSeek={vi.fn()}
+        onUpdateSpeaker={vi.fn()}
+        onUpdateText={vi.fn()}
+        phoneSafetyMode={false}
+        segments={baseSegments}
+        summary="Updated wording."
+        onSummaryChange={vi.fn()}
+        diffHighlight={{ parentVersion: 2, editedSegmentIds: ["seg-2"] }}
+      />,
+    );
+
+    const flags = screen.getAllByText("Edited vs v2");
+    expect(flags).toHaveLength(1);
+    expect(
+      screen.getByRole("article", { name: /Transcript segment 2/i }),
+    ).toHaveAttribute("data-edited-diff", "true");
+    expect(
+      screen.getByRole("article", { name: /Transcript segment 1/i }),
+    ).not.toHaveAttribute("data-edited-diff");
+  });
 });

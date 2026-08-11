@@ -259,6 +259,15 @@ textarea[aria-invalid="true"] {
   border-color: var(--color-line);
 }
 
+/* Irreversible controls (recording purge, ledger reset). Deliberately loud
+   against the otherwise quiet chrome; the on-role flip keeps the pair WCAG AA
+   in dark mode, same contract as .button-primary. */
+.button-danger {
+  color: var(--color-on-danger);
+  background: var(--color-danger-fg);
+  border-color: var(--color-danger-fg);
+}
+
 .button-quiet {
   color: var(--color-ink);
   background: transparent;

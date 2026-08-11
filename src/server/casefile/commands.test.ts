@@ -430,39 +430,52 @@ describe("casefile draft commands", () => {
     }
   });
 
-  it.each(["approve", "requestChanges"] as const)("prevents the submitting user from %s", async (action) => {
-    const { bundle, admin, pending } = await setupPendingFixture({ submitter: "admin" });
+  it.each(["approve", "requestChanges"] as const)(
+    "admin passes the not-the-submitter rule: administrator may %s a revision they submitted (captain ruling 2026-08-06)",
+    async (action) => {
+      const { bundle, admin, pending } = await setupPendingFixture({ submitter: "admin" });
 
-    try {
-      const approverActionModeId = enterActionMode({
-        principal: admin,
-        recordingId: "rec-1",
-        effectiveRole: "approver",
-        purpose: "Record the governed approval decision for this transcript.",
-      }, bundle).id;
+      try {
+        const approverActionModeId = enterActionMode({
+          principal: admin,
+          recordingId: "rec-1",
+          effectiveRole: "approver",
+          purpose: "Record the governed approval decision for this transcript.",
+        }, bundle).id;
 
-      const runDecision = () =>
-        action === "approve"
-          ? approveRevisionCommand(admin, {
-              recordingId: "rec-1",
-              expectedPendingRevisionId: pending.id,
-              note: "Looks good.",
-              actionModeId: approverActionModeId,
-            }, bundle)
-          : requestChangesCommand(admin, {
-              recordingId: "rec-1",
-              expectedPendingRevisionId: pending.id,
-              reason: "Please correct the transcript summary before approval.",
-              actionModeId: approverActionModeId,
-            }, bundle);
+        const runDecision = () =>
+          action === "approve"
+            ? approveRevisionCommand(admin, {
+                recordingId: "rec-1",
+                expectedPendingRevisionId: pending.id,
+                note: "Looks good.",
+                actionModeId: approverActionModeId,
+              }, bundle)
+            : requestChangesCommand(admin, {
+                recordingId: "rec-1",
+                expectedPendingRevisionId: pending.id,
+                reason: "Please correct the transcript summary before approval.",
+                actionModeId: approverActionModeId,
+              }, bundle);
 
-      expect(runDecision).toThrowError(
-        expect.objectContaining({ code: "SELF_APPROVAL_FORBIDDEN" }),
-      );
-    } finally {
-      bundle.sqlite.close();
-    }
-  });
+        expect(runDecision).not.toThrow();
+
+        // Attribution under the wider rule: the decision row still records
+        // the acting identity plus the action-mode session it ran under.
+        expect(listApprovalRows(bundle)).toEqual(
+          expect.arrayContaining([
+            expect.objectContaining({
+              actorUserId: admin.userId,
+              adminActionSessionId: approverActionModeId,
+              effectiveRole: "approver",
+            }),
+          ]),
+        );
+      } finally {
+        bundle.sqlite.close();
+      }
+    },
+  );
 
   it("denies withdrawal when the pending revision has no known submitter identity", async () => {
     const { bundle, reviewer, pending } = await setupPendingFixture({ legacySubmitterIdentity: true });

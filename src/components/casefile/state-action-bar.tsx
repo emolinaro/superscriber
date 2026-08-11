@@ -9,6 +9,7 @@ type StateActionBarProps = {
   canRequestChanges: boolean;
   canReopen: boolean;
   canExport: boolean;
+  exportLabel?: string;
   saving: boolean;
   phoneSafetyMode: boolean;
   onSave: () => void;
@@ -31,6 +32,7 @@ export function StateActionBar({
   canRequestChanges,
   canReopen,
   canExport,
+  exportLabel,
   saving,
   phoneSafetyMode,
   onSave,
@@ -95,7 +97,7 @@ export function StateActionBar({
           ) : null}
           {canExport ? (
             <button className="button button-secondary" onClick={onExport} type="button">
-              Export approved transcript
+              {exportLabel ?? "Export approved transcript"}
             </button>
           ) : null}
           {!canSave && !hasGovernedActions ? null : null}

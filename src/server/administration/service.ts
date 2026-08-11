@@ -7,29 +7,40 @@ import type {
   Recording,
   TranscriptRevision,
 } from "@/domain/models";
+import { POLICY_PROFILES } from "@/domain/models";
 import {
   assertAssignmentCompatible,
   listAssignableUsers,
   listLocalUsers,
 } from "@/server/access/service";
+import { recordSecurityEvent } from "@/server/auth/security-events";
+import { actorContextForPrincipal, insertAuditEvent } from "@/server/casefile/audit";
 import { CasefileCommandError } from "@/server/casefile/errors";
 import { loadResetMailConfig } from "@/server/auth/reset-mail-config";
-import { getAppDb, type AppDatabase } from "@/server/db/client";
+import { getAppDb, resolveLedgerSnapshotDir, type AppDatabase } from "@/server/db/client";
 import {
+  deserializeSegments,
   toApprovalRecord,
   toRecording,
   toRecordingAssignment,
   toRevision,
 } from "@/server/db/mappers";
-import { and, desc, eq, isNull, sql } from "drizzle-orm";
+import { mkdirSync, unlinkSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
+import { and, desc, eq, isNotNull, isNull, or, sql } from "drizzle-orm";
 import {
+  adminActionSessions,
   approvals,
+  auditEvents,
   authControl,
   breakGlassRecoveryCodes,
   externalIdentities,
+  ingestionSessions,
   recordingAssignments,
   recordings,
   revisions,
+  securityEvents,
+  transcriptJobs,
   users as usersTable,
   webauthnCredentials,
   workspaces,
@@ -41,7 +52,7 @@ import {
   formatWorkflowStageLabel,
 } from "@/server/casefile/read-model";
 
-export type AdministrationSection = "accounts" | "assignments" | "policy";
+export type AdministrationSection = "accounts" | "assignments" | "policy" | "discipline";
 
 export type AdministrationAssignmentCompatibility = {
   allowed: boolean;
@@ -161,7 +172,19 @@ export type AdministrationPolicyViewModel = {
 export type AdministrationViewModel =
   | AdministrationAccountsViewModel
   | AdministrationAssignmentsViewModel
-  | AdministrationPolicyViewModel;
+  | AdministrationPolicyViewModel
+  | AdministrationDisciplineViewModel;
+
+export type AdministrationDisciplineViewModel = {
+  section: "discipline";
+  counts: {
+    auditEvents: number;
+    decisionRows: number;
+    govActionSessions: number;
+    endedAssignments: number;
+    securityEvents: number;
+  };
+};
 
 const ACCOUNT_COLUMNS = [
   { id: "displayName", label: "Name" },
@@ -325,6 +348,433 @@ function assignmentCompatibility(
 
     throw error;
   }
+}
+
+// Ledger reset (demo-governance-bringback): the one-way wipe. Audit/decision
+// ledger tables are cleared wholesale; users, recordings, revisions, jobs,
+// sessions, and media are untouched. The reset ITSELF keeps exactly one
+// surviving record in security_events (actor, counts, snapshot path,
+// timestamp) so the namespace never lies.
+function endedAssignmentPredicate() {
+  return or(
+    eq(recordingAssignments.status, "completed"),
+    isNotNull(recordingAssignments.endReason),
+  );
+}
+
+function ledgerCounts(db: AppDatabase) {
+  return {
+    auditEvents: db.select({ id: auditEvents.id }).from(auditEvents).all().length,
+    decisionRows: db.select({ id: approvals.id }).from(approvals).all().length,
+    govActionSessions: db
+      .select({ id: adminActionSessions.id })
+      .from(adminActionSessions)
+      .all().length,
+    endedAssignments: db
+      .select({ id: recordingAssignments.id })
+      .from(recordingAssignments)
+      .where(endedAssignmentPredicate())
+      .all().length,
+    securityEvents: db.select({ id: securityEvents.id }).from(securityEvents).all().length,
+  };
+}
+
+// D-5 compensating control: every destructive governance control writes the
+// rows it is about to delete into a JSON snapshot outside the database before
+// the delete transaction runs, so forensics survive the wipe. The snapshot
+// directory lives beside the database (see resolveLedgerSnapshotDir).
+function writeLedgerSnapshot(
+  kind: "ledger.reset" | "recording.purge",
+  actorUserId: string,
+  tables: Record<string, unknown[]>,
+  snapshotDir: string,
+) {
+  mkdirSync(snapshotDir, { recursive: true });
+  const stamp = new Date().toISOString().replace(/[:.]/g, "-");
+  const path = join(snapshotDir, `${kind}-${stamp}.json`);
+  writeFileSync(
+    path,
+    JSON.stringify({ type: kind, actorUserId, at: new Date().toISOString(), tables }, null, 2),
+    { mode: 0o600 },
+  );
+  return path;
+}
+
+export function resetWorkspaceLedger(
+  input: { actorUserId: string; expectedPhrase: string },
+  db: AppDatabase = getAppDb(),
+  snapshotDir: string = resolveLedgerSnapshotDir(),
+) {
+  if (input.expectedPhrase.trim() !== "RESET REQUIRED") {
+    throw new CasefileCommandError(
+      "VALIDATION_ERROR",
+      "Type the phrase RESET REQUIRED to confirm the ledger wipe.",
+      { expectedPhrase: "Type the phrase RESET REQUIRED." },
+    );
+  }
+
+  const before = ledgerCounts(db);
+
+  // Pre-wipe export snapshot (D-5): row-level copies of every table about to
+  // be cleared land OUTSIDE the database before the delete transaction, so
+  // the forensic trail survives the reset even if the transaction later fails.
+  const snapshotPath = writeLedgerSnapshot(
+    "ledger.reset",
+    input.actorUserId,
+    {
+      auditEvents: db.select().from(auditEvents).all(),
+      approvals: db.select().from(approvals).all(),
+      adminActionSessions: db.select().from(adminActionSessions).all(),
+      endedAssignments: db
+        .select()
+        .from(recordingAssignments)
+        .where(endedAssignmentPredicate())
+        .all(),
+      securityEvents: db.select().from(securityEvents).all(),
+    },
+    snapshotDir,
+  );
+
+  const record = db.transaction((tx) => {
+    tx.delete(auditEvents).run();
+    tx.delete(approvals).run();
+    tx.delete(adminActionSessions).run();
+    tx
+      .delete(recordingAssignments)
+      .where(endedAssignmentPredicate())
+      .run();
+    tx.delete(securityEvents).run();
+
+    return recordSecurityEvent(
+      {
+        type: "ledger.reset",
+        outcome: "success",
+        userId: input.actorUserId,
+        detail: `Governed ledger reset by an administrator. Cleared: ${before.auditEvents} audit events, ${before.decisionRows} decision rows, ${before.govActionSessions} governance action sessions, ${before.endedAssignments} ended assignments, ${before.securityEvents} security events. Rows were snapshotted to ${snapshotPath} before deletion.`,
+        metadata: {
+          clearedAuditEvents: before.auditEvents,
+          clearedDecisionRows: before.decisionRows,
+          clearedGovActionSessions: before.govActionSessions,
+          clearedEndedAssignments: before.endedAssignments,
+          clearedSecurityEvents: before.securityEvents,
+          snapshotPath,
+        },
+      },
+      tx,
+    );
+  });
+
+  return { id: record, before, snapshotPath };
+}
+
+// Recording purge (demo-governance-bringback): admin-only permanent deletion
+// of a recording and its casefile. The transcription-cleanup precedent
+// applies: tombstone/audit discipline over disappearance - every audit/ledger
+// row of the casefile is removed EXCEPT one surviving `recording.deleted`
+// event in security_events, which keeps the title, recording id, actor, and
+// timestamp. Per the D-5 compensating control, the whole casefile is
+// snapshotted outside the database before any row is deleted.
+export function deleteRecordingPermanently(
+  input: { recordingId: string; expectedTitle: string; actorUserId: string },
+  db: AppDatabase = getAppDb(),
+  snapshotDir: string = resolveLedgerSnapshotDir(),
+) {
+  const row = db.select().from(recordings).where(eq(recordings.id, input.recordingId)).get();
+  if (!row) {
+    throw new CasefileCommandError("NOT_FOUND", "No recording with that id exists.");
+  }
+  if (row.title !== input.expectedTitle.trim()) {
+    throw new CasefileCommandError(
+      "VALIDATION_ERROR",
+      "Type the recording title exactly to confirm permanent deletion.",
+      { expectedTitle: "Type the recording title exactly to confirm permanent deletion." },
+    );
+  }
+
+  const revisionIds = db
+    .select({ id: revisions.id })
+    .from(revisions)
+    .where(eq(revisions.recordingId, input.recordingId))
+    .all()
+    .map((entry) => entry.id);
+
+  const mediaPath = row.mediaPath;
+
+  // Pre-delete export snapshot (D-5 compensating control).
+  const snapshotPath = writeLedgerSnapshot(
+    "recording.purge",
+    input.actorUserId,
+    {
+      recording: [row],
+      revisions: db.select().from(revisions).where(eq(revisions.recordingId, input.recordingId)).all(),
+      approvals: db.select().from(approvals).where(eq(approvals.recordingId, input.recordingId)).all(),
+      recordingAssignments: db
+        .select()
+        .from(recordingAssignments)
+        .where(eq(recordingAssignments.recordingId, input.recordingId))
+        .all(),
+      adminActionSessions: db
+        .select()
+        .from(adminActionSessions)
+        .where(eq(adminActionSessions.recordingId, input.recordingId))
+        .all(),
+      ingestionSessions: db
+        .select()
+        .from(ingestionSessions)
+        .where(eq(ingestionSessions.recordingId, input.recordingId))
+        .all(),
+      transcriptJobs: db
+        .select()
+        .from(transcriptJobs)
+        .where(eq(transcriptJobs.recordingId, input.recordingId))
+        .all(),
+      auditEvents: db
+        .select()
+        .from(auditEvents)
+        .where(eq(auditEvents.recordingId, input.recordingId))
+        .all(),
+    },
+    snapshotDir,
+  );
+
+  db.transaction((tx) => {
+    // The surviving deletion record lands FIRST - even a mid-flight crash
+    // cannot leave the deletion unlogged.
+    recordSecurityEvent(
+      {
+        type: "recording.deleted",
+        outcome: "success",
+        userId: input.actorUserId,
+        detail: `Recording permanently deleted by an administrator: "${row.title}". Rows were snapshotted to ${snapshotPath} before deletion.`,
+        metadata: {
+          recordingId: row.id,
+          title: row.title,
+          actorUserId: input.actorUserId,
+          revisionCount: revisionIds.length,
+          snapshotPath,
+        },
+      },
+      tx,
+    );
+
+    tx.delete(recordingAssignments)
+      .where(eq(recordingAssignments.recordingId, input.recordingId))
+      .run();
+    tx.delete(adminActionSessions)
+      .where(eq(adminActionSessions.recordingId, input.recordingId))
+      .run();
+    tx.delete(approvals).where(eq(approvals.recordingId, input.recordingId)).run();
+    tx.delete(revisions).where(eq(revisions.recordingId, input.recordingId)).run();
+    tx.delete(ingestionSessions)
+      .where(eq(ingestionSessions.recordingId, input.recordingId))
+      .run();
+    tx.delete(transcriptJobs).where(eq(transcriptJobs.recordingId, input.recordingId)).run();
+
+    // Every audit line of the casefile dies with it - except the deletion
+    // record above (security_events is global, not per-recording).
+    tx.delete(auditEvents).where(eq(auditEvents.recordingId, input.recordingId)).run();
+
+    tx.delete(recordings).where(eq(recordings.id, input.recordingId)).run();
+  });
+
+  if (mediaPath) {
+    try {
+      unlinkSync(mediaPath);
+    } catch (error) {
+      // The casefile is gone; an orphaned media artifact is acceptable. Log
+      // the failure so operators can sweep the orphan.
+      console.error("recording purge left an orphaned media artifact", {
+        recordingId: input.recordingId,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
+
+  return { title: row.title, revisionCount: revisionIds.length, snapshotPath };
+}
+
+// Revision recovery (demo-governance-bringback): admin recovery of an
+// archived revision. The old revision is cloned into a NEW draft (provenance
+// visible in the summary and the event detail), becoming the active revision.
+// The lineage itself never mutates - this APPENDS one more row.
+export function recoverRevisionVersion(
+  input: {
+    recordingId: string;
+    sourceRevisionId: string;
+    actorUserId: string;
+  },
+  db: AppDatabase = getAppDb(),
+) {
+  const recordingRow = db
+    .select()
+    .from(recordings)
+    .where(eq(recordings.id, input.recordingId))
+    .get();
+  if (!recordingRow) {
+    throw new CasefileCommandError("NOT_FOUND", "No recording with that id exists.");
+  }
+  if (recordingRow.pendingRevisionId) {
+    // Captain decision 2026-08-10: recovery while a submission is pending
+    // would null the pending pointer while leaving the pending revision row
+    // in `pending_approval` forever - no withdraw/approve/request-changes
+    // target resolves it. Reject instead of orphaning the lineage.
+    throw new CasefileCommandError(
+      "STATE_CHANGED",
+      "A submission is pending; resolve it before recovering an older revision.",
+    );
+  }
+
+  const sourceRow = db
+    .select()
+    .from(revisions)
+    .where(
+      and(
+        eq(revisions.id, input.sourceRevisionId),
+        eq(revisions.recordingId, input.recordingId),
+      ),
+    )
+    .get();
+  if (!sourceRow) {
+    throw new CasefileCommandError("NOT_FOUND", "That revision is not part of this casefile.");
+  }
+  if (sourceRow.id === recordingRow.currentRevisionId) {
+    throw new CasefileCommandError("STATE_CHANGED", "That revision is already the active one.");
+  }
+
+  const nextVersion =
+    (db
+      .select({ maxVersion: sql<number | null>`MAX(version)` })
+      .from(revisions)
+      .where(eq(revisions.recordingId, input.recordingId))
+      .get()?.maxVersion ?? 0) + 1;
+
+  const actorRow = db
+    .select()
+    .from(usersTable)
+    .where(eq(usersTable.id, input.actorUserId))
+    .get();
+  if (!actorRow) {
+    throw new CasefileCommandError("ACCESS_DENIED", "The acting account no longer exists.");
+  }
+  const actorPrincipal: Principal = {
+    userId: actorRow.id,
+    email: actorRow.email,
+    displayName: actorRow.displayName,
+    role: actorRow.role,
+  };
+
+  const now = new Date().toISOString();
+  const newRevisionId = `rev-${crypto.randomUUID()}`;
+  deserializeSegments(sourceRow.segmentsJson); // shape check: the clone writes the same JSON
+
+  db.transaction((tx) => {
+    tx.insert(revisions)
+      .values({
+        id: newRevisionId,
+        recordingId: input.recordingId,
+        version: nextVersion,
+        state: "draft",
+        basedOnRevisionId: sourceRow.id,
+        createdByRole: "admin",
+        createdByUserId: input.actorUserId,
+        createdAt: now,
+        submittedByUserId: null,
+        submittedAt: null,
+        approvedAt: null,
+        summary: `Recovered from v${sourceRow.version}. ${sourceRow.summary}`,
+        segmentsJson: sourceRow.segmentsJson,
+      })
+      .run();
+
+    tx.update(recordings)
+      .set({
+        currentRevisionId: newRevisionId,
+        approvedRevisionId: null,
+        pendingRevisionId: null,
+        updatedAt: now,
+      })
+      .where(eq(recordings.id, input.recordingId))
+      .run();
+
+    insertAuditEvent(tx, {
+      workspaceId: recordingRow.workspaceId,
+      recordingId: input.recordingId,
+      actor: actorContextForPrincipal(actorPrincipal),
+      type: "revision.recovered",
+      detail: `Recovered from revision v${sourceRow.version}; the recovered draft is now the active revision ${nextVersion}.`,
+      metadata: {
+        fromRevisionId: sourceRow.id,
+        fromVersion: sourceRow.version,
+        newRevisionId,
+        newVersion: nextVersion,
+      },
+      createdAt: now,
+    });
+
+    try {
+      recordSecurityEvent(
+        {
+          type: "revision.recovered",
+          outcome: "success",
+          userId: input.actorUserId,
+          detail: `Administrator recovered revision v${sourceRow.version} as the active draft.`,
+          metadata: { recordingId: input.recordingId, fromVersion: sourceRow.version },
+        },
+        tx,
+      );
+    } catch {
+      // security log must never break the control operation
+    }
+  });
+
+  return { recording: toRecording(recordingRow), newRevisionId, newVersion: nextVersion };
+}
+
+// Policy profile editing (demo-governance-bringback): the workspace policy
+// profile is an admin-governed setting. Change it through here so the audit
+// trail keeps the actor; ad-hoc SQL bypasses the security log by design.
+export function setWorkspacePolicyProfile(
+  input: { profileId: PolicyProfileId; actorUserId: string },
+  db: AppDatabase = getAppDb(),
+) {
+  if (!POLICY_PROFILES.includes(input.profileId)) {
+    throw new CasefileCommandError("VALIDATION_ERROR", "Unknown policy profile.");
+  }
+
+  const workspace = db.select().from(workspaces).get();
+  if (!workspace) {
+    throw new CasefileCommandError("NOT_FOUND", "No workspace exists yet.");
+  }
+
+  const current = workspace.policyProfileId;
+  if (current === input.profileId) {
+    return { profileId: current, changed: false };
+  }
+
+  db.update(workspaces)
+    .set({ policyProfileId: input.profileId })
+    .where(eq(workspaces.id, workspace.id))
+    .run();
+
+  try {
+    recordSecurityEvent(
+      {
+        type: "policy.updated",
+        outcome: "success",
+        userId: input.actorUserId,
+        detail: `Workspace policy profile changed by an administrator.`,
+        metadata: { from: current, to: input.profileId },
+      },
+      db,
+    );
+  } catch {
+    // security log must never break the control operation
+  }
+
+  return {
+    profileId: db.select().from(workspaces).get()!.policyProfileId,
+    changed: true,
+  };
 }
 
 function policyProfileLabel(profileId: PolicyProfileId) {
@@ -523,6 +973,13 @@ export function listAdministration(
         description: describePolicyProfile(profileId),
       },
       rows: buildPolicyRows(profileId),
+    };
+  }
+
+  if (firstValue(values.section) === "discipline") {
+    return {
+      section: "discipline",
+      counts: ledgerCounts(db),
     };
   }
 

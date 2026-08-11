@@ -2,10 +2,12 @@
 
 import type { AdministrationSection, AdministrationViewModel } from "@/server/administration/service";
 import { usePhoneSafetyMode } from "@/components/ui/phone-safety";
+import { InlineNotice } from "@/components/ui/inline-notice";
 import { AccountsSection } from "./accounts-section";
 import { BreakGlassPanel } from "./break-glass-panel";
 import { AssignmentsSection } from "./assignments-section";
 import { PolicySection } from "./policy-section";
+import { DataDisciplineSection } from "./data-discipline-section";
 
 function sectionHref(section: AdministrationSection) {
   return `/administration?section=${section}`;
@@ -14,14 +16,20 @@ function sectionHref(section: AdministrationSection) {
 export function AdministrationShell({
   section,
   model,
+  notice,
+  error,
 }: {
   section: AdministrationSection;
   model: AdministrationViewModel;
+  notice?: string | null;
+  error?: string | null;
 }) {
   const phoneSafetyMode = usePhoneSafetyMode();
 
   return (
     <div className="shell shell-wide stack administration-shell">
+      {notice ? <InlineNotice tone="success">{notice}</InlineNotice> : null}
+      {error ? <InlineNotice tone="danger">{error}</InlineNotice> : null}
       <section className="surface-intro surface-intro--administration">
         <div className="surface-intro__copy stack-tight">
           <p className="surface-intro__eyebrow">Administration</p>
@@ -55,6 +63,13 @@ export function AdministrationShell({
           >
             Policy
           </a>
+          <a
+            aria-current={section === "discipline" ? "page" : undefined}
+            className="administration-nav__link interactive-target"
+            href={sectionHref("discipline")}
+          >
+            Data discipline
+          </a>
         </div>
       </nav>
 
@@ -80,6 +95,9 @@ export function AdministrationShell({
       ) : null}
       {model.section === "policy" ? (
         <PolicySection model={model} phoneSafetyMode={phoneSafetyMode} />
+      ) : null}
+      {model.section === "discipline" ? (
+        <DataDisciplineSection counts={model.counts} phoneSafetyMode={phoneSafetyMode} />
       ) : null}
     </div>
   );

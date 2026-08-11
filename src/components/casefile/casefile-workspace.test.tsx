@@ -36,7 +36,7 @@ vi.mock("@/components/orchestration-status-poller", () => ({
   },
 }));
 
-function renderWorkspace(overrides: Record<string, unknown> = {}) {
+function renderWorkspace(overrides: Record<string, unknown> = {}, pageNotice?: string) {
   const saveAction = vi.fn();
   const submitAction = vi.fn();
   const withdrawAction = vi.fn();
@@ -52,6 +52,7 @@ function renderWorkspace(overrides: Record<string, unknown> = {}) {
       enterAdminActionModeAction={enterAdminActionModeAction}
       exitAdminActionModeAction={exitAdminActionModeAction}
       initialCasefile={createCasefile(overrides)}
+      pageNotice={pageNotice}
       reopenAction={reopenAction}
       requestChangesAction={requestChangesAction}
       saveAction={saveAction}
@@ -169,6 +170,14 @@ describe("CasefileWorkspace", () => {
 
   afterEach(() => {
     vi.restoreAllMocks();
+  });
+
+  it("renders a page-level success notice from the recording route", () => {
+    renderWorkspace({}, "Recovered archived content into active draft v3; history kept.");
+
+    expect(screen.getByText("Recovered archived content into active draft v3; history kept.")).toHaveTextContent(
+      "Recovered archived content into active draft v3; history kept.",
+    );
   });
 
   it.each([
@@ -568,5 +577,78 @@ describe("CasefileWorkspace", () => {
       "aria-expanded",
       "false",
     );
+  });
+
+  it("keeps the export affordance visible with an honest empty state before approval (demo-governance-bringback)", async () => {
+    const user = userEvent.setup();
+    renderWorkspace(createAdminOversightCasefile({
+      revision: null,
+      revisions: [],
+    }));
+
+    // With no approved revision at all, the button stays for export-authorized
+    // views but is renamed; the dialog explains the empty state. (Admin
+    // oversight keeps the surface even outside action mode.)
+    await user.click(screen.getByRole("button", { name: "Export transcript" }));
+
+    const dialog = await screen.findByRole("dialog", { name: "Export approved transcript" });
+    expect(
+      within(dialog).getByText(/No approved revision yet - the default export target/),
+    ).toBeVisible();
+    expect(within(dialog).getAllByText("No revision exists yet for this casefile.").length).toBeGreaterThan(0);
+  });
+
+  it("mounts the danger zone and the revision navigator only for admin oversight (demo-governance-bringback)", () => {
+    renderWorkspace(createAdminOversightCasefile());
+
+    expect(
+      screen.getByRole("heading", { name: "Danger zone" }),
+    ).toBeVisible();
+
+    cleanup();
+    renderWorkspace(createCasefile());
+    expect(screen.queryByRole("heading", { name: "Danger zone" })).toBeNull();
+  });
+
+  it("hides the danger zone under phone safety (demo-governance-bringback)", () => {
+    phoneSafetyModeMock.mockReturnValue(true);
+    renderWorkspace(createAdminOversightCasefile());
+
+    expect(screen.queryByRole("heading", { name: "Danger zone" })).toBeNull();
+  });
+
+  it("offers the revision snapshot navigator to admin oversight (demo-governance-bringback)", async () => {
+    const user = userEvent.setup();
+    const adminCasefile = createAdminOversightCasefile({
+      revisions: [
+        {
+          ...createCasefile().revisions[0],
+          id: "rev-1",
+          version: 2,
+          state: "draft",
+          stateLabel: "Draft",
+        },
+        {
+          ...createCasefile().revisions[0],
+          id: "rev-0",
+          version: 1,
+          state: "superseded",
+          stateLabel: "Superseded",
+        },
+      ],
+    });
+
+    renderWorkspace(adminCasefile);
+
+    const select = screen.getByRole("combobox", { name: "Choose a revision snapshot" });
+    expect(select).toBeVisible();
+    await user.selectOptions(select, "rev-0");
+    expect(routerPushMock).toHaveBeenCalledWith("/recordings/rec-1?revision=rev-0");
+
+    cleanup();
+    renderWorkspace(createCasefile());
+    expect(
+      screen.queryByRole("combobox", { name: "Choose a revision snapshot" }),
+    ).toBeNull();
   });
 });

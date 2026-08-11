@@ -3,9 +3,15 @@
 import { useState } from "react";
 import userEvent from "@testing-library/user-event";
 import { act, cleanup, render, screen, waitFor } from "@testing-library/react";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createCasefile } from "./test-fixtures";
 import { GovernanceDrawer } from "./governance-drawer";
+
+// The Revisions tab now hosts the recovery control; the drawer tests do not
+// exercise it, but RevisionHistory requires the router hook.
+vi.mock("next/navigation", () => ({
+  useRouter: () => ({ push: vi.fn(), refresh: vi.fn() }),
+}));
 
 function setViewport(width: number) {
   Object.defineProperty(window, "innerWidth", {

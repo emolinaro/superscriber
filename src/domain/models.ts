@@ -225,7 +225,8 @@ export type AuditEvent = {
     | "admin.action_mode.entered"
     | "admin.action_mode.exited"
     | "export.issued"
-    | "policy.denied";
+    | "policy.denied"
+    | "revision.recovered";
   detail: string;
   metadata: AuditMetadata;
   createdAt: string;
