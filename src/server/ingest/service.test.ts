@@ -82,6 +82,7 @@ describe("resumable ingest service", () => {
       principal: uploaderPrincipal,
       title: "Interview 001",
       languageHint: "english",
+      transcriptModel: null,
       source: "upload",
       fileName: "interview.wav",
       mimeType: "audio/wav",
@@ -105,12 +106,46 @@ describe("resumable ingest service", () => {
     });
   });
 
+  it("keeps the chosen transcription model attached to the recording (demo-advanced-model-picker)", () => {
+    const session = createResumableUploadSession({
+      principal: uploaderPrincipal,
+      title: "Model-picked interview",
+      languageHint: "english",
+      transcriptModel: "tiny",
+      source: "upload",
+      fileName: "interview.wav",
+      mimeType: "audio/wav",
+      fileSize: 16,
+    });
+
+    const state = readState();
+    const recording = state.recordings.find((entry) => entry.id === session.recordingId);
+    expect(recording?.transcriptModel).toBe("tiny");
+  });
+
+  it("leaves transcriptModel null when the picker was never touched", () => {
+    const session = createResumableUploadSession({
+      principal: uploaderPrincipal,
+      title: "Default-model interview",
+      languageHint: "english",
+      source: "upload",
+      fileName: "interview.wav",
+      mimeType: "audio/wav",
+      fileSize: 16,
+    });
+
+    const state = readState();
+    const recording = state.recordings.find((entry) => entry.id === session.recordingId);
+    expect(recording?.transcriptModel).toBeNull();
+  });
+
   it("allows an admin creator to inspect, append, and finalize their own session", async () => {
     const payload = Buffer.from("admin-upload");
     const session = createResumableUploadSession({
       principal: adminPrincipal,
       title: "Admin Interview",
       languageHint: "english",
+      transcriptModel: null,
       source: "upload",
       fileName: "admin.wav",
       mimeType: "audio/wav",
@@ -142,6 +177,7 @@ describe("resumable ingest service", () => {
       principal: uploaderPrincipal,
       title: "Interview 002",
       languageHint: "english",
+      transcriptModel: null,
       source: "upload",
       fileName: "interview.wav",
       mimeType: "audio/wav",
@@ -181,6 +217,7 @@ describe("resumable ingest service", () => {
       principal: uploaderPrincipal,
       title: "Interview 003",
       languageHint: "english",
+      transcriptModel: null,
       source: "upload",
       fileName: "interview.wav",
       mimeType: "audio/wav",
@@ -209,6 +246,7 @@ describe("resumable ingest service", () => {
       principal: uploaderPrincipal,
       title: "Legacy Interview",
       languageHint: "english",
+      transcriptModel: null,
       source: "upload",
       fileName: "legacy.wav",
       mimeType: "audio/wav",
@@ -248,6 +286,7 @@ describe("resumable ingest service", () => {
         principal: uploaderPrincipal,
         title: "   ",
         languageHint: "english",
+        transcriptModel: null,
         source: "upload",
         fileName: "interview.wav",
         mimeType: "audio/wav",
@@ -265,6 +304,7 @@ describe("resumable ingest service", () => {
         principal: uploaderPrincipal,
         title: "x".repeat(121),
         languageHint: "english",
+        transcriptModel: null,
         source: "upload",
         fileName: "interview.wav",
         mimeType: "audio/wav",
@@ -296,6 +336,7 @@ describe("resumable ingest service", () => {
       principal: uploaderPrincipal,
       title: "Interview 004",
       languageHint: "english",
+      transcriptModel: null,
       source: "upload",
       fileName: "resume.wav",
       mimeType: "audio/wav",
@@ -337,6 +378,7 @@ describe("resumable ingest service", () => {
       principal: uploaderPrincipal,
       title: "Interview 005",
       languageHint: "english",
+      transcriptModel: null,
       source: "upload",
       fileName: "interview.wav",
       mimeType: "audio/wav",
@@ -366,6 +408,7 @@ describe("resumable ingest service", () => {
       principal: uploaderPrincipal,
       title: "Interview 006",
       languageHint: "english",
+      transcriptModel: null,
       source: "upload",
       fileName: "interview.wav",
       mimeType: "audio/wav",
@@ -405,6 +448,7 @@ describe("resumable ingest service", () => {
       principal: uploaderPrincipal,
       title: "Interview 007",
       languageHint: "english",
+      transcriptModel: null,
       source: "upload",
       fileName: "interview.wav",
       mimeType: "audio/wav",
@@ -438,6 +482,7 @@ describe("resumable ingest service", () => {
       principal: uploaderPrincipal,
       title: "Interview 007b",
       languageHint: "english",
+      transcriptModel: null,
       source: "upload",
       fileName: "interview.wav",
       mimeType: "audio/wav",
@@ -479,6 +524,7 @@ describe("resumable ingest service", () => {
       principal: uploaderPrincipal,
       title: "Interview 008",
       languageHint: "english",
+      transcriptModel: null,
       source: "upload",
       fileName: "interview.wav",
       mimeType: "audio/wav",
@@ -518,6 +564,7 @@ describe("resumable ingest service", () => {
       principal: uploaderPrincipal,
       title: "Interview 009",
       languageHint: "english",
+      transcriptModel: null,
       source: "upload",
       fileName: "interview.wav",
       mimeType: "audio/wav",

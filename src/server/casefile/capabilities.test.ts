@@ -50,6 +50,7 @@ function buildRecording(overrides: Partial<Recording> = {}): Recording {
     mediaPath: null,
     originalFileName: null,
     languageHint: "en",
+    transcriptModel: null,
     uploadedByRole: "uploader",
     uploadedByUserId: principals.uploader.userId,
     ingestionSessionId: null,

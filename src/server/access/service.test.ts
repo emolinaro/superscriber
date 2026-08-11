@@ -109,6 +109,7 @@ function insertRecordingFixture(
     mediaPath: null,
     originalFileName: null,
     languageHint: "en",
+    transcriptModel: null,
     uploadedByRole: "uploader",
     uploadedByUserId: params.uploadedByUserId ?? null,
     ingestionSessionId: null,

@@ -326,6 +326,9 @@ export const recordings = sqliteTable(
     mediaPath: text("media_path"),
     originalFileName: text("original_file_name"),
     languageHint: text("language_hint").notNull(),
+    // demo-advanced-model-picker: the faster-whisper tier chosen at ingest;
+    // null means the worker's configured default.
+    transcriptModel: text("transcript_model"),
     uploadedByRole: text("uploaded_by_role", { enum: USER_ROLES })
       .$type<UserRole>()
       .notNull(),

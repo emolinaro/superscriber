@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState, type FormEvent } from "react";
+import { useCallback, useEffect, useRef, useState, type FormEvent } from "react";
 import { useRouter } from "next/navigation";
 import type { RecordingSource, UserRole } from "@/domain/models";
 import { ErrorSummary, type ErrorSummaryItem } from "@/components/ui/error-summary";
@@ -74,6 +74,22 @@ export function IngestFlow({
   const [source, setSource] = useState<RecordingSource>("upload");
   const [title, setTitle] = useState("");
   const [language, setLanguage] = useState("");
+  // demo-model-tier-picker: the catalog is server-checked against actual
+  // model artifacts on this host; unprovisioned tiers are disabled and say
+  // so explicitly. Default = best-quality provisioned tier (or the worker's
+  // configured default when provisioned).
+  const [modelCatalog, setModelCatalog] = useState<{
+    tiers: Array<{
+      id: string;
+      speedNote: string;
+      qualityNote: string;
+      available: boolean;
+      default: boolean;
+    }>;
+    configuredModel: string;
+    defaultModel: string | null;
+  } | null>(null);
+  const [transcriptModel, setTranscriptModel] = useState("");
   // The picker accepts a batch; uploadFile stays the primary file so the
   // single-file path is byte-identical to before.
   const [uploadFiles, setUploadFiles] = useState<File[]>([]);
@@ -96,6 +112,32 @@ export function IngestFlow({
     message: string;
   } | null>(null);
   const boundaryRef = useRef(-1);
+
+  // demo-model-tier-picker: the catalog loads lazily on FIRST expansion of
+  // Advanced settings (not on mount) - no network chatter for ignored UI,
+  // and test doubles interacting with the upload lane keep their call order.
+  const modelCatalogRequestedRef = useRef(false);
+  const loadModelCatalog = useCallback(() => {
+    if (modelCatalogRequestedRef.current) {
+      return;
+    }
+    modelCatalogRequestedRef.current = true;
+    void fetch("/api/models/catalog", { cache: "no-store" })
+      .then(async (response) => (response.ok ? await response.json() : null))
+      .then((catalog) => {
+        if (!catalog) {
+          return;
+        }
+        setModelCatalog(catalog);
+        setTranscriptModel((current) => {
+          const currentTier = catalog.tiers.find(
+            (tier: { id: string; available: boolean }) => tier.id === current,
+          );
+          return currentTier?.available ? current : catalog.defaultModel ?? "";
+        });
+      })
+      .catch(() => undefined);
+  }, []);
 
   useEffect(() => {
     setRecordingSupported(isBrowserRecordingSupported());
@@ -256,6 +298,7 @@ export function IngestFlow({
         fileName: file.name,
         mimeType: file.type,
         fileSize: file.size,
+        transcriptModel: transcriptModel || null,
       }),
     });
 
@@ -378,6 +421,7 @@ export function IngestFlow({
         source,
         fileName: file.name,
         mimeType: file.type,
+        transcriptModel: transcriptModel || null,
         fileSize: file.size,
       }),
     });
@@ -664,6 +708,66 @@ export function IngestFlow({
               </div>
             </div>
           </section>
+
+          <details
+            className="ingest-advanced"
+            data-testid="advanced-settings"
+            onToggle={(event) => {
+              if ((event.target as HTMLDetailsElement).open) {
+                loadModelCatalog();
+              }
+            }}
+          >
+            <summary className="ingest-advanced__toggle">Advanced settings</summary>
+            <div className="field ingest-advanced__field">
+              <label className="field-label" htmlFor="recording-model">
+                Transcription model
+              </label>
+              <select
+                aria-describedby="recording-model-note"
+                disabled={!modelCatalog}
+                id="recording-model"
+                onChange={(event) => setTranscriptModel(event.target.value)}
+                value={transcriptModel}
+              >
+                {!modelCatalog ? <option value="">Checking available models...</option> : null}
+                {modelCatalog && !modelCatalog.defaultModel ? (
+                  <option value="">No provisioned models available</option>
+                ) : null}
+                {modelCatalog
+                  ? modelCatalog.tiers.map((tier) => (
+                      <option
+                        disabled={!tier.available}
+                        key={tier.id}
+                        value={tier.id}
+                      >
+                        {tier.id}
+                        {tier.default ? " - default" : ""}
+                        {!tier.available ? " - not available on this host" : ""}
+                      </option>
+                    ))
+                  : null}
+              </select>
+              {modelCatalog ? (
+                <ul className="ingest-model-notes" aria-label="Model speed and quality notes">
+                  {modelCatalog.tiers.map((tier) => (
+                    <li key={tier.id}>
+                      <strong>{tier.id}</strong>: {tier.qualityNote} · {tier.speedNote}
+                      {tier.available ? "" : " - not provisioned here"}
+                    </li>
+                  ))}
+                </ul>
+              ) : null}
+              <p className="field-note" id="recording-model-note">
+                The selected model is requested for this recording. If it cannot run, the worker
+                falls back to the configured default or stub engine and discloses that in the
+                revision summary.
+              </p>
+              {modelCatalog ? (
+                <p className="field-note">Configured worker model: {modelCatalog.configuredModel}.</p>
+              ) : null}
+            </div>
+          </details>
 
           <section className="ingest-section stack-tight">
             <h3 className="ingest-section__title">Transfer</h3>

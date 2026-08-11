@@ -1,7 +1,17 @@
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, unlinkSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  statSync,
+  unlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
-import { dirname, join } from "node:path";
+import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path";
 import Database from "better-sqlite3";
 import { expect, type Locator, type Page } from "@playwright/test";
 
@@ -56,7 +66,7 @@ type RuntimeRoot = {
 let sharedRecordingId = "";
 let sharedRecordingTitle = "";
 
-function buildSilentWavBuffer({
+export function buildSilentWavBuffer({
   durationMs = 1_500,
   sampleRate = 8_000,
 }: {
@@ -454,6 +464,66 @@ conn.close()
       actionModeId,
     );
   });
+}
+
+// demo-model-tier-picker: fabricate provisioned model artifacts on whichever
+// runtime hosts the catalog check, so a tier flips from unavailable to
+// selectable without a server restart (the catalog stat()s on every request).
+export function provisionRuntimeModelTier(tierId: string) {
+  if (e2eContainerName()) {
+    execContainerPython(
+      `import os, sys
+tier = sys.argv[1]
+root = os.environ.get("SUPERSCRIBER_TRANSCRIBE_MODEL_DIR", "/app/models")
+dir_path = os.path.join(root, tier)
+os.makedirs(dir_path, exist_ok=True)
+with open(os.path.join(dir_path, "model.bin"), "wb") as handle:
+    handle.write(b"bin")
+with open(os.path.join(dir_path, "config.json"), "w", encoding="utf8") as handle:
+    handle.write("{}")
+`,
+      [tierId],
+    );
+    return;
+  }
+
+  const base = join(hostRuntimeModelRoot(), tierId);
+  mkdirSync(base, { recursive: true });
+  writeFileSync(join(base, "model.bin"), "bin");
+  writeFileSync(join(base, "config.json"), "{}");
+}
+
+function hostRuntimeModelRoot() {
+  const e2eRoot = process.env.SUPERSCRIBER_E2E_MODEL_DIR?.trim();
+  const serverRoot = process.env.SUPERSCRIBER_TRANSCRIBE_MODEL_DIR?.trim();
+  if (!e2eRoot || !serverRoot || resolve(e2eRoot) !== resolve(serverRoot)) {
+    throw new Error(
+      "Host E2E requires matching SUPERSCRIBER_E2E_MODEL_DIR and SUPERSCRIBER_TRANSCRIBE_MODEL_DIR values.",
+    );
+  }
+
+  const root = resolve(e2eRoot);
+  const safeParent = resolve(process.cwd(), ".tmp");
+  const relativeRoot = relative(safeParent, root);
+  if (
+    !relativeRoot ||
+    relativeRoot.startsWith("..") ||
+    isAbsolute(relativeRoot) ||
+    !basename(root).startsWith("e2e-models.")
+  ) {
+    throw new Error("Host E2E model directories must use .tmp/e2e-models.<run-id>.");
+  }
+  return root;
+}
+
+export function resetRuntimeModelTiers() {
+  if (!e2eContainerName()) {
+    rmSync(hostRuntimeModelRoot(), { recursive: true, force: true });
+  }
+}
+
+export function cleanupRuntimeModelTiers() {
+  resetRuntimeModelTiers();
 }
 
 export function queryRuntimeRows<Row>(sql: string, params: string[]): Row[] {
