@@ -218,6 +218,63 @@ class HeartbeatLoopSimulationTest(unittest.TestCase):
         self.assertIsNone(posted[-1]["transcribedUntilMs"])
         self.assertIsNone(posted[-1]["segmentsSeen"])
 
+    def test_progress_updates_send_immediately_then_coalesce_until_final_flush(self):
+        worker_main = load_worker_main()
+        posted = []
+
+        def fake_post_json(config, path, payload):
+            posted.append((time.monotonic(), dict(payload)))
+            return {}
+
+        original_post = worker_main.post_json
+        worker_main.post_json = fake_post_json
+        try:
+            config = SimpleNamespace(
+                worker_id="sim-worker",
+                base_url="http://app.test",
+                secret=None,
+                heartbeat_seconds=60.0,
+            )
+            loop = worker_main.HeartbeatLoop(config, "job-throttled")
+            loop.start()
+            try:
+                first_update_at = time.monotonic()
+                loop.update(
+                    transcribed_until_ms=1_000,
+                    audio_duration_ms=10_000,
+                    segments_seen=1,
+                )
+                deadline = time.time() + 2.0
+                while not posted and time.time() < deadline:
+                    time.sleep(0.01)
+
+                self.assertEqual(len(posted), 1)
+                self.assertLess(posted[0][0] - first_update_at, 0.5)
+
+                loop.update(
+                    transcribed_until_ms=2_000,
+                    audio_duration_ms=10_000,
+                    segments_seen=2,
+                )
+                loop.update(
+                    transcribed_until_ms=3_000,
+                    audio_duration_ms=10_000,
+                    segments_seen=3,
+                )
+                time.sleep(1.0)
+                self.assertEqual(len(posted), 1)
+
+                flush_started_at = time.monotonic()
+                loop.flush()
+                self.assertEqual(len(posted), 2)
+                self.assertLess(posted[1][0] - flush_started_at, 0.5)
+                self.assertEqual(posted[1][1]["transcribedUntilMs"], 3_000)
+                self.assertEqual(posted[1][1]["segmentsSeen"], 3)
+            finally:
+                loop.stop()
+        finally:
+            worker_main.post_json = original_post
+
 
 class ProcessJobProgressTest(unittest.TestCase):
     def test_short_job_posts_engine_sample_before_completion(self):

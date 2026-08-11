@@ -28,19 +28,32 @@ function seedProductionShapedV2(sqlite: Database.Database) {
       ingestion_session_id, transcript_job_id, integrity_state, transcript_job_state,
       current_revision_id, approved_revision_id, pending_revision_id,
       verification_summary, created_at, updated_at, automation_cursor
-    ) VALUES (
+    ) VALUES
+    (
       'rec-1', 'ws-1', 'Production recording', 'upload', 'audio', 'audio/wav', NULL,
       'rec-1.wav', 'english', 'uploader', NULL,
       'ing-1', 'job-1', 'verified', 'completed',
       'rev-1', 'rev-1', NULL,
       'Verified.', '${NOW}', '${NOW}', NULL
+    ),
+    (
+      'rec-live', 'ws-1', 'Legacy in-flight recording', 'upload', 'audio', 'audio/wav',
+      '/data/rec-live.wav', 'rec-live.wav', 'english', 'uploader', NULL,
+      'ing-live', 'job-live', 'verified', 'running',
+      NULL, NULL, NULL,
+      'Verified.', '${NOW}', '${NOW}', NULL
     );
     INSERT INTO ingestion_sessions (
       id, recording_id, source, state, adapter, created_by_user_id, created_at, updated_at
-    ) VALUES ('ing-1', 'rec-1', 'upload', 'verified', 'upload', NULL, '${NOW}', '${NOW}');
+    ) VALUES
+      ('ing-1', 'rec-1', 'upload', 'verified', 'upload', NULL, '${NOW}', '${NOW}'),
+      ('ing-live', 'rec-live', 'upload', 'verified', 'upload', NULL, '${NOW}', '${NOW}');
     INSERT INTO transcript_jobs (
-      id, recording_id, state, adapter, created_at, updated_at, diarization_status
-    ) VALUES ('job-1', 'rec-1', 'completed', 'stub', '${NOW}', '${NOW}', 'available');
+      id, recording_id, state, adapter, created_at, updated_at, progress_percent,
+      diarization_status
+    ) VALUES
+      ('job-1', 'rec-1', 'completed', 'stub', '${NOW}', '${NOW}', 100, 'available'),
+      ('job-live', 'rec-live', 'running', 'stub', '${NOW}', '${NOW}', 75, 'pending');
     INSERT INTO revisions (
       id, recording_id, version, state, based_on_revision_id, created_by_role,
       created_by_user_id, submitted_by_user_id, created_at, submitted_at, approved_at,
@@ -135,6 +148,16 @@ describe("migration rehearsal on production-shaped copies", () => {
       expect.arrayContaining(["transcribed_until_ms", "audio_duration_ms", "segments_seen"]),
     );
     expect(
+      production
+        .prepare(
+          `SELECT id, state, progress_percent AS progressPercent FROM transcript_jobs ORDER BY id`,
+        )
+        .all(),
+    ).toEqual([
+      { id: "job-1", state: "completed", progressPercent: 100 },
+      { id: "job-live", state: "running", progressPercent: null },
+    ]);
+    expect(
       production.prepare(`SELECT COUNT(*) AS c FROM security_events WHERE type = 'auth.legacy_sessions_invalidated'`).get(),
     ).toEqual({ c: 1 });
     expect(
@@ -153,6 +176,16 @@ describe("migration rehearsal on production-shaped copies", () => {
     runMigrations(restored);
     expect(invariants(restored)).toEqual(before);
     expect(restored.prepare(`PRAGMA foreign_key_check`).all()).toEqual([]);
+    expect(
+      restored
+        .prepare(
+          `SELECT id, state, progress_percent AS progressPercent FROM transcript_jobs ORDER BY id`,
+        )
+        .all(),
+    ).toEqual([
+      { id: "job-1", state: "completed", progressPercent: 100 },
+      { id: "job-live", state: "running", progressPercent: null },
+    ]);
     expect(
       restored
         .prepare(`SELECT version FROM schema_migrations ORDER BY version`)

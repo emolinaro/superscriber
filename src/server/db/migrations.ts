@@ -980,6 +980,11 @@ function addTranscriptJobEngineProgressSchema(sqlite: Database.Database) {
   ensureColumn(sqlite, "transcript_jobs", "transcribed_until_ms", "transcribed_until_ms INTEGER");
   ensureColumn(sqlite, "transcript_jobs", "audio_duration_ms", "audio_duration_ms INTEGER");
   ensureColumn(sqlite, "transcript_jobs", "segments_seen", "segments_seen INTEGER");
+  sqlite.exec(`
+    UPDATE transcript_jobs
+    SET progress_percent = NULL
+    WHERE state IN ('queued', 'running', 'partial_result');
+  `);
 }
 
 export function runMigrations(

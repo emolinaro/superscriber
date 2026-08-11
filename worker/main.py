@@ -175,7 +175,7 @@ class Transcriber:
 
 
 class HeartbeatLoop:
-    PROGRESS_HEARTBEAT_SECONDS = 0.25
+    PROGRESS_HEARTBEAT_SECONDS = 2.0
 
     def __init__(self, config: WorkerConfig, job_id: str) -> None:
         self.config = config
@@ -195,7 +195,7 @@ class HeartbeatLoop:
         self._send_lock = threading.Lock()
         self._update_version = 0
         self._sent_version = 0
-        self._last_post_at: float | None = None
+        self._last_progress_post_at: float | None = None
         self._thread = threading.Thread(target=self._run, daemon=True)
 
     def start(self) -> None:
@@ -246,14 +246,6 @@ class HeartbeatLoop:
             self._wake.set()
 
     def flush(self) -> None:
-        with self._state_lock:
-            has_pending_update = self._sent_version < self._update_version
-        if not has_pending_update:
-            return
-
-        delay = self._progress_send_delay()
-        if delay > 0:
-            time.sleep(delay)
         try:
             self._post_heartbeat(pending_only=True)
         except Exception as exc:
@@ -261,16 +253,17 @@ class HeartbeatLoop:
 
     def _progress_send_delay(self) -> float:
         with self._send_lock:
-            if self._last_post_at is None:
+            if self._last_progress_post_at is None:
                 return 0
-            elapsed = time.monotonic() - self._last_post_at
+            elapsed = time.monotonic() - self._last_progress_post_at
             return max(0, self.PROGRESS_HEARTBEAT_SECONDS - elapsed)
 
     def _post_heartbeat(self, *, pending_only: bool = False) -> None:
         with self._send_lock:
             with self._state_lock:
                 version = self._update_version
-                if pending_only and self._sent_version >= version:
+                has_pending_update = self._sent_version < version
+                if pending_only and not has_pending_update:
                     return
                 payload = {
                     "workerId": self.config.worker_id,
@@ -288,7 +281,8 @@ class HeartbeatLoop:
                 f"/api/internal/transcript-jobs/{self.job_id}/heartbeat",
                 payload,
             )
-            self._last_post_at = time.monotonic()
+            if has_pending_update:
+                self._last_progress_post_at = time.monotonic()
             with self._state_lock:
                 self._sent_version = max(self._sent_version, version)
 
