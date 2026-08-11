@@ -189,7 +189,7 @@ The default build prefetches the configured model into the image. Runtime downlo
 - [`CHANGELOG.md`](./CHANGELOG.md) — release history and shipped behavior notes
 - [`DESIGN.md`](./DESIGN.md) — design record and behavioral contract for the governed casefile workspace
 - [`TODOS.md`](./TODOS.md) — deferred follow-on work after the current appliance release
-- [`docs/operators/`](./docs/operators/) - operator runbooks for Authentik OIDC deployment, identity linking, break-glass, the no-mail profile, password reset, and auth outage and rollback
+- [`docs/operators/`](./docs/operators/) - operator runbooks for Authentik OIDC deployment, identity linking, break-glass, the no-mail profile, password reset, auth outage and rollback, and the governed folder-watch ingest lane
 
 ## Orchestration Modes
 
