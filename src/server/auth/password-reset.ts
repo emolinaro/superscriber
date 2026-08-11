@@ -62,8 +62,8 @@ export function buildResetUrl(rawToken: string, origin: string | null, baseUrl: 
  * configured, and loadResetMailConfig performs constant env reads (it never
  * opens the mounted secret file), so selection adds no per-account timing
  * signal. Anything that cannot deliver - unset, none, or misconfigured -
- * answers honestly that nothing was sent; only a working smtp seam earns the
- * "a password reset has been started" claim.
+ * answers honestly that nothing was sent; only a validly configured smtp seam
+ * earns the "a password reset has been started" claim.
  */
 export function requestConfirmationCopy(
   env: Record<string, string | undefined> = process.env,
