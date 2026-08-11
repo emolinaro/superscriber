@@ -1598,6 +1598,7 @@ function mockProvisioningServer(options: {
   postResponse?: { status: number; body: unknown };
   downloadTierId?: string;
   catalogAfterDownload?: typeof MODEL_CATALOG;
+  delayedInitialStatus?: Promise<Response>;
 }) {
   let statusCalls = 0;
   let catalogCalls = 0;
@@ -1646,7 +1647,12 @@ function mockProvisioningServer(options: {
       );
     }
     if (url === "/api/models/provisioning") {
-      const fixture = options.statuses[Math.min(statusCalls, options.statuses.length - 1)];
+      if (statusCalls === 0 && options.delayedInitialStatus) {
+        statusCalls += 1;
+        return options.delayedInitialStatus;
+      }
+      const statusIndex = statusCalls - (options.delayedInitialStatus ? 1 : 0);
+      const fixture = options.statuses[Math.min(statusIndex, options.statuses.length - 1)];
       statusCalls += 1;
       return mockJsonResponse(provisioningBody(fixture));
     }
@@ -1732,6 +1738,60 @@ describe("model tier provisioning (model-tier-provisioning)", () => {
       { timeout: 5_000 },
     );
     expect(screen.queryByRole("button", { name: /Download tiny/ })).not.toBeInTheDocument();
+  });
+
+  it("ignores a delayed older status response and continues polling to completion", async () => {
+    const user = userEvent.setup();
+    let resolveInitialStatus: ((response: Response) => void) | undefined;
+    const initialStatus = new Promise<Response>((resolve) => {
+      resolveInitialStatus = resolve;
+    });
+    const server = mockProvisioningServer({
+      catalog: UNPROVISIONED_TINY_CATALOG,
+      delayedInitialStatus: initialStatus,
+      statuses: [
+        {
+          tiny: {
+            state: "downloading",
+            bytesReceived: 39_101_810,
+            bytesTotal: 78_203_619,
+            error: null,
+          },
+        },
+        {
+          tiny: {
+            state: "completed",
+            bytesReceived: 78_203_619,
+            bytesTotal: 78_203_619,
+            error: null,
+          },
+        },
+      ],
+    });
+    renderFlow("admin");
+
+    await user.click(screen.getByText("Advanced settings"));
+    const select = await screen.findByRole("combobox", { name: "Transcription model" });
+    await waitFor(() => expect(select).toBeEnabled());
+    await user.click(await screen.findByRole("button", { name: "Download tiny (74.6 MB)" }));
+    await waitFor(() => expect(server.statusCalls).toBe(2));
+
+    resolveInitialStatus?.(
+      await mockJsonResponse(
+        provisioningBody({
+          tiny: {
+            state: "idle",
+            bytesReceived: 0,
+            bytesTotal: 78_203_619,
+            error: null,
+          },
+        }),
+      ),
+    );
+
+    await waitFor(() => expect(screen.getByRole("option", { name: "tiny" })).toBeEnabled(), {
+      timeout: 3_000,
+    });
   });
 
   it("adopts the refreshed best available tier when the user has not touched the picker", async () => {

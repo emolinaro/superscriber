@@ -126,6 +126,7 @@ export function IngestFlow({
   } | null>(null);
   const boundaryRef = useRef(-1);
   const observedInFlightRef = useRef<Set<string>>(new Set());
+  const provisioningRequestGenerationRef = useRef(0);
   const transcriptModelTouchedRef = useRef(false);
 
   // demo-model-tier-picker: the catalog loads lazily on FIRST expansion of
@@ -134,6 +135,7 @@ export function IngestFlow({
   const modelCatalogRequestedRef = useRef(false);
 
   const refreshProvisioning = useCallback(async () => {
+    const requestGeneration = ++provisioningRequestGenerationRef.current;
     if (!canProvisionModels) {
       return;
     }
@@ -145,6 +147,9 @@ export function IngestFlow({
       const body = (await response.json()) as {
         tiers: Array<{ tierId: string; download: TierDownloadView }>;
       };
+      if (requestGeneration !== provisioningRequestGenerationRef.current) {
+        return;
+      }
       const next = Object.fromEntries(body.tiers.map((tier) => [tier.tierId, tier.download]));
       setProvisioning(next);
     } catch {
