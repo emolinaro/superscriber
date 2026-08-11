@@ -46,3 +46,27 @@ export const bootstrapAdminSchema = localUserSchema
       });
     }
   });
+
+/**
+ * Unmanageable-instance recovery claim: same account fields as first-run
+ * bootstrap plus the operator claim token that gates the ceremony.
+ */
+export const recoveryAdminClaimSchema = localUserSchema
+  .pick({
+    displayName: true,
+    email: true,
+    password: true,
+  })
+  .extend({
+    confirmPassword: z.string().min(1, "Confirm the password."),
+    claimToken: z.string().min(1, "Enter the operator claim token from the appliance host."),
+  })
+  .superRefine((value, context) => {
+    if (value.password !== value.confirmPassword) {
+      context.addIssue({
+        code: "custom",
+        path: ["confirmPassword"],
+        message: "Passwords must match.",
+      });
+    }
+  });

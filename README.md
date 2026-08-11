@@ -17,6 +17,7 @@ It runs as a single-institution deployment with local accounts, SQLite persisten
 - Bootstrap admin setup plus local accounts for `uploader`, `reviewer`, `approver`, and `admin`
 - Optional institutional sign-in via Authentik OIDC (local, dual, or authentik-primary deployment modes) with live-revocable server-side sessions and a management-boundary break-glass account - operator runbooks in [`docs/operators/`](./docs/operators/)
 - Password reset for lost local credentials: self-service reset links and an audited administrator reset - reset mail is opt-in (`SUPERSCRIBER_RESET_MAIL_MODE`), otherwise resets run operator-assisted ([`docs/operators/password-reset.md`](./docs/operators/password-reset.md))
+- Unmanageable-instance recovery: if accounts survive but no active administrator remains, the sign-up door offers an operator-gated claim ceremony for a fresh admin, protected by a single-use on-host claim token so a network attacker cannot take the instance over ([`docs/operators/admin-recovery.md`](./docs/operators/admin-recovery.md))
 - Role-aware work inbox ledgers (tabbed per role) and a transcript-first casefile for review
 - Live, engine-derived transcription progress in work ledgers and uploader status casefiles
 - Governed decision commands - save draft, submit, withdraw submission, request changes, approve, reopen - with the submitter barred from deciding their own revision

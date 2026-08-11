@@ -7,6 +7,12 @@ import { CasefileCommandError } from "@/server/casefile/errors";
 const {
   getActivePrincipalMock,
   getActiveSessionMock,
+  hasAnyActiveAdminMock,
+  createRecoveryAdminMock,
+  recordSecurityEventMock,
+  loadAuthConfigMock,
+  ensureAdminClaimTokenMock,
+  cookiesMock,
   saveDraftCommandMock,
   submitRevisionCommandMock,
   withdrawRevisionCommandMock,
@@ -44,7 +50,13 @@ const {
   enterActionModeMock: vi.fn(),
   exitActionModeMock: vi.fn(),
   hasAnyUsersMock: vi.fn(),
+  hasAnyActiveAdminMock: vi.fn(),
   createBootstrapAdminMock: vi.fn(),
+  createRecoveryAdminMock: vi.fn(),
+  recordSecurityEventMock: vi.fn(),
+  loadAuthConfigMock: vi.fn(() => ({ mode: "local" })),
+  ensureAdminClaimTokenMock: vi.fn(),
+  cookiesMock: vi.fn(() => ({ set: vi.fn(), get: vi.fn(), delete: vi.fn() })),
   revalidatePathMock: vi.fn(),
   adminIssuePasswordResetMock: vi.fn(),
   sendPasswordResetEmailMock: vi.fn(),
@@ -54,6 +66,7 @@ const {
 
 vi.mock("next/headers", () => ({
   headers: headersMock,
+  cookies: cookiesMock,
 }));
 
 vi.mock("@/server/administration/password-reset-service", () => {
@@ -100,8 +113,24 @@ vi.mock("@/server/casefile/read-model", () => ({
 
 vi.mock("@/server/auth/service", () => ({
   hasAnyUsers: hasAnyUsersMock,
+  hasAnyActiveAdmin: hasAnyActiveAdminMock,
   createBootstrapAdmin: createBootstrapAdminMock,
   createLocalUser: createLocalUserMock,
+}));
+
+vi.mock("@/server/auth/recovery-claim", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/server/auth/recovery-claim")>()),
+  createRecoveryAdmin: createRecoveryAdminMock,
+  ensureAdminClaimToken: ensureAdminClaimTokenMock,
+}));
+
+vi.mock("@/server/auth/security-events", () => ({
+  recordSecurityEvent: recordSecurityEventMock,
+}));
+
+vi.mock("@/server/auth/auth-config", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/server/auth/auth-config")>()),
+  loadAuthConfig: loadAuthConfigMock,
 }));
 
 vi.mock("@/server/access/service", () => ({
@@ -150,7 +179,12 @@ import {
   enterAdminActionModeAction,
   exitAdminActionModeAction,
 } from "@/server/actions/admin-action-mode-actions";
-import { createBootstrapAdminAction } from "@/server/actions/auth-actions";
+import {
+  claimRecoveryAdminAction,
+  createBootstrapAdminAction,
+} from "@/server/actions/auth-actions";
+import { EMPTY_RECOVERY_CLAIM_FORM_STATE } from "@/lib/auth-forms";
+import { recoveryClaimLimiter } from "@/server/auth/recovery-claim";
 
 const principal = {
   userId: "user-1",
@@ -892,6 +926,202 @@ describe("bootstrap auth action", () => {
         email: "admin@example.com",
       },
     });
+  });
+});
+
+describe("admin recovery claim action", () => {
+  let tempRoot = "";
+  const originalDatabasePath = process.env.SUPERSCRIBER_DB_PATH;
+
+  function claimFormData(overrides: Record<string, string> = {}) {
+    const formData = new FormData();
+    formData.set("displayName", "Recovery Admin");
+    formData.set("email", "recovery@example.com");
+    formData.set("password", "correct horse battery staple");
+    formData.set("confirmPassword", "correct horse battery staple");
+    formData.set("claimToken", "0123456789abcdef0123456789abcdef");
+    for (const [key, value] of Object.entries(overrides)) {
+      formData.set(key, value);
+    }
+    return formData;
+  }
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    recoveryClaimLimiter.reset();
+    loadAuthConfigMock.mockImplementation(() => ({ mode: "local" }));
+    headersMock.mockImplementation(() => new Map([["origin", "https://app.test"]]));
+    tempRoot = mkdtempSync(join(tmpdir(), "superscriber-recovery-actions-"));
+    process.env.SUPERSCRIBER_DB_PATH = join(tempRoot, "state.db");
+    hasAnyUsersMock.mockResolvedValue(true);
+    hasAnyActiveAdminMock.mockResolvedValue(false);
+  });
+
+  afterEach(() => {
+    rmSync(tempRoot, { recursive: true, force: true });
+    process.env.SUPERSCRIBER_DB_PATH = originalDatabasePath;
+  });
+
+  it("refuses the claim while an active administrator still exists", async () => {
+    hasAnyActiveAdminMock.mockResolvedValue(true);
+
+    await expect(
+      claimRecoveryAdminAction(EMPTY_RECOVERY_CLAIM_FORM_STATE, claimFormData()),
+    ).resolves.toEqual({
+      formError: "An active administrator already exists. Sign in with an existing account.",
+      values: { displayName: "Recovery Admin", email: "recovery@example.com" },
+    });
+    expect(createRecoveryAdminMock).not.toHaveBeenCalled();
+  });
+
+  it("steers zero-account appliances back to first-run setup", async () => {
+    hasAnyUsersMock.mockResolvedValue(false);
+
+    await expect(
+      claimRecoveryAdminAction(EMPTY_RECOVERY_CLAIM_FORM_STATE, claimFormData()),
+    ).resolves.toEqual({
+      formError:
+        "No accounts exist on this appliance. Use first-run setup to create the first administrator.",
+      values: { displayName: "Recovery Admin", email: "recovery@example.com" },
+    });
+    expect(createRecoveryAdminMock).not.toHaveBeenCalled();
+  });
+
+  it("withholds the claim under authentik-primary, where a local admin could not sign in", async () => {
+    loadAuthConfigMock.mockImplementation(() => ({ mode: "authentik-primary" }));
+
+    const result = await claimRecoveryAdminAction(
+      EMPTY_RECOVERY_CLAIM_FORM_STATE,
+      claimFormData(),
+    );
+
+    expect(result.formError).toContain("institutional sign-in");
+    expect(createRecoveryAdminMock).not.toHaveBeenCalled();
+  });
+
+  it("maps schema violations onto field errors without touching the claim", async () => {
+    const result = await claimRecoveryAdminAction(
+      EMPTY_RECOVERY_CLAIM_FORM_STATE,
+      claimFormData({ password: "short", confirmPassword: "different", claimToken: "" }),
+    );
+
+    expect(result.formError).toBe("Review the highlighted fields and try again.");
+    expect(result.fieldErrors?.password).toBe("Use at least 10 characters.");
+    expect(result.fieldErrors?.confirmPassword).toBe("Passwords must match.");
+    expect(result.fieldErrors?.claimToken).toBe(
+      "Enter the operator claim token from the appliance host.",
+    );
+    expect(createRecoveryAdminMock).not.toHaveBeenCalled();
+    expect(recordSecurityEventMock).not.toHaveBeenCalled();
+  });
+
+  it("audits and generically refuses an invalid claim token", async () => {
+    const { RecoveryClaimError } = await import("@/server/auth/recovery-claim");
+    createRecoveryAdminMock.mockRejectedValue(
+      new RecoveryClaimError("claim_token_invalid", "nope"),
+    );
+
+    const result = await claimRecoveryAdminAction(
+      EMPTY_RECOVERY_CLAIM_FORM_STATE,
+      claimFormData(),
+    );
+
+    expect(result.formError).toBe(
+      "The administrator claim was not accepted. Check the operator claim token and try again.",
+    );
+    expect(result.fieldErrors?.claimToken).toBe(
+      "The claim token did not match the proof on the appliance host.",
+    );
+    expect(recordSecurityEventMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: "admin.recovery_claim",
+        outcome: "denied",
+        detail: "Recovery administrator claim refused.",
+      }),
+    );
+    // The recorded event never carries the attempted token.
+    const recorded = recordSecurityEventMock.mock.calls[0]![0] as {
+      detail?: string;
+      metadata?: Record<string, unknown>;
+    };
+    expect(JSON.stringify(recorded)).not.toContain("0123456789abcdef");
+  });
+
+  it("locks out claim attempts after the brute-force budget is spent", async () => {
+    const { RecoveryClaimError } = await import("@/server/auth/recovery-claim");
+    createRecoveryAdminMock.mockRejectedValue(
+      new RecoveryClaimError("claim_token_invalid", "nope"),
+    );
+
+    for (let attempt = 0; attempt < 5; attempt += 1) {
+      const result = await claimRecoveryAdminAction(
+        EMPTY_RECOVERY_CLAIM_FORM_STATE,
+        claimFormData(),
+      );
+      expect(result.formError).toContain("not accepted");
+    }
+    expect(createRecoveryAdminMock).toHaveBeenCalledTimes(5);
+
+    const lockedOut = await claimRecoveryAdminAction(
+      EMPTY_RECOVERY_CLAIM_FORM_STATE,
+      claimFormData(),
+    );
+    expect(lockedOut.formError).toBe(
+      "Too many administrator claim attempts. Wait a few minutes and try again.",
+    );
+    expect(createRecoveryAdminMock).toHaveBeenCalledTimes(5);
+    expect(recordSecurityEventMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: "admin.recovery_claim",
+        outcome: "denied",
+        detail: expect.stringContaining("rate limit"),
+      }),
+    );
+  });
+
+  it("maps a taken email onto the email field error", async () => {
+    const { RecoveryClaimError } = await import("@/server/auth/recovery-claim");
+    createRecoveryAdminMock.mockRejectedValue(
+      new RecoveryClaimError("email_taken", "An account with that email already exists."),
+    );
+
+    const result = await claimRecoveryAdminAction(
+      EMPTY_RECOVERY_CLAIM_FORM_STATE,
+      claimFormData(),
+    );
+
+    expect(result.formError).toBe("Review the highlighted fields and try again.");
+    expect(result.fieldErrors?.email).toBe("An account with that email already exists.");
+  });
+
+  it("creates the recovery admin, audits the success, and redirects to sign-in", async () => {
+    createRecoveryAdminMock.mockResolvedValue({
+      id: "user-recovery-1",
+      email: "recovery@example.com",
+      displayName: "Recovery Admin",
+      role: "admin",
+      isActive: true,
+      createdAt: "2026-08-10T00:00:00.000Z",
+      updatedAt: "2026-08-10T00:00:00.000Z",
+    });
+    const { redirect: redirectMock } = await import("next/navigation");
+
+    await claimRecoveryAdminAction(EMPTY_RECOVERY_CLAIM_FORM_STATE, claimFormData());
+
+    expect(createRecoveryAdminMock).toHaveBeenCalledWith({
+      displayName: "Recovery Admin",
+      email: "recovery@example.com",
+      password: "correct horse battery staple",
+      claimToken: "0123456789abcdef0123456789abcdef",
+    });
+    expect(recordSecurityEventMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: "admin.recovery_claim",
+        outcome: "success",
+        userId: "user-recovery-1",
+      }),
+    );
+    expect(redirectMock).toHaveBeenCalledWith("/?notice=admin-recovery-complete");
   });
 });
 

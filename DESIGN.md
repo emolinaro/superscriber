@@ -186,6 +186,7 @@ Primary navigation is exact: uploader gets Work and Ingest; reviewer and approve
 
 - The public root landing pairs a deep-teal brand hero (inverse large wordmark, headline, and mode fact pills) with an account card split into two explicit doors via an APG tab pair: Sign up for first-time admission and Sign in for returning users
 - First-run setup is a one-time gate: with no account on the appliance the Sign up door leads with the bootstrap ceremony; once an account exists the Sign up door explains administrator-provisioned admission and Sign in is the default
+- If accounts survive but no active administrator remains, the instance is unmanageable and the Sign up door leads with an administrator-recovery claim ceremony: claiming a fresh admin requires the single-use operator claim token readable only on the appliance host (`admin-claim.token` next to the database), with rate-limited, audited attempts - a public claim would be a takeover vector, so host file access is the deliberate gate (see [`docs/operators/admin-recovery.md`](./docs/operators/admin-recovery.md)); under `authentik-primary` the ceremony is withheld and recovery runs through break-glass instead
 - First-run flow has exactly three jobs:
   1. confirm appliance/environment readiness
   2. create the first admin

@@ -35,6 +35,14 @@ export function buildAuthNotice(
       focusHeading: true,
     };
   }
+  if (notice === "admin-recovery-complete") {
+    return {
+      tone: "ok",
+      message:
+        "Administrator recovery is complete. Sign in with the admin account you just claimed.",
+      focusHeading: true,
+    };
+  }
   if (reason === "logged-out") {
     return {
       tone: "ok",
@@ -57,6 +65,32 @@ export function buildAuthNotice(
     };
   }
   return null;
+}
+
+/**
+ * What the Sign up door offers (captain ruling, admin-bootstrap recovery):
+ * - first-run: zero accounts on the appliance, the bootstrap ceremony
+ * - provisioned: steady state, administrator-provisioned admission only
+ * - recovery: accounts exist but no active administrator remains; the
+ *   operator-only claim ceremony is offered
+ * - recovery-break-glass: unmanageable under authentik-primary, where a
+ *   locally claimed admin could not sign in; the break-glass runbook owns
+ *   recovery instead
+ */
+export type SignUpSurface = "first-run" | "provisioned" | "recovery" | "recovery-break-glass";
+
+export function resolveSignUpSurface(input: {
+  anyUsers: boolean;
+  anyActiveAdmin: boolean;
+  mode: AuthMode;
+}): SignUpSurface {
+  if (!input.anyUsers) {
+    return "first-run";
+  }
+  if (input.anyActiveAdmin) {
+    return "provisioned";
+  }
+  return input.mode === "authentik-primary" ? "recovery-break-glass" : "recovery";
 }
 
 export type AuthSurfaceModel = {
