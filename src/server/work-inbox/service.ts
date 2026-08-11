@@ -353,8 +353,15 @@ function classifyTab(role: UserRole, stage: CasefileWorkflowStage, completed: bo
 }
 
 function actionLabel(role: UserRole, stage: CasefileWorkflowStage, completed: boolean) {
-  if (role === "uploader" || role === "admin") {
+  if (role === "uploader") {
     return null;
+  }
+
+  // Admin ledger access (captain ruling): oversight rows always link into
+  // the casefile regardless of owner; the link is navigation, not work, so
+  // the row stays non-actionable.
+  if (role === "admin") {
+    return "Open casefile";
   }
 
   if (completed) {

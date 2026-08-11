@@ -478,6 +478,103 @@ describe("casefile draft commands", () => {
     },
   );
 
+  // Admin ledger access (captain ruling): an administrator in reviewer
+  // action mode may withdraw a pending revision submitted by someone else.
+  // The submitter-only rule still binds non-admin roles, and the decision
+  // and audit rows keep full attribution of the acting admin.
+  it("lets an admin in reviewer action mode withdraw another user's pending revision", async () => {
+    const { bundle, admin, reviewer, pending } = await setupPendingFixture();
+
+    try {
+      // Without action mode the governed semantic-audit still fails closed.
+      expect(() =>
+        withdrawRevisionCommand(admin, {
+          recordingId: "rec-1",
+          expectedPendingRevisionId: pending.id,
+          reason: "The submitter is unavailable; returning the draft to review.",
+        }, bundle),
+      ).toThrowError(expect.objectContaining({ code: "ACTION_MODE_REQUIRED" }));
+
+      const reviewerActionModeId = enterActionMode({
+        principal: admin,
+        recordingId: "rec-1",
+        effectiveRole: "reviewer",
+        purpose: "Withdraw a stalled submission while the reviewer is away.",
+      }, bundle).id;
+
+      const draft = withdrawRevisionCommand(admin, {
+        recordingId: "rec-1",
+        expectedPendingRevisionId: pending.id,
+        reason: "The submitter is unavailable; returning the draft to review.",
+        actionModeId: reviewerActionModeId,
+      }, bundle);
+
+      expect(readRevision(bundle, pending.id)?.state).toBe("withdrawn");
+      expect(draft.basedOnRevisionId).toBe(pending.id);
+      expect(readRecording(bundle)).toEqual(
+        expect.objectContaining({
+          currentRevisionId: draft.id,
+          pendingRevisionId: null,
+        }),
+      );
+
+      const withdrawnDecision = listApprovalRows(bundle).find((row) => row.state === "withdrawn");
+      expect(withdrawnDecision).toEqual(
+        expect.objectContaining({
+          actorUserId: admin.userId,
+          actorRole: "admin",
+          effectiveRole: "reviewer",
+          adminActionSessionId: reviewerActionModeId,
+        }),
+      );
+
+      const withdrawnAudit = listAuditRows(bundle).find((row) => row.type === "revision.withdrawn");
+      expect(withdrawnAudit).toEqual(
+        expect.objectContaining({
+          actorUserId: admin.userId,
+          actorRole: "admin",
+          effectiveRole: "reviewer",
+          adminActionSessionId: reviewerActionModeId,
+        }),
+      );
+      const withdrawnMetadata = JSON.parse(withdrawnAudit?.metadata ?? "{}") as {
+        data?: Record<string, unknown>;
+      };
+      expect(withdrawnMetadata.data).toEqual(
+        expect.objectContaining({
+          submitterUserId: reviewer.userId,
+          submitterOverrideByAdmin: true,
+        }),
+      );
+    } finally {
+      bundle.sqlite.close();
+    }
+  });
+
+  it("keeps the legacy-submitter withdrawal veto for an admin in reviewer action mode", async () => {
+    const { bundle, admin, pending } = await setupPendingFixture({ legacySubmitterIdentity: true });
+
+    try {
+      const reviewerActionModeId = enterActionMode({
+        principal: admin,
+        recordingId: "rec-1",
+        effectiveRole: "reviewer",
+        purpose: "Attempt to withdraw a legacy submission without identity.",
+      }, bundle).id;
+
+      expect(() =>
+        withdrawRevisionCommand(admin, {
+          recordingId: "rec-1",
+          expectedPendingRevisionId: pending.id,
+          reason: "Legacy submissions without an identity stay locked.",
+          actionModeId: reviewerActionModeId,
+        }, bundle),
+      ).toThrowError(expect.objectContaining({ code: "ACCESS_DENIED" }));
+    } finally {
+      bundle.sqlite.close();
+    }
+  });
+
   it("denies withdrawal when the pending revision has no known submitter identity", async () => {
     const { bundle, reviewer, pending } = await setupPendingFixture({ legacySubmitterIdentity: true });
 
