@@ -4,51 +4,107 @@
  *
  * SUPERSCRIBER_INGEST_WATCH_DIR=<mounted folder> -> every stable file added
  * (paste, rsync, render) enters the SAME governed path as a manual upload:
- * session -> chunks -> finalize, attributed to a dedicated demo identity
+ * session -> chunks -> finalize, attributed to a dedicated identity
  * (SUPERSCRIBER_INGEST_WATCH_EMAIL; provisioned as an uploader account).
  *
  * Contract: the watcher NEVER dies on a bad file - per-file failures are
  * logged and isolated, duplicates (same content bytes) are logged once and
  * skipped, unsupported formats are refused up-front. Partially-written files
- * are retried every poll until their size settles.
+ * are retried every poll until their filesystem fingerprint settles.
  */
 import { createHash } from "node:crypto";
-import { existsSync, mkdirSync, readdirSync, statSync, watch, type FSWatcher } from "node:fs";
-import { readFile } from "node:fs/promises";
-import { basename, join, resolve } from "node:path";
+import { mkdirSync, readdirSync, statSync, watch, type FSWatcher, type Stats } from "node:fs";
+import { open, type FileHandle } from "node:fs/promises";
+import { basename, extname, join, resolve } from "node:path";
 
 const WATCH_DIR = process.env.SUPERSCRIBER_INGEST_WATCH_DIR?.trim() || "";
-const BASE_URL = (process.env.SUPERSCRIBER_APP_BASE_URL ?? "http://localhost:3145").replace(/\/$/, "");
+const BASE_URL = (process.env.SUPERSCRIBER_APP_BASE_URL ?? "http://localhost:3000").replace(/\/$/, "");
 const EMAIL = process.env.SUPERSCRIBER_INGEST_WATCH_EMAIL?.trim() || "ingest-service@demo.local";
 const PASSWORD = process.env.SUPERSCRIBER_INGEST_WATCH_PASSWORD?.trim() || "";
 
-const SUPPORTED = new Set([
-  ".wav", ".mp3", ".m4a", ".aac", ".ogg", ".oga", ".flac", ".opus", ".webm",
-  ".mp4", ".mov", ".mkv", ".mpg", ".mpeg",
+const MIME_TYPES = new Map([
+  [".wav", "audio/wav"],
+  [".mp3", "audio/mpeg"],
+  [".m4a", "audio/mp4"],
+  [".aac", "audio/aac"],
+  [".ogg", "audio/ogg"],
+  [".oga", "audio/ogg"],
+  [".flac", "audio/flac"],
+  [".opus", "audio/opus"],
+  [".webm", "audio/webm"],
+  [".mp4", "video/mp4"],
+  [".mov", "video/quicktime"],
+  [".mkv", "video/x-matroska"],
+  [".mpg", "video/mpeg"],
+  [".mpeg", "video/mpeg"],
 ]);
 const CHUNK_BYTES = 1 * 1024 * 1024;
 const STABLE_MS = 1_200;
 const POLL_MS = 750;
+const AUTH_RETRY_MS = 5_000;
 
-type InFlight = { size: number; changedAt: number };
-const candidates = new Map<string, InFlight>();
-const done = new Map<string, number>(); // sha256 -> timestamp
-const refused = new Set<string>(); // refuse loudly once per file name
+type Candidate = { changedAt: number; fingerprint: string };
+const candidates = new Map<string, Candidate>();
+const completedPaths = new Map<string, string>();
+const done = new Set<string>();
+const refused = new Set<string>();
+const retryWakeups = new Set<() => void>();
 let cookie = "";
+let stopping = false;
+let watcher: FSWatcher | null = null;
+let pollTimer: NodeJS.Timeout | null = null;
+let sweepRequested = false;
+let activeSweep: Promise<void> | null = null;
+let authAttemptController: AbortController | null = null;
+let shutdownPromise: Promise<void> | null = null;
 
 function log(line: string, ...rest: unknown[]) {
   console.log(`[ingest-watch] ${line}`, ...rest);
 }
 
-function isSupported(name: string) {
-  const dot = name.lastIndexOf(".");
-  return dot >= 0 && SUPPORTED.has(name.slice(dot).toLowerCase());
+function fileFingerprint(stats: Stats) {
+  return [stats.dev, stats.ino, stats.size, stats.mtimeMs, stats.ctimeMs].join(":");
+}
+
+function mimeTypeFor(name: string) {
+  return MIME_TYPES.get(extname(name).toLowerCase()) ?? null;
+}
+
+function errorMessage(error: unknown) {
+  return error instanceof Error ? error.message : String(error);
+}
+
+async function waitForAuthRetry() {
+  if (stopping) {
+    return false;
+  }
+  return new Promise<boolean>((resolveWait) => {
+    let timer: NodeJS.Timeout;
+    let settled = false;
+    const finish = (retry: boolean) => {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      clearTimeout(timer);
+      retryWakeups.delete(cancel);
+      resolveWait(retry);
+    };
+    const cancel = () => finish(false);
+    timer = setTimeout(() => finish(!stopping), AUTH_RETRY_MS);
+    retryWakeups.add(cancel);
+  });
 }
 
 async function signIn() {
-  for (;;) {
+  while (!stopping) {
+    const controller = new AbortController();
+    authAttemptController = controller;
     try {
-      const csrfResponse = await fetch(`${BASE_URL}/api/auth/csrf`);
+      const csrfResponse = await fetch(`${BASE_URL}/api/auth/csrf`, { signal: controller.signal });
+      if (!csrfResponse.ok) {
+        throw new Error(`csrf HTTP ${csrfResponse.status}`);
+      }
       const csrfCookie = (csrfResponse.headers.get("set-cookie") ?? "").split(";")[0];
       const { csrfToken } = (await csrfResponse.json()) as { csrfToken: string };
       const signed = await fetch(`${BASE_URL}/api/auth/callback/credentials`, {
@@ -63,6 +119,7 @@ async function signIn() {
           password: PASSWORD,
           json: "true",
         }),
+        signal: controller.signal,
       });
       const setCookie = signed.headers.get("set-cookie") ?? "";
       const sessionCookie = setCookie
@@ -75,48 +132,92 @@ async function signIn() {
         return;
       }
       log("sign-in refused; retrying in 5s (check the watch identity account)");
-      await new Promise((resolveWait) => setTimeout(resolveWait, 5_000));
     } catch (error) {
-      log("app not reachable yet; retrying in 5s", (error as Error).message);
-      await new Promise((resolveWait) => setTimeout(resolveWait, 5_000));
+      if (stopping) {
+        break;
+      }
+      log("app not reachable yet; retrying in 5s", errorMessage(error));
+    } finally {
+      if (authAttemptController === controller) {
+        authAttemptController = null;
+      }
+    }
+    if (!(await waitForAuthRetry())) {
+      break;
     }
   }
+  throw new Error("sign-in interrupted by shutdown");
 }
 
-async function request(path: string, init: RequestInit) {
+function fetchWithCookie(path: string, init: RequestInit) {
+  const headers = new Headers(init.headers);
+  headers.set("cookie", cookie);
   return fetch(`${BASE_URL}${path}`, {
     ...init,
-    headers: {
-      cookie,
-      ...(init.headers ?? {}),
-    },
+    headers,
   });
 }
 
-async function ingestFile(path: string) {
+async function request(path: string, init: RequestInit) {
+  if (!cookie) {
+    await signIn();
+  }
+  const response = await fetchWithCookie(path, init);
+  if (response.status !== 401) {
+    return response;
+  }
+  cookie = "";
+  log("session expired; renewing watch identity credentials");
+  await signIn();
+  return fetchWithCookie(path, init);
+}
+
+async function readChunk(handle: FileHandle, buffer: Buffer, position: number, totalSize: number) {
+  const length = Math.min(buffer.length, totalSize - position);
+  const { bytesRead } = await handle.read(buffer, 0, length, position);
+  if (bytesRead === 0) {
+    throw new Error("file changed while it was being read; retrying after it settles");
+  }
+  return buffer.subarray(0, bytesRead);
+}
+
+async function hashFile(handle: FileHandle, buffer: Buffer, size: number) {
+  const hash = createHash("sha256");
+  for (let offset = 0; offset < size;) {
+    const chunk = await readChunk(handle, buffer, offset, size);
+    hash.update(chunk);
+    offset += chunk.length;
+  }
+  return hash.digest("hex");
+}
+
+async function ingestFile(path: string, expectedFingerprint: string) {
   const name = basename(path);
-  const bytes = await readFile(path);
-
-  if (bytes.length === 0) {
-    log(`skip ${name}: zero bytes (partial write?)`);
-    return;
-  }
-
-  const digest = createHash("sha256").update(bytes).digest("hex");
-  if (done.has(digest)) {
-    log(`skip ${name}: duplicate content already ingested this run`);
-    return;
-  }
-
-  const title = name.replace(/\.[^.]*$/, "") || name;
-  log(`ingesting ${name} (${bytes.length} bytes, sha256 ${digest.slice(0, 12)})`);
-
+  const handle = await open(path, "r");
   try {
-    if (!cookie) {
-      cookie = "";
-      await signIn();
+    const initialStats = await handle.stat();
+    if (fileFingerprint(initialStats) !== expectedFingerprint) {
+      log(`defer ${name}: file changed before ingest started`);
+      return false;
+    }
+    if (initialStats.size === 0) {
+      log(`skip ${name}: zero bytes (partial write?)`);
+      return true;
     }
 
+    const buffer = Buffer.allocUnsafe(Math.min(CHUNK_BYTES, initialStats.size));
+    const digest = await hashFile(handle, buffer, initialStats.size);
+    if (fileFingerprint(await handle.stat()) !== expectedFingerprint) {
+      log(`defer ${name}: file changed while hashing`);
+      return false;
+    }
+    if (done.has(digest)) {
+      log(`skip ${name}: duplicate content already ingested this run`);
+      return true;
+    }
+
+    const title = name.replace(/\.[^.]*$/, "") || name;
+    log(`ingesting ${name} (${initialStats.size} bytes, sha256 ${digest.slice(0, 12)})`);
     const sessionResponse = await request("/api/ingest/sessions", {
       method: "POST",
       headers: { "content-type": "application/json" },
@@ -125,32 +226,48 @@ async function ingestFile(path: string) {
         languageHint: process.env.SUPERSCRIBER_INGEST_WATCH_LANGUAGE?.trim() || "english",
         source: "upload",
         fileName: name,
-        mimeType: null,
-        fileSize: bytes.length,
+        mimeType: mimeTypeFor(name),
+        fileSize: initialStats.size,
         transcriptModel: process.env.SUPERSCRIBER_TRANSCRIBE_MODEL?.trim() || null,
       }),
     });
-    const sessionPayload = await sessionResponse.json();
+    const sessionPayload = (await sessionResponse.json().catch(() => ({}))) as {
+      error?: string;
+      message?: string;
+      status?: { sessionId?: string };
+    };
     if (!sessionResponse.ok) {
       throw new Error(sessionPayload.error ?? sessionPayload.message ?? `session HTTP ${sessionResponse.status}`);
     }
-    const sessionId = sessionPayload.status.sessionId as string;
+    const sessionId = sessionPayload.status?.sessionId;
+    if (!sessionId) {
+      throw new Error("session response did not include a session id");
+    }
 
-    for (let offset = 0; offset < bytes.length; offset += CHUNK_BYTES) {
-      const chunk = bytes.subarray(offset, Math.min(offset + CHUNK_BYTES, bytes.length));
+    const uploadedHash = createHash("sha256");
+    for (let offset = 0; offset < initialStats.size;) {
+      const chunk = await readChunk(handle, buffer, offset, initialStats.size);
+      uploadedHash.update(chunk);
       const chunkResponse = await request(`/api/ingest/sessions/${sessionId}/chunk`, {
         method: "PUT",
         headers: {
           "content-type": "application/octet-stream",
           "x-superscriber-byte-start": String(offset),
         },
-        body: new Uint8Array(chunk) as unknown as BodyInit,
+        body: chunk as unknown as BodyInit,
       });
       if (!chunkResponse.ok) {
         throw new Error(`chunk HTTP ${chunkResponse.status}`);
       }
+      offset += chunk.length;
     }
 
+    if (
+      fileFingerprint(await handle.stat()) !== expectedFingerprint ||
+      uploadedHash.digest("hex") !== digest
+    ) {
+      throw new Error("file changed during upload; retrying after it settles");
+    }
     const finalizeResponse = await request(`/api/ingest/sessions/${sessionId}/finalize`, {
       method: "POST",
     });
@@ -158,65 +275,173 @@ async function ingestFile(path: string) {
       throw new Error(`finalize HTTP ${finalizeResponse.status}`);
     }
 
-    done.set(digest, Date.now());
+    done.add(digest);
     log(`queued ${name} for governed transcription`);
-  } catch (error) {
-    log(`FAILED ${name}: ${(error as Error).message} (batch continues)`);
+    return true;
+  } finally {
+    await handle.close();
   }
 }
 
-async function sweep() {
-  for (const name of readdirSync(WATCH_DIR)) {
-    const full = join(WATCH_DIR, name);
-    let stats;
-    try {
-      stats = statSync(full);
-    } catch {
-      continue;
-    }
+async function processCandidate(name: string) {
+  const full = join(WATCH_DIR, name);
+  try {
+    const stats = statSync(full);
     if (!stats.isFile()) {
-      continue;
+      candidates.delete(name);
+      return;
     }
-    if (!isSupported(name)) {
+    if (!mimeTypeFor(name)) {
+      candidates.delete(name);
       if (!refused.has(name)) {
         refused.add(name);
         log(`refuse ${name}: unsupported format for the governed engine`);
       }
-      continue;
+      return;
+    }
+
+    const fingerprint = fileFingerprint(stats);
+    if (completedPaths.get(name) === fingerprint) {
+      candidates.delete(name);
+      return;
     }
     const previous = candidates.get(name);
-    if (!previous || previous.size !== stats.size) {
-      candidates.set(name, { size: stats.size, changedAt: Date.now() });
-      continue;
+    if (!previous || previous.fingerprint !== fingerprint) {
+      candidates.set(name, { fingerprint, changedAt: Date.now() });
+      return;
     }
     if (Date.now() - previous.changedAt < STABLE_MS) {
-      continue;
+      return;
     }
+
     candidates.delete(name);
-    await ingestFile(full);
+    if (await ingestFile(full, fingerprint)) {
+      completedPaths.set(name, fingerprint);
+    }
+  } catch (error) {
+    candidates.delete(name);
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+      return;
+    }
+    log(`FAILED ${name}: ${errorMessage(error)} (batch continues)`);
   }
+}
+
+async function sweep() {
+  const names = readdirSync(WATCH_DIR);
+  const residentNames = new Set(names);
+  for (const name of names) {
+    if (stopping) {
+      break;
+    }
+    await processCandidate(name);
+  }
+  for (const name of candidates.keys()) {
+    if (!residentNames.has(name)) {
+      candidates.delete(name);
+    }
+  }
+  for (const name of completedPaths.keys()) {
+    if (!residentNames.has(name)) {
+      completedPaths.delete(name);
+    }
+  }
+  for (const name of refused) {
+    if (!residentNames.has(name)) {
+      refused.delete(name);
+    }
+  }
+}
+
+function scheduleSweep() {
+  if (stopping) {
+    return;
+  }
+  sweepRequested = true;
+  if (activeSweep) {
+    return;
+  }
+  activeSweep = (async () => {
+    while (sweepRequested && !stopping) {
+      sweepRequested = false;
+      try {
+        await sweep();
+      } catch (error) {
+        log("sweep error", errorMessage(error));
+      }
+    }
+  })().finally(() => {
+    activeSweep = null;
+    if (sweepRequested && !stopping) {
+      scheduleSweep();
+    }
+  });
+}
+
+function schedulePoll() {
+  if (stopping) {
+    return;
+  }
+  pollTimer = setTimeout(() => {
+    pollTimer = null;
+    scheduleSweep();
+    schedulePoll();
+  }, POLL_MS);
+}
+
+function shutdown() {
+  if (shutdownPromise) {
+    return shutdownPromise;
+  }
+  shutdownPromise = (async () => {
+    stopping = true;
+    if (pollTimer) {
+      clearTimeout(pollTimer);
+      pollTimer = null;
+    }
+    watcher?.close();
+    watcher = null;
+    authAttemptController?.abort();
+    for (const wake of retryWakeups) {
+      wake();
+    }
+    retryWakeups.clear();
+    await activeSweep;
+  })();
+  return shutdownPromise;
 }
 
 async function main() {
   if (!WATCH_DIR) {
     log("SUPERSCRIBER_INGEST_WATCH_DIR is not set; exiting.");
-    process.exit(0);
+    return;
   }
   mkdirSync(WATCH_DIR, { recursive: true });
-  await signIn();
-
-  const sweepLoop = () => {
-    void sweep().then(() => setTimeout(sweepLoop, POLL_MS));
-  };
-  const watcher: FSWatcher = watch(WATCH_DIR, { persistent: true }, () => {
-    // Event edges just refresh candidates; the poll loop owns state.
-    void sweep().catch((error) => log("sweep error", (error as Error).message));
+  process.once("SIGINT", () => {
+    void shutdown();
   });
+  process.once("SIGTERM", () => {
+    void shutdown();
+  });
+  try {
+    await signIn();
+  } catch (error) {
+    if (stopping) {
+      return;
+    }
+    throw error;
+  }
+  if (stopping) {
+    return;
+  }
 
+  watcher = watch(WATCH_DIR, { persistent: true }, scheduleSweep);
   log(`watching ${resolve(WATCH_DIR)} as ${EMAIL} via ${BASE_URL}`);
-  sweepLoop();
-  process.on("SIGINT", () => watcher.close());
-  process.on("SIGTERM", () => watcher.close());
+  scheduleSweep();
+  schedulePoll();
 }
 
-void main();
+void main().catch((error) => {
+  log("fatal watcher error", errorMessage(error));
+  process.exitCode = 1;
+});
