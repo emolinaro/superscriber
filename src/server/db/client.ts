@@ -16,7 +16,7 @@ export type AppDatabaseBundle = {
 let defaultBundle: AppDatabaseBundle | null = null;
 const bundleByDb = new WeakMap<AppDatabase, AppDatabaseBundle>();
 
-function resolveDatabasePath() {
+export function resolveDatabasePath() {
   return process.env.SUPERSCRIBER_DB_PATH?.trim() || DEFAULT_DATABASE_PATH;
 }
 
@@ -32,6 +32,14 @@ export function resolveLedgerSnapshotDir() {
   const dbPath = resolveDatabasePath();
   const baseDir = dbPath === ":memory:" ? join(process.cwd(), "data") : dirname(dbPath);
   return join(baseDir, "ledger-snapshots");
+}
+
+// Directory that accompanies the database file on the appliance volume; the
+// recovery claim proof and ledger snapshots live here so they inherit the
+// data directory's file-permission discipline.
+export function resolveDatabaseDir() {
+  const dbPath = resolveDatabasePath();
+  return dbPath === ":memory:" ? join(process.cwd(), "data") : dirname(dbPath);
 }
 
 export function openAppDatabase(path = resolveDatabasePath()): AppDatabaseBundle {

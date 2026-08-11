@@ -1,9 +1,12 @@
 import { afterEach, describe, expect, it } from "vitest";
+import { eq } from "drizzle-orm";
 import { openAppDatabase } from "@/server/db/client";
+import { users } from "@/server/db/schema";
 import {
   createBootstrapAdmin,
   createLocalUser,
   getUserByEmail,
+  hasAnyActiveAdmin,
   hasAnyUsers,
   verifyLocalCredentials,
 } from "@/server/auth/service";
@@ -101,6 +104,48 @@ describe("local auth service", () => {
 
       expect(accepted?.displayName).toBe("Katherine Johnson");
       expect(denied).toBeNull();
+    } finally {
+      bundle.sqlite.close();
+    }
+  });
+
+  it("detects whether an active administrator remains", async () => {
+    const bundle = openAppDatabase(":memory:");
+
+    try {
+      expect(await hasAnyActiveAdmin(bundle.db)).toBe(false);
+
+      await createLocalUser(
+        {
+          displayName: "Uploader One",
+          email: "uploader@example.com",
+          password: "correct horse battery staple",
+          role: "uploader",
+        },
+        bundle.db,
+      );
+      expect(await hasAnyActiveAdmin(bundle.db)).toBe(false);
+
+      const admin = await createLocalUser(
+        {
+          displayName: "Admin One",
+          email: "admin@example.com",
+          password: "correct horse battery staple",
+          role: "admin",
+        },
+        bundle.db,
+      );
+      expect(await hasAnyActiveAdmin(bundle.db)).toBe(true);
+
+      // A deactivated admin does not keep the appliance manageable: the
+      // users-survive-but-no-admin case must still surface recovery.
+      bundle.db
+        .update(users)
+        .set({ isActive: false })
+        .where(eq(users.id, admin.id))
+        .run();
+      expect(await hasAnyUsers(bundle.db)).toBe(true);
+      expect(await hasAnyActiveAdmin(bundle.db)).toBe(false);
     } finally {
       bundle.sqlite.close();
     }

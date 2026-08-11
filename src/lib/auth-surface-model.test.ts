@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   buildAuthNotice,
   resolveAuthSurfaceModel,
+  resolveSignUpSurface,
 } from "@/lib/auth-surface-model";
 
 describe("auth surface model", () => {
@@ -23,6 +24,45 @@ describe("auth surface model", () => {
       showLocalCredentialsForm: true,
       showOidcSignIn: true,
       showBreakGlassDisclosure: true,
+    });
+  });
+
+  it("classifies the sign-up door by account and active-admin presence", () => {
+    expect(
+      resolveSignUpSurface({ anyUsers: false, anyActiveAdmin: false, mode: "local" }),
+    ).toBe("first-run");
+    expect(
+      resolveSignUpSurface({ anyUsers: true, anyActiveAdmin: true, mode: "local" }),
+    ).toBe("provisioned");
+    expect(
+      resolveSignUpSurface({ anyUsers: true, anyActiveAdmin: false, mode: "local" }),
+    ).toBe("recovery");
+    expect(
+      resolveSignUpSurface({ anyUsers: true, anyActiveAdmin: false, mode: "dual" }),
+    ).toBe("recovery");
+  });
+
+  it("steers an unmanageable authentik-primary appliance to the break-glass runbook", () => {
+    // A locally claimed admin cannot sign in when institutional sign-in is
+    // primary, so the claim ceremony is withheld there.
+    expect(
+      resolveSignUpSurface({
+        anyUsers: true,
+        anyActiveAdmin: false,
+        mode: "authentik-primary",
+      }),
+    ).toBe("recovery-break-glass");
+    expect(
+      resolveSignUpSurface({ anyUsers: false, anyActiveAdmin: false, mode: "authentik-primary" }),
+    ).toBe("first-run");
+  });
+
+  it("returns the recovery completion notice", () => {
+    expect(buildAuthNotice(undefined, "admin-recovery-complete", undefined)).toEqual({
+      tone: "ok",
+      message:
+        "Administrator recovery is complete. Sign in with the admin account you just claimed.",
+      focusHeading: true,
     });
   });
 

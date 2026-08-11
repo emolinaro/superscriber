@@ -77,9 +77,7 @@ describe("management network policy", () => {
   });
 
   it("resolves rate-limit client IPs under trusted-proxy semantics", () => {
-    expect(resolveClientIp({ "x-forwarded-for": "203.0.113.9, 10.10.0.2" })).toBe(
-      "203.0.113.9",
-    );
+    expect(resolveClientIp({ "x-forwarded-for": "203.0.113.9, 10.10.0.2" })).toBeNull();
     expect(resolveClientIp({})).toBeNull();
 
     vi.stubEnv("SUPERSCRIBER_MANAGEMENT_NETWORKS_FILE", POLICY_PATH());

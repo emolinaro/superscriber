@@ -1,5 +1,5 @@
 import { hash, compare } from "bcryptjs";
-import { eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import { type AppUser, type Principal, type UserRole } from "@/domain/models";
 import {
   getAppDb,
@@ -74,6 +74,22 @@ export function toPrincipal(user: AppUser): Principal {
 
 export async function hasAnyUsers(db: AppDatabase = getAppDb()) {
   const result = db.select({ id: users.id }).from(users).limit(1).get();
+  return Boolean(result);
+}
+
+/**
+ * Unmanageable-instance detection: accounts survive but no active
+ * administrator remains (deactivation, deletion, or a partial restore - the
+ * role guard only blocks in-app demotion of the final admin). This state
+ * opens the operator-gated recovery claim on the sign-up door.
+ */
+export async function hasAnyActiveAdmin(db: AppDatabase = getAppDb()) {
+  const result = db
+    .select({ id: users.id })
+    .from(users)
+    .where(and(eq(users.role, "admin"), eq(users.isActive, true)))
+    .limit(1)
+    .get();
   return Boolean(result);
 }
 

@@ -5,6 +5,7 @@ import { AuthTabs } from "@/components/auth/auth-tabs";
 import { AuthPaneHeading } from "@/components/auth/auth-pane-heading";
 import { EmergencyAccess } from "@/components/auth/emergency-access";
 import { BootstrapSetupForm } from "@/components/auth/bootstrap-setup-form";
+import { RecoveryClaimForm } from "@/components/auth/recovery-claim-form";
 import { LoginForm } from "@/components/auth/login-form";
 import { OidcSignInButton } from "@/components/auth/oidc-sign-in-button";
 import { SuperscriberLogo } from "@/components/brand/superscriber-logo";
@@ -12,14 +13,16 @@ import { sanitizeReturnTo } from "@/lib/safe-return-to";
 import {
   buildAuthNotice,
   resolveAuthSurfaceModel,
+  resolveSignUpSurface,
 } from "@/lib/auth-surface-model";
+import { ensureAdminClaimToken } from "@/server/auth/recovery-claim";
 import { loadAuthConfig, type AuthMode } from "@/server/auth/auth-config";
 import {
   evaluateSourceZone,
   loadManagementNetworkPolicy,
   type SourceZone,
 } from "@/server/auth/management-network";
-import { hasAnyUsers } from "@/server/auth/service";
+import { hasAnyActiveAdmin, hasAnyUsers } from "@/server/auth/service";
 import { getActivePrincipal, resolveAuthorizedReturnTo } from "@/server/session";
 
 export const dynamic = "force-dynamic";
@@ -58,6 +61,12 @@ export default async function LandingPage({
   const anyUsers = await hasAnyUsers();
   const authMode = loadAuthConfig().mode;
 
+  // Unmanageable-instance detection (captain ruling): accounts survive but
+  // no active administrator remains. The sign-up door then offers the
+  // operator-gated recovery claim instead of the steady-state explanation.
+  const anyActiveAdmin = anyUsers ? await hasAnyActiveAdmin() : false;
+  const signUpSurface = resolveSignUpSurface({ anyUsers, anyActiveAdmin, mode: authMode });
+
   // The management boundary governs whether the emergency break-glass
   // disclosure renders at all (plan 8.2). Without a mounted policy (or an
   // unreadable one) the zone fails closed to public.
@@ -78,25 +87,85 @@ export default async function LandingPage({
   );
   const cookieStore = await cookies();
   const bootstrapEmail = cookieStore.get(BOOTSTRAP_EMAIL_COOKIE)?.value ?? "";
-  const readiness = anyUsers
-    ? null
-    : await import("@/server/bootstrap/readiness").then((module) =>
-        module.getBootstrapReadiness(),
-      );
+  const readiness =
+    signUpSurface === "first-run"
+      ? await import("@/server/bootstrap/readiness").then((module) =>
+          module.getBootstrapReadiness(),
+        )
+      : null;
+
+  // The recovery claim proof lives next to the database, readable only by
+  // the appliance service account and the host operator. It is minted on
+  // render so the path shown to the operator always holds a valid proof.
+  let claimTokenPath: string | null = null;
+  let claimSetupError: string | null = null;
+  if (signUpSurface === "recovery") {
+    try {
+      claimTokenPath = ensureAdminClaimToken().path;
+    } catch (error) {
+      claimSetupError =
+        error instanceof Error
+          ? error.message
+          : "The administrator claim token could not be established.";
+    }
+  }
 
   // Explicit two-door model (demo sign-in restyle, replayed onto the branded
   // surface): Sign up is first-time persona admission (the first-admin
-  // ceremony, or the provisioned-access explanation once the envelope
-  // exists); Sign in serves returning users.
+  // ceremony, the provisioned-access explanation once the envelope exists,
+  // or the operator recovery claim when no administrator remains); Sign in
+  // serves returning users. Like first-run, an unmanageable instance opens
+  // on the Sign up door so the recovery path is the surfaced option.
+  const completedNotice =
+    firstValue(params.notice) === "bootstrap-complete" ||
+    firstValue(params.notice) === "admin-recovery-complete";
   const initialEntry =
-    anyUsers || firstValue(params.notice) === "bootstrap-complete" ? "signin" : "signup";
+    !completedNotice && signUpSurface !== "provisioned" ? "signup" : "signin";
 
   // Server-rendered notices (session expired, forced re-login, bootstrap
   // complete, ...) request heading focus; the visible pane's heading is the
   // orienting target, matching the pre-restyle surface contract.
   const focusHeading = notice?.focusHeading ?? false;
 
-  const signUpPane = anyUsers ? (
+  const signUpPane =
+    signUpSurface === "recovery" ? (
+      <div className="stack auth-pane">
+        <div className="stack-tight">
+          <AuthPaneHeading focusOnMount={focusHeading && initialEntry === "signup"}>
+            Administrator recovery
+          </AuthPaneHeading>
+          <p className="body-copy">
+            This appliance still holds accounts, but no active administrator remains. The operator
+            can claim a fresh administrator account here.
+          </p>
+        </div>
+        {claimTokenPath ? (
+          <RecoveryClaimForm claimTokenPath={claimTokenPath} />
+        ) : (
+          <p className="field-error-message" role="alert">
+            The recovery claim is unavailable: {claimSetupError} Restore data-directory
+            writability, then reload this page.
+          </p>
+        )}
+      </div>
+    ) : signUpSurface === "recovery-break-glass" ? (
+      <div className="stack auth-pane">
+        <div className="stack-tight">
+          <AuthPaneHeading focusOnMount={focusHeading && initialEntry === "signup"}>
+            Administrator recovery
+          </AuthPaneHeading>
+          <p className="body-copy">
+            This appliance uses institutional sign-in, and no active administrator remains. A
+            locally claimed account could not sign in here, so recovery runs through the
+            break-glass ceremony in the operator runbook instead of this form.
+          </p>
+        </div>
+        <p className="field-note">
+          Operators: follow <code>docs/operators/auth-outage.md</code> and{" "}
+          <code>docs/operators/break-glass.md</code> on the appliance host.
+        </p>
+      </div>
+    ) : signUpSurface === "provisioned" ? (
     <div className="stack auth-pane">
       <div className="stack-tight">
         <AuthPaneHeading focusOnMount={focusHeading && initialEntry === "signup"}>
