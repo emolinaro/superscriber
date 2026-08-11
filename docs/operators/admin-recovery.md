@@ -63,7 +63,7 @@ so recovery is never needed.
 2. On the appliance host, read the claim token:
 
    ```sh
-   cat "$(dirname "$SUPERSCRIBER_DB_PATH")/admin-claim.token"
+   cat "$(dirname "${SUPERSCRIBER_DB_PATH:-./data/superscriber.db}")/admin-claim.token"
    ```
 
    In the container deployment:

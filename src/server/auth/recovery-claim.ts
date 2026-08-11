@@ -8,7 +8,9 @@ import {
   type AppDatabaseBundle,
 } from "@/server/db/client";
 import { users } from "@/server/db/schema";
+import type { SourceZone } from "@/server/auth/management-network";
 import { createSlidingWindowLimiter } from "@/server/auth/password-reset-rate-limit";
+import { recordSecurityEvent } from "@/server/auth/security-events";
 import { localUserSchema, normalizeEmail } from "@/server/auth/validation";
 import { hash } from "bcryptjs";
 
@@ -151,7 +153,7 @@ export function verifyAdminClaimToken(
   return timingSafeEqual(tokenDigest(stored), tokenDigest(normalized));
 }
 
-/** Consumes the proof after a successful claim. Missing file is a no-op. */
+/** Consumes the current proof. Missing file is a no-op. */
 export function consumeAdminClaimToken(path = resolveAdminClaimTokenPath()) {
   rmSync(path, { force: true });
 }
@@ -159,8 +161,9 @@ export function consumeAdminClaimToken(path = resolveAdminClaimTokenPath()) {
 /**
  * Creates the recovery administrator inside one transaction that re-checks
  * every gate (existing accounts, still no active admin, valid proof, free
- * email), then consumes the proof. The transaction re-checks make concurrent
- * claims race-safe: the loser sees `admin_exists` / a consumed token.
+ * email), consumes the proof, and commits the account with its success audit.
+ * The transaction re-checks make concurrent claims race-safe: the loser sees
+ * `admin_exists` / a consumed token.
  */
 export async function createRecoveryAdmin(
   input: {
@@ -168,6 +171,7 @@ export async function createRecoveryAdmin(
     email: string;
     password: string;
     claimToken: string;
+    sourceZone: SourceZone;
   },
   bundle: AppDatabaseBundle = getAppDbBundle(),
 ) {
@@ -219,6 +223,8 @@ export async function createRecoveryAdmin(
 
     const timestamp = new Date().toISOString();
     const id = crypto.randomUUID();
+    consumeAdminClaimToken();
+
     bundle.db
       .insert(users)
       .values({
@@ -232,26 +238,26 @@ export async function createRecoveryAdmin(
         updatedAt: timestamp,
       })
       .run();
-    return id;
+    recordSecurityEvent(
+      {
+        type: "admin.recovery_claim",
+        outcome: "success",
+        userId: id,
+        sourceZone: input.sourceZone,
+        detail: "Recovery administrator claim completed.",
+      },
+      bundle.db,
+    );
+    return {
+      id,
+      email: parsed.email,
+      displayName: parsed.displayName,
+      role: "admin" as const,
+      isActive: true,
+      createdAt: timestamp,
+      updatedAt: timestamp,
+    };
   })();
 
-  // Only a committed claim consumes the proof: operator typos (bad token,
-  // taken email) must not burn it, while a successful claim leaves no stale
-  // crown-minting material on disk.
-  consumeAdminClaimToken();
-
-  const row = bundle.db.select().from(users).where(eq(users.id, created)).get();
-  if (!row) {
-    throw new Error("The recovery administrator was created but could not be reloaded.");
-  }
-
-  return {
-    id: row.id,
-    email: row.email,
-    displayName: row.displayName,
-    role: row.role,
-    isActive: row.isActive,
-    createdAt: row.createdAt,
-    updatedAt: row.updatedAt,
-  };
+  return created;
 }

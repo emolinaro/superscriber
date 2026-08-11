@@ -24,6 +24,9 @@ const recoveryAdmin = {
 } as const;
 
 const WRONG_CLAIM_TOKEN = "deadbeef".repeat(8);
+const PUBLIC_ATTACKER_HEADERS = {
+  "x-forwarded-for": "203.0.113.44, 10.10.0.2",
+};
 
 function adminClaimTokenPath() {
   return join(runtimeRootDir(), "admin-claim.token");
@@ -44,6 +47,7 @@ test.describe.serial("administrator recovery", () => {
   });
 
   test("surfaces the claim and refuses a network attacker without the host proof", async ({
+    browser,
     page,
   }) => {
     // Baseline: a working admin exists. Then the instance loses its last
@@ -72,7 +76,12 @@ test.describe.serial("administrator recovery", () => {
     // claim is refused and audited, and no administrator appears. (The
     // sign-in pane lives in the same DOM; scope every fill to the visible
     // Sign up tabpanel.)
-    const attackerPane = page.getByRole("tabpanel", { name: "Sign up" });
+    const attackerContext = await browser.newContext({
+      extraHTTPHeaders: PUBLIC_ATTACKER_HEADERS,
+    });
+    const attackerPage = await attackerContext.newPage();
+    await attackerPage.goto("/");
+    const attackerPane = attackerPage.getByRole("tabpanel", { name: "Sign up" });
     await attackerPane.getByLabel("Administrator name").fill(recoveryAdmin.displayName);
     await attackerPane.getByLabel("Administrator email").fill(recoveryAdmin.email);
     await attackerPane.getByLabel(/^Password$/).fill(recoveryAdmin.password);
@@ -85,19 +94,28 @@ test.describe.serial("administrator recovery", () => {
         exact: true,
       }),
     ).toBeVisible();
+    await attackerContext.close();
 
     expect(activeAdminCount()).toBe(0);
     expect(
       queryRuntimeRows("select id from users where email = ?", [recoveryAdmin.email]),
     ).toHaveLength(0);
 
-    const denials = queryRuntimeRows<{ type: string; outcome: string; detail: string }>(
-      "select type, outcome, detail from security_events where type = ? and outcome = ?",
-      ["admin.recovery_claim", "denied"],
+    const denials = queryRuntimeRows<{
+      type: string;
+      outcome: string;
+      sourceZone: string;
+      detail: string;
+      metadata: string;
+    }>(
+      `select type, outcome, source_zone as sourceZone, detail, metadata
+         from security_events where type = ? and outcome = ? and source_zone = ?`,
+      ["admin.recovery_claim", "denied", "public"],
     );
     expect(denials.length).toBeGreaterThan(0);
     for (const denial of denials) {
-      expect(denial.detail).not.toContain(WRONG_CLAIM_TOKEN);
+      expect(denial.sourceZone).toBe("public");
+      expect(JSON.stringify(denial)).not.toContain(WRONG_CLAIM_TOKEN);
     }
 
     // The proof remains minted for the real operator.

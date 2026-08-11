@@ -11,7 +11,10 @@ import {
   RecoveryClaimError,
   recoveryClaimLimiter,
 } from "@/server/auth/recovery-claim";
-import { evaluateRequestZone, resolveClientIp } from "@/server/auth/management-network";
+import {
+  evaluateRequestSource,
+  type SourceZone,
+} from "@/server/auth/management-network";
 import { recordSecurityEvent } from "@/server/auth/security-events";
 import {
   createBootstrapAdmin as createBootstrapAdminAccount,
@@ -85,6 +88,20 @@ function mapRecoveryClaimFieldErrors(issues: Array<{ path: PropertyKey[]; messag
   return errors;
 }
 
+function denyRecoveryClaim(
+  sourceZone: SourceZone,
+  detail: string,
+  state: RecoveryClaimFormState,
+) {
+  recordSecurityEvent({
+    type: "admin.recovery_claim",
+    outcome: "denied",
+    sourceZone,
+    detail,
+  });
+  return state;
+}
+
 export async function createBootstrapAdminAction(
   _previousState: BootstrapFormState,
   formData: FormData,
@@ -145,12 +162,10 @@ export async function createBootstrapAdminAction(
 
 /**
  * Unmanageable-instance recovery claim (captain ruling, admin-bootstrap
- * recovery). Gates, in order: accounts must exist (first-run owns the
- * zero-account case), no active administrator may remain, the auth mode must
- * let a local admin actually sign in afterwards, and the attempt must fit
- * the brute-force budget before the operator claim token is even consulted.
- * Every refused attempt that reaches the claim is audited without the
- * attempted token; success is audited against the new admin id.
+ * recovery). Every submission is charged to the brute-force budget and
+ * audited without the attempted token. State gates are checked before the
+ * operator proof, and successful account creation and auditing commit in one
+ * transaction.
  */
 export async function claimRecoveryAdminAction(
   _previousState: RecoveryClaimFormState,
@@ -161,29 +176,54 @@ export async function claimRecoveryAdminAction(
     email: asString(formData, "email"),
   };
 
+  const requestSource = evaluateRequestSource(await headers());
+  const budget = recoveryClaimLimiter.check(requestSource.clientIp ?? "unknown");
+  if (!budget.allowed) {
+    return denyRecoveryClaim(
+      requestSource.zone,
+      "Recovery administrator claim refused: rate limit exhausted.",
+      {
+        formError: "Too many administrator claim attempts. Wait a few minutes and try again.",
+        values,
+      },
+    );
+  }
+
   if (!(await hasAnyUsers())) {
-    return {
-      formError:
-        "No accounts exist on this appliance. Use first-run setup to create the first administrator.",
-      values,
-    };
+    return denyRecoveryClaim(
+      requestSource.zone,
+      "Recovery administrator claim refused: no existing accounts.",
+      {
+        formError:
+          "No accounts exist on this appliance. Use first-run setup to create the first administrator.",
+        values,
+      },
+    );
   }
 
   if (await hasAnyActiveAdmin()) {
-    return {
-      formError: "An active administrator already exists. Sign in with an existing account.",
-      values,
-    };
+    return denyRecoveryClaim(
+      requestSource.zone,
+      "Recovery administrator claim refused: active administrator exists.",
+      {
+        formError: "An active administrator already exists. Sign in with an existing account.",
+        values,
+      },
+    );
   }
 
   if (loadAuthConfig().mode === "authentik-primary") {
     // A locally claimed admin cannot sign in where institutional sign-in is
     // primary; the break-glass ceremony is the supported recovery there.
-    return {
-      formError:
-        "This appliance uses institutional sign-in. Recover access with the break-glass ceremony in the operator runbook.",
-      values,
-    };
+    return denyRecoveryClaim(
+      requestSource.zone,
+      "Recovery administrator claim refused: local claims unavailable.",
+      {
+        formError:
+          "This appliance uses institutional sign-in. Recover access with the break-glass ceremony in the operator runbook.",
+        values,
+      },
+    );
   }
 
   const parsed = recoveryAdminClaimSchema.safeParse({
@@ -195,76 +235,68 @@ export async function claimRecoveryAdminAction(
   });
 
   if (!parsed.success) {
-    return {
-      formError: "Review the highlighted fields and try again.",
-      fieldErrors: mapRecoveryClaimFieldErrors(parsed.error.issues),
-      values,
-    };
+    return denyRecoveryClaim(
+      requestSource.zone,
+      "Recovery administrator claim refused: form validation failed.",
+      {
+        formError: "Review the highlighted fields and try again.",
+        fieldErrors: mapRecoveryClaimFieldErrors(parsed.error.issues),
+        values,
+      },
+    );
   }
 
-  const requestHeaders = await headers();
-  const sourceZone = evaluateRequestZone(requestHeaders);
-  const budget = recoveryClaimLimiter.check(resolveClientIp(requestHeaders) ?? "unknown");
-  if (!budget.allowed) {
-    recordSecurityEvent({
-      type: "admin.recovery_claim",
-      outcome: "denied",
-      sourceZone,
-      detail: "Recovery administrator claim refused: rate limit exhausted.",
-    });
-    return {
-      formError: "Too many administrator claim attempts. Wait a few minutes and try again.",
-      values,
-    };
-  }
-
-  let claimed;
+  let claimed: Awaited<ReturnType<typeof createRecoveryAdmin>>;
   try {
     claimed = await createRecoveryAdmin({
       displayName: parsed.data.displayName,
       email: parsed.data.email,
       password: parsed.data.password,
       claimToken: parsed.data.claimToken,
+      sourceZone: requestSource.zone,
     });
   } catch (error) {
     if (error instanceof RecoveryClaimError) {
       if (error.code === "email_taken") {
-        return {
-          formError: "Review the highlighted fields and try again.",
-          fieldErrors: { email: "An account with that email already exists." },
-          values,
-        };
+        return denyRecoveryClaim(
+          requestSource.zone,
+          "Recovery administrator claim refused: email unavailable.",
+          {
+            formError: "Review the highlighted fields and try again.",
+            fieldErrors: { email: "An account with that email already exists." },
+            values,
+          },
+        );
       }
       if (error.code === "admin_exists" || error.code === "requires_existing_users") {
         // Lost a state race (concurrent claim or mid-claim administration):
         // the store truth wins and the surface flips on the next render.
-        return { formError: error.message, values };
+        return denyRecoveryClaim(
+          requestSource.zone,
+          "Recovery administrator claim refused: recovery state changed.",
+          { formError: error.message, values },
+        );
       }
-      recordSecurityEvent({
-        type: "admin.recovery_claim",
-        outcome: "denied",
-        sourceZone,
-        detail: "Recovery administrator claim refused.",
-      });
-      return {
-        formError:
-          "The administrator claim was not accepted. Check the operator claim token and try again.",
-        fieldErrors: {
-          claimToken: "The claim token did not match the proof on the appliance host.",
+      return denyRecoveryClaim(
+        requestSource.zone,
+        "Recovery administrator claim refused.",
+        {
+          formError:
+            "The administrator claim was not accepted. Check the operator claim token and try again.",
+          fieldErrors: {
+            claimToken: "The claim token did not match the proof on the appliance host.",
+          },
+          values,
         },
-        values,
-      };
+      );
     }
+    denyRecoveryClaim(
+      requestSource.zone,
+      "Recovery administrator claim failed.",
+      { values },
+    );
     throw error;
   }
-
-  recordSecurityEvent({
-    type: "admin.recovery_claim",
-    outcome: "success",
-    userId: claimed.id,
-    sourceZone,
-    detail: "Recovery administrator claim completed.",
-  });
 
   const cookieStore = await cookies();
   cookieStore.set(BOOTSTRAP_EMAIL_COOKIE, normalizeEmail(claimed.email), {

@@ -105,21 +105,27 @@ function readForwardedFor(headers: HeaderSource): string | null {
 }
 
 export type SourceZone = "management" | "public";
+export type RequestSource = { zone: SourceZone; clientIp: string | null };
 
 /**
- * Evaluates the current request's source zone from its headers against the
- * mounted policy file. Any failure fails closed to public.
+ * Evaluates the current request's source zone and rate-limit identity from
+ * one mounted policy snapshot. Any failure fails closed to public with one
+ * shared, unverifiable client bucket.
  */
-export function evaluateRequestZone(headers: HeaderSource): SourceZone {
+export function evaluateRequestSource(headers: HeaderSource): RequestSource {
   const policyPath = process.env.SUPERSCRIBER_MANAGEMENT_NETWORKS_FILE?.trim();
   if (!policyPath) {
-    return "public";
+    return { zone: "public", clientIp: null };
   }
   try {
-    return evaluateSourceZone(headers, loadManagementNetworkPolicy(policyPath)).zone;
+    return evaluateSourceZone(headers, loadManagementNetworkPolicy(policyPath));
   } catch {
-    return "public";
+    return { zone: "public", clientIp: null };
   }
+}
+
+export function evaluateRequestZone(headers: HeaderSource): SourceZone {
+  return evaluateRequestSource(headers).zone;
 }
 
 /**
@@ -127,18 +133,10 @@ export function evaluateRequestZone(headers: HeaderSource): SourceZone {
  * management-network policy is mounted, forwarding headers are honored only
  * under its trusted-proxy semantics; anything unverifiable fails closed to
  * null (one shared rate-limit bucket), so rotating XFF hops cannot bypass
- * per-IP budgets. Without a policy, the raw first XFF hop is used.
+ * per-IP budgets.
  */
 export function resolveClientIp(headers: HeaderSource): string | null {
-  const policyPath = process.env.SUPERSCRIBER_MANAGEMENT_NETWORKS_FILE?.trim();
-  if (!policyPath) {
-    return readForwardedFor(headers)?.split(",")[0]?.trim() || null;
-  }
-  try {
-    return evaluateSourceZone(headers, loadManagementNetworkPolicy(policyPath)).clientIp;
-  } catch {
-    return null;
-  }
+  return evaluateRequestSource(headers).clientIp;
 }
 
 export function evaluateSourceZone(

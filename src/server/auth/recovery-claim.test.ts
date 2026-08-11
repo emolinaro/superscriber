@@ -25,7 +25,8 @@ const CLAIM_INPUT = {
   displayName: "Recovery Admin",
   email: "recovery@example.com",
   password: "correct horse battery staple",
-};
+  sourceZone: "public",
+} as const;
 
 describe("admin recovery claim", () => {
   let tempRoot = "";
@@ -133,8 +134,41 @@ describe("admin recovery claim", () => {
 
       const reloaded = await getUserByEmail(CLAIM_INPUT.email.toUpperCase(), bundle.db);
       expect(reloaded?.id).toBe(claimed.id);
+      const audit = bundle.sqlite
+        .prepare(
+          `SELECT outcome, user_id AS userId, source_zone AS sourceZone, detail, metadata
+             FROM security_events WHERE type = 'admin.recovery_claim'`,
+        )
+        .get() as {
+        outcome: string;
+        userId: string;
+        sourceZone: string;
+        detail: string;
+        metadata: string;
+      };
+      expect(audit).toMatchObject({
+        outcome: "success",
+        userId: claimed.id,
+        sourceZone: "public",
+        detail: "Recovery administrator claim completed.",
+      });
+      expect(JSON.stringify(audit)).not.toContain(token);
       // The claim proof is single-use.
       expect(existsSync(join(tempRoot, ADMIN_CLAIM_TOKEN_FILENAME))).toBe(false);
+    });
+
+    it("consumes the proof before commit and rolls back the admin when success audit fails", async () => {
+      await seedNonAdminUser();
+      const { token, path } = ensureAdminClaimToken();
+      bundle.sqlite.exec("DROP TABLE security_events");
+
+      await expect(
+        createRecoveryAdmin({ ...CLAIM_INPUT, claimToken: token }, bundle),
+      ).rejects.toThrow();
+
+      expect(existsSync(path)).toBe(false);
+      expect(await getUserByEmail(CLAIM_INPUT.email, bundle.db)).toBeNull();
+      expect(await hasAnyActiveAdmin(bundle.db)).toBe(false);
     });
 
     it("refuses when an active administrator already exists", async () => {
