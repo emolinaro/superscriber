@@ -1,5 +1,4 @@
 import Link from "next/link";
-import { useRouter } from "next/navigation";
 import type { CasefileViewModel } from "@/server/casefile/read-model";
 import { formatRoleLabel } from "@/lib/format";
 
@@ -31,7 +30,6 @@ export function CaseHeader({
   governanceOpen?: boolean;
   onToggleGovernance?: () => void;
 }) {
-  const router = useRouter();
   const revisionLabel = casefile.revision ? `v${casefile.revision.version}` : "-";
 
   return (
@@ -83,7 +81,11 @@ export function CaseHeader({
                       if (!chosen) {
                         return;
                       }
-                      router.push(
+                      // Hard navigation (not router.push): a revision snapshot
+                      // swap replaces the whole casefile model, and hard nav
+                      // also works when the component renders without an
+                      // app-router context (shell-level unit tests).
+                      window.location.assign(
                         buildRecordingHref(
                           casefile.recordingId,
                           chosen.id === casefile.revision?.id ? undefined : chosen.id,

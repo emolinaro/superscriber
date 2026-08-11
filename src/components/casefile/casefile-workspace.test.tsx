@@ -642,8 +642,20 @@ describe("CasefileWorkspace", () => {
 
     const select = screen.getByRole("combobox", { name: "Choose a revision snapshot" });
     expect(select).toBeVisible();
+
+    const locationDescriptor = Object.getOwnPropertyDescriptor(window, "location");
+    const assign = vi.fn();
+    Object.defineProperty(window, "location", {
+      configurable: true,
+      value: { ...window.location, assign },
+    });
     await user.selectOptions(select, "rev-0");
-    expect(routerPushMock).toHaveBeenCalledWith("/recordings/rec-1?revision=rev-0");
+    // Hard navigation - the snapshot view swaps the whole casefile model
+    // (same contract as the recover/purge hard navigations).
+    expect(assign).toHaveBeenCalledWith("/recordings/rec-1?revision=rev-0");
+    if (locationDescriptor) {
+      Object.defineProperty(window, "location", locationDescriptor);
+    }
 
     cleanup();
     renderWorkspace(createCasefile());
