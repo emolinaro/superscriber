@@ -257,6 +257,8 @@ export function createResumableUploadSession(params: {
   principal: Principal;
   title: string;
   languageHint: string;
+  /** demo-advanced-model-picker */
+  transcriptModel?: string | null;
   source: RecordingSource;
   fileName: string;
   mimeType: string | null;
@@ -278,6 +280,7 @@ export function createResumableUploadSession(params: {
       mimeType: params.mimeType,
       originalFileName: params.fileName ? fileSafeName(params.fileName) : null,
       languageHint: params.languageHint || "english",
+      transcriptModel: params.transcriptModel ?? null,
       principal: params.principal,
       bytesExpected: params.fileSize,
       adapterId: getConfiguredAdapterId(),

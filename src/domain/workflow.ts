@@ -198,6 +198,7 @@ export function createRecordingEntry(params: {
   languageHint: string;
   role: UserRole;
   adapterId?: string;
+  transcriptModel?: string | null;
 }) {
   const mediaBytes = null;
   const adapterId = params.adapterId ?? "mock-governed-engine";
@@ -211,6 +212,7 @@ export function createRecordingEntry(params: {
     mediaPath: params.mediaPath,
     originalFileName: params.originalFileName,
     languageHint: params.languageHint,
+    transcriptModel: params.transcriptModel ?? null,
     uploadedByRole: params.role,
     uploadedByUserId: null,
     ingestionSessionId: null,
@@ -273,6 +275,8 @@ export function createUploadSessionEntry(params: {
   mimeType: string | null;
   originalFileName: string | null;
   languageHint: string;
+  /** demo-advanced-model-picker: per-recording engine model; absent = default. */
+  transcriptModel?: string | null;
   principal: Principal;
   bytesExpected: number;
   adapterId?: string;
@@ -289,6 +293,7 @@ export function createUploadSessionEntry(params: {
     mediaPath: null,
     originalFileName: params.originalFileName,
     languageHint: params.languageHint,
+    transcriptModel: params.transcriptModel ?? null,
     uploadedByRole: params.principal.role,
     uploadedByUserId: params.principal.userId,
     ingestionSessionId: null,

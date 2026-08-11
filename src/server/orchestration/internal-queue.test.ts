@@ -89,6 +89,9 @@ describe("internal transcript queue", () => {
       expect(claim?.jobId).toBe(job.id);
       expect(claim?.recordingId).toBe(recording.id);
       expect(claim?.attemptCount).toBe(1);
+      // demo-advanced-model-picker: no picker choice means the worker runs
+      // its configured default (null), not an invented string.
+      expect(claim?.transcriptModel).toBeNull();
 
       const heartbeat = heartbeatTranscriptJob({
         jobId: job.id,
@@ -131,6 +134,25 @@ describe("internal transcript queue", () => {
       expect(
         persisted.auditEvents.some((event) => event.type === "transcription.completed"),
       ).toBe(true);
+    } finally {
+      bundle.sqlite.close();
+    }
+  });
+
+  it("carries the recording's chosen transcription model into the worker claim", () => {
+    const bundle = openAppDatabase(":memory:");
+
+    try {
+      const state = createBaseState();
+      const { recording } = queueVerifiedRecording(state, "Model-picked recording");
+      recording.transcriptModel = "tiny";
+      writeState(state, bundle.db);
+
+      const claim = claimAvailableTranscriptJob({
+        workerId: "worker-a",
+        bundle,
+      });
+      expect(claim?.transcriptModel).toBe("tiny");
     } finally {
       bundle.sqlite.close();
     }

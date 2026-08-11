@@ -105,6 +105,7 @@ describe("migrations", () => {
       { version: 8 },
       { version: 9 },
       { version: 10 },
+      { version: 11 },
     ]);
   });
 
@@ -381,6 +382,52 @@ describe("migrations", () => {
       sqlite.prepare("select theme_preference as themePreference from users where id = 'user-theme'").get(),
     ).toEqual({ themePreference: "dark" });
     expect(sqlite.prepare("PRAGMA foreign_key_check").all()).toEqual([]);
+  });
+
+  it("upgrades v10 with recordings.transcript_model while keeping existing rows", () => {
+    const sqlite = new Database(":memory:");
+    sqlite.pragma("foreign_keys = ON");
+    runMigrations(sqlite, 10);
+    sqlite.exec(`
+      INSERT INTO recordings (
+        id, workspace_id, title, source, media_kind, mime_type,
+        language_hint, uploaded_by_role, integrity_state, transcript_job_state,
+        created_at, updated_at
+      ) VALUES (
+        'pre-v11', 'workspace-1', 'Pre-upgrade recording', 'upload', 'audio',
+        'audio/wav', 'english', 'uploader', 'verified', 'completed',
+        '2026-08-01T00:00:00.000Z', '2026-08-01T00:00:00.000Z'
+      );
+    `);
+
+    runMigrations(sqlite, 11);
+
+    const columns = sqlite
+      .prepare(`PRAGMA table_info(recordings)`)
+      .all() as Array<{ name: string }>;
+    expect(columns.map((column) => column.name)).toContain("transcript_model");
+
+    const rows = sqlite
+      .prepare("select id, transcript_model as transcriptModel from recordings where id = ?")
+      .all("pre-v11") as Array<{ id: string; transcriptModel: string | null }>;
+    expect(rows).toEqual([{ id: "pre-v11", transcriptModel: null }]);
+
+    sqlite.exec(`
+      INSERT INTO recordings (
+        id, workspace_id, title, source, media_kind, mime_type,
+        language_hint, transcript_model, uploaded_by_role, integrity_state,
+        transcript_job_state, created_at, updated_at
+      ) VALUES (
+        'post-v11', 'workspace-1', 'Post-upgrade recording', 'upload', 'audio',
+        'audio/wav', 'english', 'tiny', 'uploader', 'verified', 'completed',
+        '2026-08-01T00:00:00.000Z', '2026-08-01T00:00:00.000Z'
+      );
+    `);
+    expect(
+      sqlite
+        .prepare("select transcript_model from recordings where id = 'post-v11'")
+        .get(),
+    ).toEqual({ transcript_model: "tiny" });
   });
 
   it("upgrades v9 with the password_reset_tokens table", () => {

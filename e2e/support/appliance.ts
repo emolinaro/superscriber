@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { mkdtempSync, readdirSync, rmSync, statSync, unlinkSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readdirSync, rmSync, statSync, unlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import Database from "better-sqlite3";
@@ -56,7 +56,7 @@ type RuntimeRoot = {
 let sharedRecordingId = "";
 let sharedRecordingTitle = "";
 
-function buildSilentWavBuffer({
+export function buildSilentWavBuffer({
   durationMs = 1_500,
   sampleRate = 8_000,
 }: {
@@ -329,6 +329,40 @@ conn.close()
       actionModeId,
     );
   });
+}
+
+// demo-model-tier-picker: fabricate provisioned model artifacts on whichever
+// runtime hosts the catalog check, so a tier flips from unavailable to
+// selectable without a server restart (the catalog stat()s on every request).
+export function provisionRuntimeModelTier(tierId: string) {
+  if (e2eContainerName()) {
+    execContainerPython(
+      `import os, sys
+tier = sys.argv[1]
+root = os.environ.get("SUPERSCRIBER_TRANSCRIBE_MODEL_DIR", "/app/models")
+dir_path = os.path.join(root, tier)
+os.makedirs(dir_path, exist_ok=True)
+with open(os.path.join(dir_path, "model.bin"), "wb") as handle:
+    handle.write(b"bin")
+with open(os.path.join(dir_path, "config.json"), "w", encoding="utf8") as handle:
+    handle.write("{}")
+`,
+      [tierId],
+    );
+    return;
+  }
+
+  // Host lane: the server process resolves models/ against its own cwd, which
+  // may be the repo root (npm run start is not usable with output:standalone)
+  // or the .next/standalone dir (node .next/standalone/server.js). Cover both.
+  for (const base of [
+    join(process.cwd(), "models", tierId),
+    join(process.cwd(), ".next", "standalone", "models", tierId),
+  ]) {
+    mkdirSync(base, { recursive: true });
+    writeFileSync(join(base, "model.bin"), "bin");
+    writeFileSync(join(base, "config.json"), "{}");
+  }
 }
 
 export function queryRuntimeRows<Row>(sql: string, params: string[]): Row[] {

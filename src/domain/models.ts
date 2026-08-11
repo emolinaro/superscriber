@@ -111,6 +111,7 @@ export type Recording = {
   mediaPath: string | null;
   originalFileName: string | null;
   languageHint: string;
+  transcriptModel: string | null;
   uploadedByRole: UserRole;
   uploadedByUserId: string | null;
   ingestionSessionId: string | null;

@@ -100,6 +100,7 @@ export function toRecording(row: RecordingRow): Recording {
     mediaPath: row.mediaPath,
     originalFileName: row.originalFileName,
     languageHint: row.languageHint,
+    transcriptModel: row.transcriptModel,
     uploadedByRole: row.uploadedByRole,
     uploadedByUserId: row.uploadedByUserId,
     ingestionSessionId: row.ingestionSessionId,

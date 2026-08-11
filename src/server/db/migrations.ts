@@ -13,7 +13,7 @@ type Migration = {
   rebuildsTables?: boolean;
 };
 
-export const LATEST_SCHEMA_VERSION = 10;
+export const LATEST_SCHEMA_VERSION = 11;
 
 const migrations: Migration[] = [
   { version: 1, name: "baseline-appliance", up: createBaselineSchema },
@@ -26,6 +26,7 @@ const migrations: Migration[] = [
   { version: 8, name: "account-role-guards", up: addAccountRoleGuards },
   { version: 9, name: "user-theme-preference", up: addUserThemePreferenceSchema },
   { version: 10, name: "password-reset-tokens", up: addPasswordResetTokensSchema },
+  { version: 11, name: "transcript-model", up: addTranscriptModelSchema },
 ];
 
 const LEGACY_AUDIT_METADATA_JSON = serializeAuditMetadata(LEGACY_AUDIT_METADATA);
@@ -947,6 +948,13 @@ function addUserThemePreferenceSchema(sqlite: Database.Database) {
   // setting decide. localStorage stays the no-flash first-paint copy; this
   // row is the durable source of truth synced on session resume.
   ensureColumn(sqlite, "users", "theme_preference", "theme_preference TEXT");
+}
+
+function addTranscriptModelSchema(sqlite: Database.Database) {
+  // demo-advanced-model-picker: the recording stores the chosen faster-whisper
+  // tier (absent = engine default), validated at ingest against provisioned
+  // host artifacts and replayed to the worker in the claim payload.
+  ensureColumn(sqlite, "recordings", "transcript_model", "transcript_model TEXT");
 }
 
 function addPasswordResetTokensSchema(sqlite: Database.Database) {

@@ -111,6 +111,7 @@ function insertRecording(
     mediaPath: null,
     originalFileName: `${params.recordingId}.wav`,
     languageHint: "en",
+    transcriptModel: null,
     uploadedByRole: "uploader",
     uploadedByUserId: params.uploadedByUserId,
     ingestionSessionId: null,

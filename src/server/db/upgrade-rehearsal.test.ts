@@ -110,7 +110,7 @@ function invariants(sqlite: Database.Database) {
 }
 
 describe("migration rehearsal on production-shaped copies", () => {
-  it("stages v2 through v10 preserving every id and reference count; backup stays restorable", () => {
+  it("stages v2 through v11 preserving every id and reference count; backup stays restorable", () => {
     const production = new Database(":memory:");
     production.pragma("foreign_keys = ON");
     runMigrations(production, 2);
@@ -152,7 +152,7 @@ describe("migration rehearsal on production-shaped copies", () => {
         .prepare(`SELECT version FROM schema_migrations ORDER BY version`)
         .all()
         .map((row) => (row as { version: number }).version),
-    ).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9, 10]);
+    ).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]);
 
     production.close();
     restored.close();
