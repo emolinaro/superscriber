@@ -3,6 +3,43 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+const fsFaults = vi.hoisted(() => ({
+  failTierRemovals: false,
+  renameSnapshots: [] as Array<{
+    source: string;
+    destination: string;
+    sourceWasDirectory: boolean;
+    destinationExisted: boolean;
+  }>,
+}));
+
+vi.mock("node:fs", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("node:fs")>();
+  return {
+    ...actual,
+    renameSync: (...args: Parameters<typeof actual.renameSync>) => {
+      const [source, destination] = args;
+      fsFaults.renameSnapshots.push({
+        source: String(source),
+        destination: String(destination),
+        sourceWasDirectory: actual.statSync(source).isDirectory(),
+        destinationExisted: actual.existsSync(destination),
+      });
+      return actual.renameSync(...args);
+    },
+    rmSync: (...args: Parameters<typeof actual.rmSync>) => {
+      const path = String(args[0]);
+      if (
+        fsFaults.failTierRemovals &&
+        (path.endsWith(join(".provisioning", "tiny")) || path.endsWith(join("", "tiny")))
+      ) {
+        throw new Error("simulated cleanup failure");
+      }
+      return actual.rmSync(...args);
+    },
+  };
+});
+
 import {
   DISK_SPACE_HEADROOM,
   listProvisioningStatus,
@@ -30,6 +67,8 @@ describe("model provisioning service (model-tier-provisioning)", () => {
     process.env.SUPERSCRIBER_TRANSCRIBE_MODEL_DIR = modelRoot;
     delete process.env.SUPERSCRIBER_MODEL_DOWNLOAD_FIXTURE_DIR;
     resetProvisioningRegistryForTests();
+    fsFaults.failTierRemovals = false;
+    fsFaults.renameSnapshots.length = 0;
   });
 
   afterEach(() => {
@@ -46,6 +85,8 @@ describe("model provisioning service (model-tier-provisioning)", () => {
     rmSync(modelRoot, { recursive: true, force: true });
     resetProvisioningRegistryForTests();
     vi.restoreAllMocks();
+    vi.unstubAllGlobals();
+    vi.useRealTimers();
   });
 
   function fakeTransport(bytes = 1024): DownloadTransport {
@@ -142,6 +183,28 @@ describe("model provisioning service (model-tier-provisioning)", () => {
     expect(existsSync(join(modelRoot, ".provisioning"))).toBe(false);
   });
 
+  it("reveals a completed tier with one atomic directory rename", async () => {
+    const staleTarget = join(modelRoot, "tiny");
+    mkdirSync(staleTarget, { recursive: true });
+    writeFileSync(join(staleTarget, "stale.txt"), "stale");
+
+    startTierDownload("tiny", {
+      transportFor: () => fakeTransport(),
+      probeDiskSpace: unlimitedDisk,
+    });
+    await waitForTierDownload("tiny");
+
+    expect(fsFaults.renameSnapshots).toEqual([
+      {
+        source: join(modelRoot, ".provisioning", "tiny"),
+        destination: join(modelRoot, "tiny"),
+        sourceWasDirectory: true,
+        destinationExisted: false,
+      },
+    ]);
+    expect(existsSync(join(modelRoot, "tiny", "stale.txt"))).toBe(false);
+  });
+
   it("marks a failed download honestly and keeps the tier unprovisioned", async () => {
     const failing: DownloadTransport = async (url, destination) => {
       if (url.endsWith("model.bin")) {
@@ -168,6 +231,108 @@ describe("model provisioning service (model-tier-provisioning)", () => {
     // A failed run leaves no half-populated tier directory behind.
     expect(existsSync(join(modelRoot, "tiny"))).toBe(false);
     expect(existsSync(join(modelRoot, ".provisioning"))).toBe(false);
+  });
+
+  it("publishes the original failure when cleanup also fails", async () => {
+    const failing: DownloadTransport = async () => {
+      fsFaults.failTierRemovals = true;
+      throw new Error("network reset mid-file");
+    };
+    vi.spyOn(console, "error").mockImplementation(() => undefined);
+
+    startTierDownload("tiny", {
+      transportFor: () => failing,
+      probeDiskSpace: unlimitedDisk,
+    });
+    await waitForTierDownload("tiny");
+
+    const status = listProvisioningStatus();
+    const tiny = status.tiers.find((tier) => tier.tierId === "tiny");
+    expect(status.activeTierId).toBeNull();
+    expect(tiny?.download.state).toBe("failed");
+    expect(tiny?.download.error).toBe("network reset mid-file");
+  });
+
+  it("keeps downloading while bytes arrive beyond the former absolute deadline", async () => {
+    vi.spyOn(AbortSignal, "timeout").mockImplementation(() => {
+      const controller = new AbortController();
+      setTimeout(() => controller.abort(), 15);
+      return controller.signal;
+    });
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (_url: string | URL | Request, init?: RequestInit) => {
+        const signal = init?.signal;
+        let timer: ReturnType<typeof setInterval> | undefined;
+        const body = new ReadableStream<Uint8Array>({
+          start(controller) {
+            let sent = 0;
+            const abort = () => {
+              if (timer) clearInterval(timer);
+              controller.error(new Error("absolute deadline elapsed"));
+            };
+            signal?.addEventListener("abort", abort, { once: true });
+            timer = setInterval(() => {
+              controller.enqueue(new Uint8Array([1]));
+              sent += 1;
+              if (sent === 5) {
+                if (timer) clearInterval(timer);
+                controller.close();
+              }
+            }, 5);
+          },
+          cancel() {
+            if (timer) clearInterval(timer);
+          },
+        });
+        return new Response(body, {
+          headers: { "content-length": "5" },
+        });
+      }),
+    );
+
+    startTierDownload("tiny", { probeDiskSpace: unlimitedDisk });
+    await waitForTierDownload("tiny");
+
+    const tiny = listProvisioningStatus().tiers.find((tier) => tier.tierId === "tiny");
+    expect(tiny?.available).toBe(true);
+    expect(tiny?.download.state).toBe("completed");
+  });
+
+  it("fails a download after ninety seconds without a received byte", async () => {
+    vi.useFakeTimers();
+    vi.spyOn(AbortSignal, "timeout").mockImplementation(() => {
+      const controller = new AbortController();
+      setTimeout(() => controller.abort(), 30 * 60 * 1000);
+      return controller.signal;
+    });
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (_url: string | URL | Request, init?: RequestInit) => {
+        const signal = init?.signal;
+        const body = new ReadableStream<Uint8Array>({
+          start(controller) {
+            signal?.addEventListener(
+              "abort",
+              () => controller.error(new Error("download aborted")),
+              { once: true },
+            );
+          },
+        });
+        return new Response(body);
+      }),
+    );
+
+    startTierDownload("tiny", { probeDiskSpace: unlimitedDisk });
+    try {
+      await vi.advanceTimersByTimeAsync(90_001);
+      const tiny = listProvisioningStatus().tiers.find((tier) => tier.tierId === "tiny");
+      expect(tiny?.download.state).toBe("failed");
+      expect(tiny?.download.error).toContain("stalled");
+    } finally {
+      await vi.advanceTimersByTimeAsync(30 * 60 * 1000);
+      await waitForTierDownload("tiny");
+    }
   });
 
   it("permits a retry after a failure", async () => {

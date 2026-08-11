@@ -82,8 +82,7 @@ export function IngestFlow({
   const [language, setLanguage] = useState("");
   // demo-model-tier-picker: the catalog is server-checked against actual
   // model artifacts on this host; unprovisioned tiers are disabled and say
-  // so explicitly. Default = best-quality provisioned tier (or the worker's
-  // configured default when provisioned).
+  // so explicitly. Default = best-quality provisioned tier.
   const [modelCatalog, setModelCatalog] = useState<{
     tiers: Array<{
       id: string;
@@ -127,6 +126,7 @@ export function IngestFlow({
   } | null>(null);
   const boundaryRef = useRef(-1);
   const observedInFlightRef = useRef<Set<string>>(new Set());
+  const transcriptModelTouchedRef = useRef(false);
 
   // demo-model-tier-picker: the catalog loads lazily on FIRST expansion of
   // Advanced settings (not on mount) - no network chatter for ignored UI,
@@ -161,10 +161,7 @@ export function IngestFlow({
       }
       setModelCatalog(catalog);
       setTranscriptModel((current) => {
-        const currentTier = catalog.tiers.find(
-          (tier: { id: string; available: boolean }) => tier.id === current,
-        );
-        return currentTier?.available ? current : catalog.defaultModel ?? "";
+        return transcriptModelTouchedRef.current ? current : catalog.defaultModel ?? "";
       });
       void refreshProvisioning();
     } catch {
@@ -839,7 +836,10 @@ export function IngestFlow({
                 aria-describedby="recording-model-note"
                 disabled={!modelCatalog}
                 id="recording-model"
-                onChange={(event) => setTranscriptModel(event.target.value)}
+                onChange={(event) => {
+                  transcriptModelTouchedRef.current = true;
+                  setTranscriptModel(event.target.value);
+                }}
                 value={transcriptModel}
               >
                 {!modelCatalog ? <option value="">Checking available models...</option> : null}

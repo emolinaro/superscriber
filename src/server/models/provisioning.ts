@@ -23,9 +23,8 @@ import {
 // model-tier-provisioning: server-side tier installs for the ingest picker.
 // A download stages the pinned faster-whisper artifact set under
 // "<modelRoot>/.provisioning/<tier>/" and only then reveals
-// "<modelRoot>/<tier>/" (model.bin last, since the catalog gate keys on
-// model.bin + config.json), so the catalog can never observe a half-written
-// tier. Failures delete both the staging and target directories and stay on
+// "<modelRoot>/<tier>/" with a directory rename, so the catalog can never
+// observe a half-written tier. Failures delete both staging and target directories and stay on
 // the record until a retry succeeds - the picker renders them honestly.
 //
 // Network surface: exactly the pinned huggingface.co resolve URLs from
@@ -87,13 +86,19 @@ export function resetProvisioningRegistryForTests() {
 
 // Staging cleanup: remove the per-tier staging dir and its parent when empty,
 // so a finished or failed run leaves no .provisioning residue behind.
+function removeDirectory(path: string) {
+  try {
+    rmSync(path, { recursive: true, force: true });
+  } catch {
+    return;
+  }
+}
+
 function clearStaging(root: string, tierId: string) {
-  rmSync(join(root, ".provisioning", tierId), { recursive: true, force: true });
+  removeDirectory(join(root, ".provisioning", tierId));
   try {
     rmdirSync(join(root, ".provisioning"));
-  } catch {
-    // Non-empty or already gone: either way there is nothing to clean.
-  }
+  } catch {}
 }
 
 export function waitForTierDownload(tierId: string) {
@@ -239,9 +244,7 @@ function fixtureTransport(fixtureDir: string): DownloadTransport {
   };
 }
 
-// Ceiling per file: catches genuinely wedged sockets without capping slow
-// links mid-progress (fetch streams otherwise run unbounded).
-const FILE_DOWNLOAD_TIMEOUT_MS = 30 * 60 * 1000;
+const FILE_DOWNLOAD_STALL_TIMEOUT_MS = 90 * 1000;
 
 async function httpTransport(
   url: string,
@@ -251,32 +254,59 @@ async function httpTransport(
   if (!url.startsWith(`${HUGGINGFACE_DOWNLOAD_BASE_URL}/`)) {
     throw new Error(`Refusing to download model artifacts from a non-pinned URL: ${url}`);
   }
-  const response = await fetch(url, {
-    redirect: "follow",
-    cache: "no-store",
-    signal: AbortSignal.timeout(FILE_DOWNLOAD_TIMEOUT_MS),
-  });
-  if (!response.ok || !response.body) {
-    throw new Error(`Download of ${url} failed with HTTP ${response.status}.`);
-  }
-  const total = Number(response.headers.get("content-length")) || 0;
-  let received = 0;
-  const body = Readable.fromWeb(
-    response.body as import("node:stream/web").ReadableStream<Uint8Array>,
-  );
+  const controller = new AbortController();
+  let stalled = false;
+  let stallTimer: ReturnType<typeof setTimeout> | undefined;
+  let body: Readable | undefined;
+  const resetStallTimer = () => {
+    if (stallTimer) {
+      clearTimeout(stallTimer);
+    }
+    stallTimer = setTimeout(() => {
+      stalled = true;
+      controller.abort();
+    }, FILE_DOWNLOAD_STALL_TIMEOUT_MS);
+  };
+  resetStallTimer();
   try {
-    await writeChunks(body as AsyncIterable<Buffer>, destination, (chunk) => {
+    const response = await fetch(url, {
+      redirect: "follow",
+      cache: "no-store",
+      signal: controller.signal,
+    });
+    if (!response.ok || !response.body) {
+      throw new Error(`Download of ${url} failed with HTTP ${response.status}.`);
+    }
+    const total = Number(response.headers.get("content-length")) || 0;
+    let received = 0;
+    body = Readable.fromWeb(
+      response.body as import("node:stream/web").ReadableStream<Uint8Array>,
+    );
+    async function* trackActivity(chunks: AsyncIterable<Buffer>) {
+      for await (const chunk of chunks) {
+        resetStallTimer();
+        yield chunk;
+      }
+    }
+    await writeChunks(trackActivity(body as AsyncIterable<Buffer>), destination, (chunk) => {
       received += chunk.byteLength;
       onProgress({ bytesReceived: received, bytesTotal: total });
     });
+    if (total > 0 && received !== total) {
+      throw new Error(
+        `Download of ${url} was truncated (${received} of ${total} bytes received).`,
+      );
+    }
   } catch (error) {
-    body.destroy();
+    body?.destroy();
+    if (stalled) {
+      throw new Error(`Download of ${url} stalled for 90 seconds without receiving data.`);
+    }
     throw error;
-  }
-  if (total > 0 && received !== total) {
-    throw new Error(
-      `Download of ${url} was truncated (${received} of ${total} bytes received).`,
-    );
+  } finally {
+    if (stallTimer) {
+      clearTimeout(stallTimer);
+    }
   }
 }
 
@@ -320,9 +350,6 @@ async function runDownload(tierId: string, deps: ProvisioningDeps) {
       updateRegistry(tierId, { bytesReceived: completedBytes, bytesTotal: TIER_DOWNLOADS[tierId].sizeBytes });
     }
 
-    // Reveal the tier directory: model.bin lands LAST because the catalog
-    // gate (and the picker) treat model.bin + config.json as the provisioned
-    // signal.
     if (isModelProvisioned(tierId)) {
       clearStaging(root, tierId);
       updateRegistry(tierId, {
@@ -336,14 +363,7 @@ async function runDownload(tierId: string, deps: ProvisioningDeps) {
     }
 
     rmSync(targetDir, { recursive: true, force: true });
-    mkdirSync(targetDir, { recursive: true });
-    const filesInRevealOrder = [
-      ...TIER_DOWNLOADS[tierId].files.filter((file) => file !== "model.bin"),
-      "model.bin",
-    ];
-    for (const file of filesInRevealOrder) {
-      renameSync(join(stagingDir, file), join(targetDir, file));
-    }
+    renameSync(stagingDir, targetDir);
     clearStaging(root, tierId);
 
     if (!isModelProvisioned(tierId)) {
@@ -359,18 +379,17 @@ async function runDownload(tierId: string, deps: ProvisioningDeps) {
       error: null,
     });
   } catch (error) {
-    clearStaging(root, tierId);
-    // Never leave a half-written tier directory for the catalog to trip on.
-    if (!isModelProvisioned(tierId)) {
-      rmSync(targetDir, { recursive: true, force: true });
-    }
     const message = error instanceof Error ? error.message : String(error);
-    console.error(`Model download for tier '${tierId}' failed: ${message}`);
     updateRegistry(tierId, {
       state: "failed",
       error: message,
       finishedAt: (deps.now ?? (() => new Date()))().toISOString(),
     });
+    clearStaging(root, tierId);
+    if (!isModelProvisioned(tierId)) {
+      removeDirectory(targetDir);
+    }
+    console.error(`Model download for tier '${tierId}' failed: ${message}`);
   }
 }
 

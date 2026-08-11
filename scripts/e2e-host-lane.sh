@@ -61,17 +61,9 @@ export SUPERSCRIBER_WORKER_POLL_SECONDS=1
 export SUPERSCRIBER_WORKER_HEARTBEAT_SECONDS=2
 export SUPERSCRIBER_APP_BASE_URL="http://localhost:${PORT}"
 
-if [[ -n "${SUPERSCRIBER_WORKER_PYTHON:-}" ]]; then
-  PYTHON_BIN="${SUPERSCRIBER_WORKER_PYTHON}"
-elif [[ -x ".venv/bin/python3" ]]; then
-  PYTHON_BIN=".venv/bin/python3"
-else
-  PYTHON_BIN="python3"
-fi
-
 (cd .next/standalone && exec node server.js) > /tmp/e2e-host-lane-app.log 2>&1 &
 APP_PID=$!
-(cd worker && exec "${REPO_ROOT}/${PYTHON_BIN}" main.py) > /tmp/e2e-host-lane-worker.log 2>&1 &
+(exec bash scripts/run-worker-python.sh worker/main.py) > /tmp/e2e-host-lane-worker.log 2>&1 &
 WORKER_PID=$!
 
 for _ in $(seq 1 30); do

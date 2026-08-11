@@ -1596,16 +1596,21 @@ function mockProvisioningServer(options: {
   catalog: typeof MODEL_CATALOG;
   statuses: ProvisioningFixture[];
   postResponse?: { status: number; body: unknown };
+  downloadTierId?: string;
+  catalogAfterDownload?: typeof MODEL_CATALOG;
 }) {
   let statusCalls = 0;
   let catalogCalls = 0;
+  const downloadTierId = options.downloadTierId ?? "tiny";
   vi.mocked(fetch).mockImplementation((input, init) => {
     const url = String(input);
     if (url === "/api/models/catalog") {
       const catalog = options.catalog;
       catalogCalls += 1;
-      // After more than one catalog fetch the download has landed.
       if (catalogCalls > 1) {
+        if (options.catalogAfterDownload) {
+          return mockJsonResponse(options.catalogAfterDownload);
+        }
         return mockJsonResponse({
           ...catalog,
           tiers: catalog.tiers.map((tier) =>
@@ -1623,7 +1628,7 @@ function mockProvisioningServer(options: {
         body: {
           ok: true,
           status: {
-            tierId: "tiny",
+            tierId: downloadTierId,
             state: "downloading",
             bytesReceived: 0,
             bytesTotal: 78_203_619,
@@ -1727,6 +1732,92 @@ describe("model tier provisioning (model-tier-provisioning)", () => {
       { timeout: 5_000 },
     );
     expect(screen.queryByRole("button", { name: /Download tiny/ })).not.toBeInTheDocument();
+  });
+
+  it("adopts the refreshed best available tier when the user has not touched the picker", async () => {
+    const user = userEvent.setup();
+    const catalog = {
+      ...MODEL_CATALOG,
+      defaultModel: "tiny",
+      tiers: MODEL_CATALOG.tiers.map((tier) => ({
+        ...tier,
+        available: tier.id === "tiny",
+        default: tier.id === "tiny",
+      })),
+    };
+    const catalogAfterDownload = {
+      ...catalog,
+      defaultModel: "large-v3-turbo",
+      tiers: catalog.tiers.map((tier) => ({
+        ...tier,
+        available: tier.id === "tiny" || tier.id === "large-v3-turbo",
+        default: tier.id === "large-v3-turbo",
+      })),
+    };
+    mockProvisioningServer({
+      catalog,
+      catalogAfterDownload,
+      downloadTierId: "large-v3-turbo",
+      statuses: [
+        { "large-v3-turbo": { state: "idle", bytesReceived: 0, bytesTotal: 1_621_665_643, error: null } },
+        { "large-v3-turbo": { state: "downloading", bytesReceived: 1, bytesTotal: 1_621_665_643, error: null } },
+        { "large-v3-turbo": { state: "completed", bytesReceived: 1_621_665_643, bytesTotal: 1_621_665_643, error: null } },
+      ],
+    });
+    renderFlow("admin");
+
+    await user.click(screen.getByText("Advanced settings"));
+    const select = await screen.findByRole("combobox", { name: "Transcription model" });
+    await waitFor(() => expect(select).toHaveValue("tiny"));
+    await user.click(
+      await screen.findByRole("button", { name: "Download large-v3-turbo (1.5 GB)" }),
+    );
+
+    await waitFor(() => expect(select).toHaveValue("large-v3-turbo"), { timeout: 5_000 });
+  });
+
+  it("preserves a user-chosen tier when a stronger download completes", async () => {
+    const user = userEvent.setup();
+    const catalog = {
+      ...MODEL_CATALOG,
+      defaultModel: "large-v3-turbo",
+      tiers: MODEL_CATALOG.tiers.map((tier) => ({
+        ...tier,
+        available: tier.id !== "large-v3",
+        default: tier.id === "large-v3-turbo",
+      })),
+    };
+    const catalogAfterDownload = {
+      ...catalog,
+      defaultModel: "large-v3",
+      tiers: catalog.tiers.map((tier) => ({
+        ...tier,
+        available: true,
+        default: tier.id === "large-v3",
+      })),
+    };
+    mockProvisioningServer({
+      catalog,
+      catalogAfterDownload,
+      downloadTierId: "large-v3",
+      statuses: [
+        { "large-v3": { state: "idle", bytesReceived: 0, bytesTotal: 3_090_835_362, error: null } },
+        { "large-v3": { state: "downloading", bytesReceived: 1, bytesTotal: 3_090_835_362, error: null } },
+        { "large-v3": { state: "completed", bytesReceived: 3_090_835_362, bytesTotal: 3_090_835_362, error: null } },
+      ],
+    });
+    renderFlow("admin");
+
+    await user.click(screen.getByText("Advanced settings"));
+    const select = await screen.findByRole("combobox", { name: "Transcription model" });
+    await waitFor(() => expect(select).toHaveValue("large-v3-turbo"));
+    await user.selectOptions(select, "tiny");
+    await user.click(await screen.findByRole("button", { name: "Download large-v3 (2.9 GB)" }));
+
+    await waitFor(() => expect(screen.getByRole("option", { name: "large-v3 - default" })).toBeEnabled(), {
+      timeout: 5_000,
+    });
+    expect(select).toHaveValue("tiny");
   });
 
   it("surfaces a refused start honestly (for example a full disk) and leaves the action retryable", async () => {
