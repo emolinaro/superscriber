@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -235,6 +235,29 @@ describe("model provisioning service (model-tier-provisioning)", () => {
     expect(base?.available).toBe(true);
     rmSync(fixtureRoot, { recursive: true, force: true });
   });
+
+  // chmod-based sealing cannot hold back a root test run (root ignores
+  // permission bits), so the case only runs as a regular user.
+  it.runIf(typeof process.getuid !== "function" || process.getuid() !== 0)(
+    "fails honestly when the model root cannot be created",
+    () => {
+    const readOnly = join(modelRoot, "sealed");
+    mkdirSync(readOnly, { recursive: true });
+    chmodSync(readOnly, 0o555);
+    process.env.SUPERSCRIBER_TRANSCRIBE_MODEL_DIR = join(readOnly, "models");
+
+    try {
+      startTierDownload("tiny", { probeDiskSpace: unlimitedDisk });
+      expect.unreachable();
+    } catch (error) {
+      const provisioningError = error as ProvisioningError;
+      expect(provisioningError.code).toBe("model_root_unwritable");
+      expect(provisioningError.httpStatus).toBe(500);
+      } finally {
+        chmodSync(readOnly, 0o755);
+      }
+    },
+  );
 
   it("reports idle status for untouched tiers and completed for hand-provisioned ones", () => {
     const dir = join(modelRoot, "large-v3-turbo");

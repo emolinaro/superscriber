@@ -172,11 +172,12 @@ export function listProvisioningStatus(): {
 
 function fixtureDirForTier(tierId: string): string | null {
   const root = process.env.SUPERSCRIBER_MODEL_DOWNLOAD_FIXTURE_DIR?.trim();
-  if (!root) {
+  const source = TIER_DOWNLOADS[tierId];
+  if (!root || !source) {
     return null;
   }
   const dir = join(root, tierId);
-  const complete = TIER_DOWNLOADS[tierId].files.every((file) => existsSync(join(dir, file)));
+  const complete = source.files.every((file) => existsSync(join(dir, file)));
   return complete ? dir : null;
 }
 
@@ -404,7 +405,16 @@ export function startTierDownload(
   }
 
   const root = modelRoot();
-  mkdirSync(root, { recursive: true });
+  try {
+    mkdirSync(root, { recursive: true });
+  } catch (error) {
+    throw new ProvisioningError(
+      500,
+      "model_root_unwritable",
+      `The model directory ${root} cannot be created or written: ${error instanceof Error ? error.message : String(error)}`,
+      { modelRoot: root },
+    );
+  }
   const probe = deps.probeDiskSpace ?? defaultDiskSpaceProbe;
   const requiredBytes = Math.ceil(TIER_DOWNLOADS[tierId].sizeBytes * DISK_SPACE_HEADROOM);
   const { freeBytes } = probe(root);
