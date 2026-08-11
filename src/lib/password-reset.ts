@@ -3,6 +3,8 @@ import { z } from "zod";
 export const PASSWORD_RESET_COPY = {
   REQUEST_CONFIRMATION:
     "If an account matches that email, a password reset has been started. If nothing arrives, contact your administrator.",
+  REQUEST_CONFIRMATION_NO_MAIL:
+    "This instance does not send email. Your administrator can reset your password for you from Administration > Accounts.",
   REDEEM_FAILURE:
     "That reset link is no longer valid. Ask your administrator for a new one or request another reset.",
   REDEEM_SUCCESS: "Your password has been reset. Sign in with your new password.",

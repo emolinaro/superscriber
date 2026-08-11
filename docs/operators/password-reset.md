@@ -10,9 +10,14 @@ session of the target account immediately.
 - The sign-in surface links to `/reset-request` whenever the local credential
   form is offered (auth modes `local` and `dual`). In `authentik-primary`,
   credentials admit nobody, so no reset affordance is shown.
-- The response is identical for known and unknown emails: "If an account
-  matches that email, a password reset has been started. If nothing arrives,
-  contact your administrator." The flow cannot be used to enumerate accounts.
+- The response is identical for known and unknown emails, and varies only
+  with the instance-wide mail posture, so the flow cannot be used to enumerate
+  accounts. With the reset-mail seam configured, the confirmation is: "If an
+  account matches that email, a password reset has been started. If nothing
+  arrives, contact your administrator." With the seam unconfigured or
+  misconfigured (nothing can be delivered), the confirmation says so plainly:
+  "This instance does not send email. Your administrator can reset your
+  password for you from Administration > Accounts."
 - A request alone changes nothing: no session is revoked, no password is
   touched. Only completing a reset rotates the credential, advances
   `auth_version`, and revokes every session from every auth source (local,

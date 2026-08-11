@@ -54,8 +54,37 @@ export function buildResetUrl(rawToken: string, origin: string | null, baseUrl: 
 }
 
 /**
+ * Confirmation copy for the self-service request (spec 4.4, captain-amended).
+ * The copy varies only with the instance-wide reset-mail posture, never with
+ * the submitted email, so known and unknown accounts stay byte-identical
+ * within a posture and enumeration stays impossible. Instance posture is not
+ * a secret: the readiness surface already reports operator-assisted versus
+ * configured, and loadResetMailConfig performs constant env reads (it never
+ * opens the mounted secret file), so selection adds no per-account timing
+ * signal. Anything that cannot deliver - unset, none, or misconfigured -
+ * answers honestly that nothing was sent; only a validly configured smtp seam
+ * earns the "a password reset has been started" claim.
+ */
+export function requestConfirmationCopy(
+  env: Record<string, string | undefined> = process.env,
+): string {
+  try {
+    return loadResetMailConfig(env).mode === "smtp"
+      ? PASSWORD_RESET_COPY.REQUEST_CONFIRMATION
+      : PASSWORD_RESET_COPY.REQUEST_CONFIRMATION_NO_MAIL;
+  } catch (error) {
+    if (!(error instanceof AuthConfigError)) {
+      throw error;
+    }
+    // Misconfigured still delivers nothing; readiness shows the operator why.
+    return PASSWORD_RESET_COPY.REQUEST_CONFIRMATION_NO_MAIL;
+  }
+}
+
+/**
  * Self-service request (spec section 4). Always resolves; the caller returns
- * PASSWORD_RESET_COPY.REQUEST_CONFIRMATION regardless of outcome.
+ * requestConfirmationCopy() regardless of outcome, so per-account results
+ * never change the copy - only the instance mail posture does.
  */
 export async function requestPasswordReset(
   params: { email: string; ip: string | null; origin: string | null },

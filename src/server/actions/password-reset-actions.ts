@@ -6,7 +6,10 @@ import {
   passwordResetRequestSchema,
 } from "@/lib/password-reset";
 import { resolveClientIp } from "@/server/auth/management-network";
-import { requestPasswordReset } from "@/server/auth/password-reset";
+import {
+  requestConfirmationCopy,
+  requestPasswordReset,
+} from "@/server/auth/password-reset";
 
 export type PasswordResetRequestActionResult =
   | { ok: true; message: string }
@@ -36,8 +39,9 @@ export async function requestPasswordResetAction(input: {
   }
   const { ip, origin } = await requestContext();
   await requestPasswordReset({ email: parsed.data.email, ip, origin });
-  // Anti-enumeration: identical confirmation for every accepted submission.
-  return { ok: true, message: PASSWORD_RESET_COPY.REQUEST_CONFIRMATION };
+  // Anti-enumeration: within a posture the confirmation is identical for every
+  // accepted submission; only the instance mail posture changes the copy.
+  return { ok: true, message: requestConfirmationCopy() };
 }
 
 import { completePasswordReset } from "@/server/auth/password-reset";
