@@ -169,7 +169,7 @@ The Superscriber wordmark is one Newsreader line: `Super` remains sentence case 
 
 | Route | Purpose | Access |
 |---|---|---|
-| `/` | First-run setup when no user exists; steady-state login otherwise | Public |
+| `/` | First-run setup, steady-state login, or administrator recovery according to account state | Public |
 | `/workspace` | Role-aware work inbox | Every authenticated role |
 | `/ingest` | Focused upload or supported browser-record flow | Uploader and admin |
 | `/recordings/[recordingId]` | Current casefile or an authorized historical revision snapshot | Principals with an access grant |
@@ -185,7 +185,7 @@ Primary navigation is exact: uploader gets Work and Ingest; reviewer and approve
 ### First-Run And Login
 
 - The public root landing pairs a deep-teal brand hero (inverse large wordmark, headline, and mode fact pills) with an account card split into two explicit doors via an APG tab pair: Sign up for first-time admission and Sign in for returning users
-- First-run setup is a one-time gate: with no account on the appliance the Sign up door leads with the bootstrap ceremony; once an account exists the Sign up door explains administrator-provisioned admission and Sign in is the default
+- First-run setup is a one-time gate: with no account on the appliance the Sign up door leads with the bootstrap ceremony; once accounts and an active administrator exist, the Sign up door explains administrator-provisioned admission and Sign in is the default
 - If accounts survive but no active administrator remains, the instance is unmanageable and the Sign up door leads with an administrator-recovery claim ceremony: claiming a fresh admin requires the single-use operator claim token readable only on the appliance host (`admin-claim.token` next to the database), with rate-limited, audited attempts - a public claim would be a takeover vector, so host file access is the deliberate gate (see [`docs/operators/admin-recovery.md`](./docs/operators/admin-recovery.md)); under `authentik-primary` the ceremony is withheld and recovery runs through break-glass instead
 - First-run flow has exactly three jobs:
   1. confirm appliance/environment readiness
@@ -255,6 +255,7 @@ On the casefile, admin oversight additionally carries a Danger zone (demo-govern
 | State | User Sees | Primary Action |
 |---|---|---|
 | First run | Setup gate with environment/trust framing and first-admin form | Create admin |
+| No active administrator | Operator-gated recovery claim in local or dual mode; `authentik-primary` steers to the break-glass runbook instead | Claim a fresh admin with the on-host proof, or follow break-glass guidance |
 | Normal login | Simple sign-in surface with local account fields and policy context; OIDC-enabled deployments add an institutional sign-in option; a password-reset link appears whenever the credential form is offered | Sign in |
 | Wrong password | Inline error on the form, no ambiguous failure language | Retry sign-in |
 | Session expired | Clear interruption message with return-to-login handoff; in-place reauthentication when unsaved work exists | Sign in again |
@@ -303,7 +304,7 @@ These requirements apply to the auth, work inbox, ingest, casefile, export, and 
 
 ### Auth And First-Run
 
-- Login and bootstrap screens are fully keyboard-operable without pointer input
+- Login, bootstrap, and administrator-recovery screens are fully keyboard-operable without pointer input
 - Focus lands on the visible pane heading or first invalid field after navigation/submit
 - Wrong-password and expired-session errors are announced and tied to the relevant form
 - Successful logout returns focus to the login heading or first actionable control

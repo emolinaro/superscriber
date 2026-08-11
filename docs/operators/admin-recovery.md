@@ -2,11 +2,11 @@
 
 Superscriber normally creates the first administrator through first-run setup
 and then closes self-service admission entirely. That leaves one dangerous
-corner: **accounts survive, but no active administrator remains.** Causes in
-practice: the final admin was deactivated or deleted through the database
-(the in-app role guard only blocks demotion of the final admin, and raw
-`is_active` flips or row deletes are not trigger-guarded), or a partial
-restore brought back user rows without the admin. In that state nobody can
+corner: **accounts survive, but no active administrator remains.** Supported
+role changes refuse to demote the final active admin, and a designated
+break-glass admin has additional database guards. The state can still result
+from out-of-band changes to an undesignated admin or a partial restore that
+brought back user rows without an active admin. In that state nobody can
 provision accounts, reset passwords, or exercise any governed admin command -
 the instance is unmanageable.
 
@@ -20,7 +20,7 @@ whoever reached an unmanageable appliance first - including anyone who
 *caused* the unmanageable state - would own it. The claim is therefore gated
 on a proof only a host operator can present:
 
-- When the recovery pane renders, the appliance mints a single-use claim
+- When the recovery pane renders, the appliance mints a single-use 128-bit claim
   token at `admin-claim.token` **next to the database file** (the
   `SUPERSCRIBER_DB_PATH` directory; container default `/app/data/`), with
   owner-only (`0600`) permissions.
@@ -29,6 +29,7 @@ on a proof only a host operator can present:
   SQLite database could already edit the database directly, so the token
   binds the ceremony to exactly the access level it protects; a network-only
   attacker cannot race the operator to the crown.
+- The submitted proof is verified with a timing-safe digest comparison.
 - Claim attempts are rate-limited (5 attempts per 15 minutes per client, one
   shared bucket when the client address is unverifiable) and audited to the
   security event stream (`admin.recovery_claim`, `success` / `denied`). The
@@ -77,16 +78,19 @@ so recovery is never needed.
 4. Submit. On success the appliance signs the claim into the audit stream,
    consumes the token, and lands on the sign-in door with a completion
    notice; sign in with the new administrator.
-5. Re-establish hygiene: reactivate or re-provision any deliberately
-   suspended accounts through Administration > Accounts, and investigate how
+5. Re-establish hygiene: review the surviving accounts under Administration >
+   Accounts, provision replacement access where needed, and investigate how
    the appliance lost its last administrator before returning to service.
+   Account reactivation is not exposed in the product UI.
 
 ## Rotating or withholding the proof
 
 Delete `admin-claim.token` on the host to retire the current proof; the next
-render of the recovery pane mints a fresh one. The file only exists while no
-active administrator does, and it is deleted on a successful claim, so no
-stale crown-minting material accumulates on disk.
+render of the recovery pane mints a fresh one. A successful claim deletes the
+file. If an operator restores an active administrator out of band instead,
+delete the leftover token manually; state checks prevent it from being used
+while an active administrator exists, but the file is not cleaned up by that
+out-of-band change.
 
 ## Failure signals
 
