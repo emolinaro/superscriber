@@ -168,12 +168,17 @@ function stripActionMode(current: CasefileViewModel, expired = false): CasefileV
 }
 
 function CasefileStatusCards({ casefile }: { casefile: CasefileViewModel }) {
+  const showTranscriptionBar =
+    casefile.processing.integrityState === "verified" &&
+    (casefile.processing.transcriptJobState === "queued" ||
+      casefile.processing.transcriptJobState === "running" ||
+      casefile.processing.transcriptJobState === "partial_result");
   return (
     <div className="casefile-status-only__grid">
       <article className="panel panel-strong">
         <div className="panel-inner stack-tight">
           <h2 className="section-title">Processing progress</h2>
-          {casefile.processing.active ? (
+          {showTranscriptionBar ? (
             <TranscriptionProgressBar
               audioDurationMs={casefile.processing.audioDurationMs ?? null}
               percent={casefile.processing.progressPercent}
