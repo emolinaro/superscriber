@@ -210,7 +210,11 @@ For the internal worker, the main model/runtime controls are:
 - `SUPERSCRIBER_TRANSCRIBE_ALLOW_RUNTIME_DOWNLOAD`
 - `SUPERSCRIBER_TRANSCRIBE_ALLOW_STUB_FALLBACK`
 
-`SUPERSCRIBER_TRANSCRIBE_MODEL` names the configured worker default. The ingest model catalog checks `SUPERSCRIBER_TRANSCRIBE_MODEL_DIR` on every request and treats a tier as provisioned only when `<model-dir>/<tier>/model.bin` and `<model-dir>/<tier>/config.json` both exist. When you override the model directory, give the app and worker the same value. Advanced settings disables every unprovisioned tier; it initially selects the configured model when that tier is provisioned, or the best-quality provisioned tier otherwise.
+`SUPERSCRIBER_MODEL_DOWNLOAD_FIXTURE_DIR` is a test-only seam for the picker's download path: when `<dir>/<tier>/` holds a tier's complete pinned file set, the server copies from disk instead of fetching from huggingface.co (per-request detection, so removing the fixture restores the real transport). Never set it in production.
+
+`SUPERSCRIBER_TRANSCRIBE_MODEL` names the configured worker default. The ingest model catalog checks `SUPERSCRIBER_TRANSCRIBE_MODEL_DIR` on every request and treats a tier as provisioned only when `<model-dir>/<tier>/model.bin` and `<model-dir>/<tier>/config.json` both exist. When you override the model directory, give the app and worker the same value. Advanced settings disables every unprovisioned tier and always preselects the best-quality provisioned tier, even when the configured model is itself provisioned.
+
+Unprovisioned tiers can be installed straight from the picker: admins (outside phone-safety mode) get a one-click Download action per tier with the exact size on the button and live byte progress while it lands. The download fetches the faster-whisper artifact set (`model.bin`, `config.json`, `tokenizer.json`, and the tier's vocabulary file) from pinned huggingface.co repository+commit URLs into the configured model directory - the worker needs no restart, and the tier turns selectable the moment the install reveals. Disk space is checked before anything starts; failures keep their server error on screen next to a retry. `POST /api/models/provisioning` is admin-only; `GET /api/models/provisioning` reports per-tier state to any signed-in account. The only outbound network surface this adds is the pinned huggingface.co artifact URLs.
 
 Prefetch another supported tier into the shared model directory by setting it for the prefetch command, for example:
 
