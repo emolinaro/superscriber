@@ -52,6 +52,9 @@ export async function POST(
           ? "degraded"
           : (parseString(body.diarizationStatus) as TranscriptJob["diarizationStatus"] | "") ||
             undefined,
+      transcribedUntilMs: parseNumber(body.transcribedUntilMs),
+      audioDurationMs: parseNumber(body.audioDurationMs),
+      segmentsSeen: parseNumber(body.segmentsSeen),
     });
 
     return NextResponse.json({ ok: true, snapshot });

@@ -41,6 +41,9 @@ export type InternalTranscriptJobSnapshot = {
   claimedByWorkerId: string | null;
   progressPercent: number | null;
   etaSeconds: number | null;
+  transcribedUntilMs?: number | null;
+  audioDurationMs?: number | null;
+  segmentsSeen?: number | null;
   lastHeartbeatAt: string | null;
   completedAt: string | null;
   lastError: string | null;
@@ -90,6 +93,20 @@ function buildClaim(state: AppState, workerId: string, jobId: string): InternalT
   };
 }
 
+export function engineProgressFromMs(
+  transcribedUntilMs: number | null,
+  audioDurationMs: number | null,
+): number | null {
+  if (
+    typeof transcribedUntilMs === "number" &&
+    typeof audioDurationMs === "number" &&
+    audioDurationMs > 0
+  ) {
+    return Math.min(99, Math.max(0, Math.floor((transcribedUntilMs / audioDurationMs) * 100)));
+  }
+  return null;
+}
+
 function buildSnapshot(job: TranscriptJob): InternalTranscriptJobSnapshot {
   return {
     jobId: job.id,
@@ -99,6 +116,9 @@ function buildSnapshot(job: TranscriptJob): InternalTranscriptJobSnapshot {
     claimedByWorkerId: job.claimedByWorkerId,
     progressPercent: job.progressPercent,
     etaSeconds: job.etaSeconds,
+    transcribedUntilMs: job.transcribedUntilMs,
+    audioDurationMs: job.audioDurationMs,
+    segmentsSeen: job.segmentsSeen,
     lastHeartbeatAt: job.lastHeartbeatAt,
     completedAt: job.completedAt,
     lastError: job.lastError,
@@ -224,10 +244,10 @@ export function claimAvailableTranscriptJob(params: {
             started_at = COALESCE(started_at, @claimedAt),
             last_heartbeat_at = @claimedAt,
             eta_seconds = COALESCE(eta_seconds, 90),
-            progress_percent = CASE
-              WHEN progress_percent IS NULL OR progress_percent < 5 THEN 5
-              ELSE progress_percent
-            END,
+            progress_percent = NULL,
+            transcribed_until_ms = NULL,
+            audio_duration_ms = NULL,
+            segments_seen = NULL,
             last_error = NULL
           WHERE id = @jobId
             AND (
@@ -327,6 +347,9 @@ export function heartbeatTranscriptJob(params: {
   progressPercent?: number | null;
   etaSeconds?: number | null;
   diarizationStatus?: TranscriptJob["diarizationStatus"];
+  transcribedUntilMs?: number | null;
+  audioDurationMs?: number | null;
+  segmentsSeen?: number | null;
   bundle?: AppDatabaseBundle;
 }) {
   const bundle = activeBundle(params.bundle);
@@ -346,7 +369,13 @@ export function heartbeatTranscriptJob(params: {
     refs.job.adapter = "internal-python-worker";
     refs.job.updatedAt = timestamp;
     refs.job.lastHeartbeatAt = timestamp;
-    refs.job.progressPercent = params.progressPercent ?? refs.job.progressPercent;
+    refs.job.transcribedUntilMs = params.transcribedUntilMs ?? refs.job.transcribedUntilMs;
+    refs.job.audioDurationMs = params.audioDurationMs ?? refs.job.audioDurationMs;
+    refs.job.segmentsSeen = params.segmentsSeen ?? refs.job.segmentsSeen;
+
+    const enginePercent =
+      engineProgressFromMs(refs.job.transcribedUntilMs, refs.job.audioDurationMs);
+    refs.job.progressPercent = enginePercent ?? refs.job.progressPercent;
     refs.job.etaSeconds = params.etaSeconds ?? refs.job.etaSeconds;
     refs.job.diarizationStatus = params.diarizationStatus ?? refs.job.diarizationStatus;
     refs.job.lastError = null;
@@ -449,8 +478,13 @@ export function failTranscriptJob(params: {
     refs.job.updatedAt = timestamp;
     refs.job.lastHeartbeatAt = timestamp;
     refs.job.completedAt = exhausted ? timestamp : null;
-    refs.job.progressPercent = exhausted ? refs.job.progressPercent : 0;
+    refs.job.progressPercent = exhausted ? refs.job.progressPercent : null;
     refs.job.etaSeconds = exhausted ? null : 90;
+    if (!exhausted) {
+      refs.job.transcribedUntilMs = null;
+      refs.job.audioDurationMs = null;
+      refs.job.segmentsSeen = null;
+    }
     refs.job.lastError = params.detail;
     refs.job.diarizationStatus = exhausted ? refs.job.diarizationStatus : "pending";
 

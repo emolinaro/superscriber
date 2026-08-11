@@ -126,6 +126,7 @@ class Transcriber:
     def transcribe(
         self,
         job: dict[str, Any],
+        on_progress: Any | None = None,
     ) -> tuple[str, list[dict[str, Any]], str]:
         media_path = str(job.get("mediaPath") or "")
         if not media_path:
@@ -141,8 +142,17 @@ class Transcriber:
             vad_filter=True,
         )
 
+        duration_ms = None
+        try:
+            if getattr(_info, "duration", None):
+                duration_ms = int(float(_info.duration) * 1000)
+        except Exception:
+            duration_ms = None
+
         segments: list[dict[str, Any]] = []
         for index, segment in enumerate(segments_iter):
+            if on_progress is not None:
+                on_progress(int(segment.end * 1000), duration_ms, index + 1)
             segments.append(
                 {
                     "id": f"seg-{index + 1}",
@@ -165,14 +175,27 @@ class Transcriber:
 
 
 class HeartbeatLoop:
+    PROGRESS_HEARTBEAT_SECONDS = 2.0
+
     def __init__(self, config: WorkerConfig, job_id: str) -> None:
         self.config = config
         self.job_id = job_id
         self.state = "running"
-        self.progress = 15
+        # No staged base percent: engine samples drive the bar; before the
+        # first sample the app keeps the claim-time progress value.
+        self.progress: int | None = None
         self.eta_seconds = 90
+        self.transcribed_until_ms: int | None = None
+        self.audio_duration_ms: int | None = None
+        self.segments_seen: int | None = None
         self.diarization_status = "pending"
         self._stop = threading.Event()
+        self._wake = threading.Event()
+        self._state_lock = threading.Lock()
+        self._send_lock = threading.Lock()
+        self._update_version = 0
+        self._sent_version = 0
+        self._last_progress_post_at: float | None = None
         self._thread = threading.Thread(target=self._run, daemon=True)
 
     def start(self) -> None:
@@ -180,6 +203,7 @@ class HeartbeatLoop:
 
     def stop(self) -> None:
         self._stop.set()
+        self._wake.set()
         self._thread.join(timeout=2)
 
     def update(
@@ -189,30 +213,93 @@ class HeartbeatLoop:
         progress: int | None = None,
         eta_seconds: int | None = None,
         diarization_status: str | None = None,
+        transcribed_until_ms: int | None = None,
+        audio_duration_ms: int | None = None,
+        segments_seen: int | None = None,
     ) -> None:
-        if state is not None:
-            self.state = state
-        if progress is not None:
-            self.progress = progress
-        if eta_seconds is not None:
-            self.eta_seconds = eta_seconds
-        if diarization_status is not None:
-            self.diarization_status = diarization_status
+        changed = False
+        with self._state_lock:
+            if state is not None:
+                self.state = state
+                changed = True
+            if progress is not None:
+                self.progress = progress
+                changed = True
+            if eta_seconds is not None:
+                self.eta_seconds = eta_seconds
+                changed = True
+            if diarization_status is not None:
+                self.diarization_status = diarization_status
+                changed = True
+            if transcribed_until_ms is not None:
+                self.transcribed_until_ms = transcribed_until_ms
+                changed = True
+            if audio_duration_ms is not None:
+                self.audio_duration_ms = audio_duration_ms
+                changed = True
+            if segments_seen is not None:
+                self.segments_seen = segments_seen
+                changed = True
+            if changed:
+                self._update_version += 1
+        if changed:
+            self._wake.set()
+
+    def flush(self) -> None:
+        try:
+            self._post_heartbeat(pending_only=True)
+        except Exception as exc:
+            print(f"[worker] heartbeat failed for {self.job_id}: {exc}", file=sys.stderr)
+
+    def _progress_send_delay(self) -> float:
+        with self._send_lock:
+            if self._last_progress_post_at is None:
+                return 0
+            elapsed = time.monotonic() - self._last_progress_post_at
+            return max(0, self.PROGRESS_HEARTBEAT_SECONDS - elapsed)
+
+    def _post_heartbeat(self, *, pending_only: bool = False) -> None:
+        with self._send_lock:
+            with self._state_lock:
+                version = self._update_version
+                has_pending_update = self._sent_version < version
+                if pending_only and not has_pending_update:
+                    return
+                payload = {
+                    "workerId": self.config.worker_id,
+                    "state": self.state,
+                    "progressPercent": self.progress,
+                    "etaSeconds": self.eta_seconds,
+                    "diarizationStatus": self.diarization_status,
+                    "transcribedUntilMs": self.transcribed_until_ms,
+                    "audioDurationMs": self.audio_duration_ms,
+                    "segmentsSeen": self.segments_seen,
+                }
+
+            post_json(
+                self.config,
+                f"/api/internal/transcript-jobs/{self.job_id}/heartbeat",
+                payload,
+            )
+            if has_pending_update:
+                self._last_progress_post_at = time.monotonic()
+            with self._state_lock:
+                self._sent_version = max(self._sent_version, version)
 
     def _run(self) -> None:
-        while not self._stop.wait(self.config.heartbeat_seconds):
+        while not self._stop.is_set():
+            woke_for_update = self._wake.wait(self.config.heartbeat_seconds)
+            self._wake.clear()
+            if self._stop.is_set():
+                return
             try:
-                post_json(
-                    self.config,
-                    f"/api/internal/transcript-jobs/{self.job_id}/heartbeat",
-                    {
-                        "workerId": self.config.worker_id,
-                        "state": self.state,
-                        "progressPercent": self.progress,
-                        "etaSeconds": self.eta_seconds,
-                        "diarizationStatus": self.diarization_status,
-                    },
-                )
+                if woke_for_update:
+                    delay = self._progress_send_delay()
+                    if delay > 0 and self._stop.wait(delay):
+                        return
+                    self._post_heartbeat(pending_only=True)
+                else:
+                    self._post_heartbeat()
             except Exception as exc:
                 print(f"[worker] heartbeat failed for {self.job_id}: {exc}", file=sys.stderr)
 
@@ -260,10 +347,17 @@ def process_job(config: WorkerConfig, transcriber: Transcriber, job: dict[str, A
     heartbeat.start()
 
     try:
-        heartbeat.update(progress=25, eta_seconds=60, diarization_status="pending")
+        def on_engine_progress(until_ms: int, duration_ms: int | None, count: int) -> None:
+            heartbeat.update(
+                transcribed_until_ms=until_ms,
+                audio_duration_ms=duration_ms,
+                segments_seen=count,
+            )
 
         try:
-            summary, segments, diarization_status = transcriber.transcribe(job)
+            summary, segments, diarization_status = transcriber.transcribe(
+                job, on_progress=on_engine_progress
+            )
         except (ModelUnavailable, SpeechStackUnavailable) as exc:
             if not config.allow_stub_fallback:
                 raise
@@ -271,13 +365,7 @@ def process_job(config: WorkerConfig, transcriber: Transcriber, job: dict[str, A
             print(f"[worker] degraded fallback for {job_id}: {exc}", file=sys.stderr)
             summary, segments, diarization_status = build_mock_transcript(job)
 
-        heartbeat.update(
-            state="partial_result",
-            progress=75,
-            eta_seconds=15,
-            diarization_status=diarization_status,
-        )
-
+        heartbeat.flush()
         complete_job(config, job_id, summary, segments, diarization_status)
         print(
             f"[worker] completed {job_id} with {len(segments)} segment(s) on {config.device}"

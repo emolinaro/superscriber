@@ -45,6 +45,8 @@ Historical revision terminal states are `superseded`, `withdrawn`, and `changes_
 
 Derived stages, evaluated in order: `Needs ingest attention`, `Verifying`, `Transcribing`, `Pending approval`, `Approved`, `Changes requested`, `Reopened`, and `Draft review`. A withdrawn submission returns to `Draft review`.
 
+Numeric transcription progress comes only from real engine samples: transcribed media time divided by known audio duration, capped below completion. The percent stays absent until the first segment arrives, so active status casefiles and running work rows show a liveness pulse instead of fabricated progress; a queued work row remains labeled `Queued for transcription`. Once samples arrive, the in-flight surface shows percent, latest segment count, and transcribed time against total duration. Progress appears only for verified recordings whose latest transcript job is queued, running, or has a partial result, and it retires when the job leaves those states so integrity and workflow stage copy remain authoritative.
+
 ### Revision and decision commands
 
 Every governed command carries an expected revision identifier and runs in one database transaction; the first valid transition wins and a racer receives a typed conflict. The command set:
@@ -217,7 +219,7 @@ Every transcript-capable casefile begins directly below the app shell:
 4. Pinned state action bar showing only state-valid commands for the current principal, including the unsaved-state indicator.
 5. Governance drawer holding policy, provenance, assignment history, revision history, decisions, and audit - opened from the case header's `Governance >` control; nothing renders on wide screens while it is closed (no standalone rail), and the open drawer sits beside the transcript.
 
-A recording owner with uploader-only access receives a status casefile: ingest progress, safe metadata, and recovery guidance, with no transcript, media, decisions, or audit content.
+A recording owner with uploader-only access receives a status casefile: ingest and live transcription progress, safe metadata, and recovery guidance, with no transcript, media, decisions, or audit content.
 
 ### Transcript export
 

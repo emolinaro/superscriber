@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { mkdtempSync, readdirSync, rmSync, statSync, unlinkSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, unlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import Database from "better-sqlite3";
@@ -259,6 +259,131 @@ function signalInternalWorker(action: "STOP" | "CONT") {
   }
 
   execContainerPython(WORKER_SIGNAL_SCRIPT, [action]);
+}
+
+function engineSharedSecret(): string {
+  const fromEnv = process.env.SUPERSCRIBER_ENGINE_SHARED_SECRET?.trim();
+  if (fromEnv) {
+    return fromEnv;
+  }
+  if (e2eContainerName()) {
+    return execContainerPython(
+      'print(open("/app/data/engine.secret", encoding="utf-8").read().strip())',
+      [],
+    ).trim();
+  }
+  const repoSecret = join(process.cwd(), "data", "engine.secret");
+  if (existsSync(repoSecret)) {
+    return readFileSync(repoSecret, "utf8").trim();
+  }
+  throw new Error(
+    "Engine shared secret not found; the e2e worker simulation needs SUPERSCRIBER_ENGINE_SHARED_SECRET or data/engine.secret.",
+  );
+}
+
+export type SimulatedEngineSample = {
+  transcribedUntilMs: number;
+  audioDurationMs: number;
+  segmentsSeen: number;
+};
+
+async function postInternalWorkerJson(path: string, payload: Record<string, unknown>) {
+  const response = await fetch(`${process.env.PLAYWRIGHT_BASE_URL || "http://localhost:3105"}${path}`, {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      authorization: `Bearer ${engineSharedSecret()}`,
+    },
+    body: JSON.stringify(payload),
+  });
+  if (!response.ok) {
+    throw new Error(`worker simulation ${path} failed: ${response.status} ${await response.text()}`);
+  }
+  return (await response.json()) as Record<string, unknown>;
+}
+
+export const SIMULATED_WORKER_ID = "e2e-simulated-worker";
+
+export class SimulatedTranscriptJobUnavailableError extends Error {}
+
+export async function claimSimulatedTranscriptJob(
+  expectedRecordingId: string,
+): Promise<{ jobId: string; recordingId: string }> {
+  const staleCutoff = new Date(Date.now() - 120_000).toISOString();
+  const candidate = queryRuntimeRows<{ jobId: string; recordingId: string }>(
+    `select j.id as jobId, j.recording_id as recordingId
+     from transcript_jobs j
+     inner join recordings r on r.id = j.recording_id
+     left join ingestion_sessions s on s.id = r.ingestion_session_id
+     where r.integrity_state = 'verified'
+       and r.media_path is not null
+       and (s.state is null or s.state = 'verified')
+       and (
+         j.state = 'queued'
+         or (
+           j.state in ('running', 'partial_result')
+           and (j.last_heartbeat_at is null or j.last_heartbeat_at < ?)
+         )
+       )
+     order by case j.state when 'queued' then 0 else 1 end, r.updated_at asc
+     limit 1`,
+    [staleCutoff],
+  )[0];
+  if (!candidate) {
+    throw new SimulatedTranscriptJobUnavailableError(
+      "worker simulation found no queued transcript job to claim",
+    );
+  }
+  if (candidate.recordingId !== expectedRecordingId) {
+    throw new Error(
+      `worker simulation would claim recording ${candidate.recordingId}; expected ${expectedRecordingId}`,
+    );
+  }
+
+  const response = await postInternalWorkerJson("/api/internal/transcript-jobs/claim", {
+    workerId: SIMULATED_WORKER_ID,
+    staleAfterMs: 120_000,
+  });
+  const job = response.job as { jobId: string; recordingId: string } | null;
+  if (!job) {
+    throw new SimulatedTranscriptJobUnavailableError(
+      "worker simulation found no queued transcript job to claim",
+    );
+  }
+  if (job.recordingId !== expectedRecordingId) {
+    throw new Error(
+      `worker simulation claimed recording ${job.recordingId}; expected ${expectedRecordingId}`,
+    );
+  }
+  return job;
+}
+
+export async function postSimulatedHeartbeat(jobId: string, sample: SimulatedEngineSample) {
+  return postInternalWorkerJson(`/api/internal/transcript-jobs/${jobId}/heartbeat`, {
+    workerId: SIMULATED_WORKER_ID,
+    state: "running",
+    transcribedUntilMs: sample.transcribedUntilMs,
+    audioDurationMs: sample.audioDurationMs,
+    segmentsSeen: sample.segmentsSeen,
+  });
+}
+
+export async function completeSimulatedTranscriptJob(jobId: string) {
+  return postInternalWorkerJson(`/api/internal/transcript-jobs/${jobId}/complete`, {
+    workerId: SIMULATED_WORKER_ID,
+    summary: "Simulated engine finished the transcript for the e2e progress proof.",
+    diarizationStatus: "degraded",
+    segments: [
+      {
+        id: "seg-1",
+        speakerLabel: "Speaker 1",
+        startMs: 0,
+        endMs: 60_000,
+        text: "Simulated engine output for the live progress proof.",
+        confidence: 0.9,
+      },
+    ],
+  });
 }
 
 export function pauseInternalWorker() {

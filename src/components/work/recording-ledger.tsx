@@ -1,5 +1,11 @@
 "use client";
 
+import {
+  useRecordingProgress,
+  ProgressAwareStatus,
+  type RecordingProgressSample,
+} from "./use-recording-progress";
+
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import type { UserRole } from "@/domain/models";
@@ -79,7 +85,15 @@ function UpdatedTime({ row }: { row: WorkInboxRow }) {
   );
 }
 
-function LedgerTable({ role, rows }: { role: UserRole; rows: WorkInboxRow[] }) {
+function LedgerTable({
+  role,
+  rows,
+  progressSamples,
+}: {
+  role: UserRole;
+  rows: WorkInboxRow[];
+  progressSamples: Record<string, RecordingProgressSample>;
+}) {
   const columns = columnsForRole(role);
 
   return (
@@ -109,7 +123,14 @@ function LedgerTable({ role, rows }: { role: UserRole; rows: WorkInboxRow[] }) {
             )}
             <td>{row.revisionLabel}</td>
             <td>
-              <StatusBadge tone={toneForStage(row.stage)}>{row.stageLabel}</StatusBadge>
+              {row.stage === "transcribing" ? (
+                <ProgressAwareStatus
+                  fallbackLabel={row.stageLabel}
+                  sample={progressSamples[row.recordingId]}
+                />
+              ) : (
+                <StatusBadge tone={toneForStage(row.stage)}>{row.stageLabel}</StatusBadge>
+              )}
             </td>
             <td>
               <UpdatedTime row={row} />
@@ -132,7 +153,15 @@ function LedgerTable({ role, rows }: { role: UserRole; rows: WorkInboxRow[] }) {
   );
 }
 
-function LedgerList({ role, rows }: { role: UserRole; rows: WorkInboxRow[] }) {
+function LedgerList({
+  role,
+  rows,
+  progressSamples,
+}: {
+  role: UserRole;
+  rows: WorkInboxRow[];
+  progressSamples: Record<string, RecordingProgressSample>;
+}) {
   return (
     <ul aria-label="Work recordings" className="recording-list">
       {rows.map((row) => {
@@ -148,7 +177,14 @@ function LedgerList({ role, rows }: { role: UserRole; rows: WorkInboxRow[] }) {
                   </h3>
                   <p className="recording-card__meta">Recording {row.recordingId}</p>
                 </div>
-                <StatusBadge tone={toneForStage(row.stage)}>{row.stageLabel}</StatusBadge>
+                {row.stage === "transcribing" ? (
+                  <ProgressAwareStatus
+                    fallbackLabel={row.stageLabel}
+                    sample={progressSamples[row.recordingId]}
+                  />
+                ) : (
+                  <StatusBadge tone={toneForStage(row.stage)}>{row.stageLabel}</StatusBadge>
+                )}
               </header>
               <dl className="recording-card__facts">
                 <div>
@@ -195,6 +231,15 @@ function LedgerList({ role, rows }: { role: UserRole; rows: WorkInboxRow[] }) {
 
 export function RecordingLedger({ role, rows }: { role: UserRole; rows: WorkInboxRow[] }) {
   const desktop = useDesktopLedger();
+  // Live transcription progress: one batched poll for every transcribing row
+  // currently on screen.
+  const progressSamples = useRecordingProgress(
+    rows.filter((row) => row.stage === "transcribing").map((row) => row.recordingId),
+  );
 
-  return desktop ? <LedgerTable role={role} rows={rows} /> : <LedgerList role={role} rows={rows} />;
+  return desktop ? (
+    <LedgerTable progressSamples={progressSamples} role={role} rows={rows} />
+  ) : (
+    <LedgerList progressSamples={progressSamples} role={role} rows={rows} />
+  );
 }

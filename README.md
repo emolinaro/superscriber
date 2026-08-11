@@ -18,6 +18,7 @@ It runs as a single-institution deployment with local accounts, SQLite persisten
 - Optional institutional sign-in via Authentik OIDC (local, dual, or authentik-primary deployment modes) with live-revocable server-side sessions and a management-boundary break-glass account - operator runbooks in [`docs/operators/`](./docs/operators/)
 - Password reset for lost local credentials: self-service reset links and an audited administrator reset - reset mail is opt-in (`SUPERSCRIBER_RESET_MAIL_MODE`), otherwise resets run operator-assisted ([`docs/operators/password-reset.md`](./docs/operators/password-reset.md))
 - Role-aware work inbox ledgers (tabbed per role) and a transcript-first casefile for review
+- Live, engine-derived transcription progress in work ledgers and uploader status casefiles
 - Governed decision commands - save draft, submit, withdraw submission, request changes, approve, reopen - with the submitter barred from deciding their own revision
 - Admin read-only oversight by default, plus an explicit, record-bound, audited reviewer/approver action mode for casefile work
 - Append-only assignment history, with approval completing all active assignments atomically

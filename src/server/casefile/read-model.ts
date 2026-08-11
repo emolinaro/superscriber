@@ -196,6 +196,9 @@ export type CasefileViewModel = {
     transcriptJobState: Recording["transcriptJobState"];
     progressPercent: number | null;
     etaSeconds: number | null;
+    transcribedUntilMs: number | null;
+    audioDurationMs: number | null;
+    segmentsSeen: number | null;
     verificationSummary: string | null;
     recoveryHint: string | null;
   };
@@ -783,6 +786,9 @@ function processingView(
     transcriptJobState: recording.transcriptJobState,
     progressPercent: transcriptJob?.progressPercent ?? null,
     etaSeconds: transcriptJob?.etaSeconds ?? null,
+    transcribedUntilMs: transcriptJob?.transcribedUntilMs ?? null,
+    audioDurationMs: transcriptJob?.audioDurationMs ?? null,
+    segmentsSeen: transcriptJob?.segmentsSeen ?? null,
     verificationSummary:
       ingestionSession?.verificationSummary ?? recording.verificationSummary ?? null,
     recoveryHint: processingRecoveryHint(recording, ingestionSession, transcriptJob),

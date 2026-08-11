@@ -39,9 +39,12 @@ function renderStatusOnlyWorkspace(overrides: Record<string, unknown> = {}) {
         media: { kind: "audio", url: null, denialReason: null },
         processing: {
           active: true,
-          integrityState: "verifying",
+          integrityState: "verified",
           transcriptJobState: "running",
           progressPercent: 42,
+          transcribedUntilMs: null,
+          audioDurationMs: null,
+          segmentsSeen: null,
           etaSeconds: 18,
           verificationSummary: "Verifying upload.",
           recoveryHint: "Keep this tab open while transcript preparation finishes.",
@@ -129,7 +132,9 @@ describe("CasefileWorkspace status-only polling", () => {
 
     const view = renderStatusOnlyWorkspace();
 
-    expect(screen.getByText("42% complete")).toBeVisible();
+    const bar = screen.getByRole("progressbar", { name: "Transcription progress" });
+    expect(bar).toBeVisible();
+    expect(bar).toHaveAttribute("aria-valuenow", "42");
 
     await advancePollingWindow();
 
@@ -157,5 +162,51 @@ describe("CasefileWorkspace status-only polling", () => {
     await advancePollingWindow();
 
     expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("keeps the stage label instead of the transcription bar during integrity verification", () => {
+    renderStatusOnlyWorkspace({
+      stageLabel: "Verifying upload",
+      processing: {
+        active: true,
+        integrityState: "verifying",
+        transcriptJobState: "queued",
+        progressPercent: null,
+        transcribedUntilMs: null,
+        audioDurationMs: null,
+        segmentsSeen: null,
+        etaSeconds: 90,
+        verificationSummary: "Awaiting server-side verification.",
+        recoveryHint: null,
+      },
+    });
+
+    expect(
+      screen.queryByRole("progressbar", { name: "Transcription progress" }),
+    ).not.toBeInTheDocument();
+    expect(screen.queryByText(/engine warming up/)).not.toBeInTheDocument();
+    expect(screen.getAllByText("Verifying upload").length).toBeGreaterThan(0);
+  });
+
+  it("renders the transcription bar once the engine pipeline is queued after verification", () => {
+    renderStatusOnlyWorkspace({
+      stageLabel: "Transcribing",
+      processing: {
+        active: true,
+        integrityState: "verified",
+        transcriptJobState: "queued",
+        progressPercent: null,
+        transcribedUntilMs: null,
+        audioDurationMs: null,
+        segmentsSeen: null,
+        etaSeconds: 90,
+        verificationSummary: "Queued for transcription.",
+        recoveryHint: null,
+      },
+    });
+
+    const bar = screen.getByRole("progressbar", { name: "Transcription progress" });
+    expect(bar).toBeVisible();
+    expect(bar).toHaveAttribute("data-live", "warming");
   });
 });

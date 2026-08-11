@@ -67,13 +67,80 @@ function queueVerifiedRecording(state: AppState, title: string) {
   recording.verificationSummary = session.verificationSummary;
   recording.transcriptJobState = "queued";
   job.state = "queued";
-  job.progressPercent = 0;
+  job.progressPercent = null;
   job.etaSeconds = 90;
 
   return { recording, session, job };
 }
 
 describe("internal transcript queue", () => {
+  it("derives the progress percent from real engine samples and keeps the liveness fields", () => {
+    const bundle = openAppDatabase(":memory:");
+
+    try {
+      const state = createBaseState();
+      const { job } = queueVerifiedRecording(state, "Engine progress probe");
+      writeState(state, bundle.db);
+
+      claimAvailableTranscriptJob({ workerId: "worker-a", bundle });
+
+      // A claim starts sample-free: a beat without engine data keeps the bar
+      // in the liveness-pulse state.
+      const warming = heartbeatTranscriptJob({ jobId: job.id, workerId: "worker-a", bundle });
+      expect(warming.progressPercent).toBeNull();
+      expect(warming.segmentsSeen).toBeNull();
+
+      const base = heartbeatTranscriptJob({
+        jobId: job.id,
+        workerId: "worker-a",
+        progressPercent: 15,
+        bundle,
+      });
+      expect(base.progressPercent).toBeNull();
+
+      const first = heartbeatTranscriptJob({
+        jobId: job.id,
+        workerId: "worker-a",
+        transcribedUntilMs: 5000,
+        audioDurationMs: 60000,
+        segmentsSeen: 1,
+        bundle,
+      });
+      expect(first.progressPercent).toBe(8);
+      expect(first.segmentsSeen).toBe(1);
+
+      const second = heartbeatTranscriptJob({
+        jobId: job.id,
+        workerId: "worker-a",
+        transcribedUntilMs: 30000,
+        audioDurationMs: 60000,
+        segmentsSeen: 7,
+        progressPercent: 15, // stale staged value loses to engine data
+        bundle,
+      });
+      expect(second.progressPercent).toBe(50);
+
+      // Clamp: never report 100 before /complete lands.
+      const late = heartbeatTranscriptJob({
+        jobId: job.id,
+        workerId: "worker-a",
+        transcribedUntilMs: 60000,
+        audioDurationMs: 60000,
+        segmentsSeen: 11,
+        bundle,
+      });
+      expect(late.progressPercent).toBe(99);
+
+      // Engine-free beats (no ms fields) keep the last real percent - a
+      // heartbeat without new samples must not lurch the bar backwards.
+      const quiet = heartbeatTranscriptJob({ jobId: job.id, workerId: "worker-a", bundle });
+      expect(quiet.progressPercent).toBe(99);
+      expect(quiet.segmentsSeen).toBe(11);
+    } finally {
+      bundle.sqlite.close();
+    }
+  });
+
   it("claims a queued verified job, accepts heartbeats, and completes with a first draft", () => {
     const bundle = openAppDatabase(":memory:");
 
@@ -94,7 +161,10 @@ describe("internal transcript queue", () => {
         jobId: job.id,
         workerId: "worker-a",
         state: "partial_result",
-        progressPercent: 72,
+        progressPercent: 12,
+        transcribedUntilMs: 43_200,
+        audioDurationMs: 60_000,
+        segmentsSeen: 8,
         etaSeconds: 18,
         diarizationStatus: "degraded",
         bundle,
@@ -149,6 +219,10 @@ describe("internal transcript queue", () => {
       job.startedAt = staleIso;
       job.updatedAt = staleIso;
       job.lastHeartbeatAt = staleIso;
+      job.progressPercent = 62;
+      job.transcribedUntilMs = 37_200;
+      job.audioDurationMs = 60_000;
+      job.segmentsSeen = 9;
       recording.transcriptJobState = "running";
       recording.updatedAt = staleIso;
       writeState(state, bundle.db);
@@ -167,6 +241,19 @@ describe("internal transcript queue", () => {
       const refreshedJob = refreshed.transcriptJobs.find((entry) => entry.id === job.id);
       expect(refreshedJob?.claimedByWorkerId).toBe("worker-new");
       expect(refreshedJob?.state).toBe("running");
+      // Stale reclaim clears the dead attempt's engine samples so the new
+      // attempt's first beat cannot re-derive the old percent.
+      expect(refreshedJob?.progressPercent).toBeNull();
+      expect(refreshedJob?.transcribedUntilMs).toBeNull();
+      expect(refreshedJob?.audioDurationMs).toBeNull();
+      expect(refreshedJob?.segmentsSeen).toBeNull();
+
+      const firstBeat = heartbeatTranscriptJob({
+        jobId: job.id,
+        workerId: "worker-new",
+        bundle,
+      });
+      expect(firstBeat.progressPercent).toBeNull();
     } finally {
       bundle.sqlite.close();
     }
@@ -216,6 +303,49 @@ describe("internal transcript queue", () => {
 
       expect(claim).not.toBeNull();
       expect(usedImmediate).toBe(true);
+    } finally {
+      bundle.sqlite.close();
+    }
+  });
+
+  it("clears the failed attempt's engine samples when requeueing for retry", () => {
+    const bundle = openAppDatabase(":memory:");
+
+    try {
+      const state = createBaseState();
+      const { job } = queueVerifiedRecording(state, "Retry clears samples recording");
+      writeState(state, bundle.db);
+
+      claimAvailableTranscriptJob({ workerId: "worker-a", bundle });
+      const running = heartbeatTranscriptJob({
+        jobId: job.id,
+        workerId: "worker-a",
+        transcribedUntilMs: 30_000,
+        audioDurationMs: 60_000,
+        segmentsSeen: 7,
+        bundle,
+      });
+      expect(running.progressPercent).toBe(50);
+
+      const requeued = failTranscriptJob({
+        jobId: job.id,
+        workerId: "worker-a",
+        detail: "Engine crashed mid-run.",
+        retryable: true,
+        bundle,
+      });
+      expect(requeued.state).toBe("queued");
+      expect(requeued.progressPercent).toBeNull();
+      expect(requeued.transcribedUntilMs).toBeNull();
+      expect(requeued.audioDurationMs).toBeNull();
+      expect(requeued.segmentsSeen).toBeNull();
+
+      const reclaim = claimAvailableTranscriptJob({ workerId: "worker-b", bundle });
+      expect(reclaim?.jobId).toBe(job.id);
+
+      const firstBeat = heartbeatTranscriptJob({ jobId: job.id, workerId: "worker-b", bundle });
+      expect(firstBeat.progressPercent).toBeNull();
+      expect(firstBeat.segmentsSeen).toBeNull();
     } finally {
       bundle.sqlite.close();
     }

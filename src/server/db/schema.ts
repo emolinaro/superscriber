@@ -401,6 +401,12 @@ export const transcriptJobs = sqliteTable(
     lastHeartbeatAt: text("last_heartbeat_at"),
     etaSeconds: integer("eta_seconds"),
     progressPercent: integer("progress_percent"),
+    // Real engine samples (faster-whisper emits per-segment timestamps) -
+    // never synthesized. Null until a real sample arrives; the UI shows
+    // liveness cues instead of a fake bar.
+    transcribedUntilMs: integer("transcribed_until_ms"),
+    audioDurationMs: integer("audio_duration_ms"),
+    segmentsSeen: integer("segments_seen"),
     outputRevisionId: text("output_revision_id"),
     lastError: text("last_error"),
     diarizationStatus: text("diarization_status").$type<DiarizationStatus>().notNull(),
