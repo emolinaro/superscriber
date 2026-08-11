@@ -45,6 +45,8 @@ perl -pi -e "s{\\]\\(\\./LICENSE\\)}{]($github_blob/LICENSE)}g" *.md
 #  - the README is staged as index.md (the docs root), so links back into
 #    README.md must follow it there
 perl -pi -e 's{\]\(\./README\.md(#[A-Za-z0-9_-]+)?\)}{](index.md$1)}g' *.md operators/*.md
+#    and from runbooks, ../../README.md -> ../index.md (same target)
+perl -pi -e 's{\]\(\.\./\.\./README\.md(#[A-Za-z0-9_-]+)?\)}{](../index.md$1)}g' operators/*.md
 #  - dev-process specs/plans (docs/superpowers/) are not staged into the
 #    site, so links into them point at the repo blob
 perl -pi -e "s{\\]\\(\\./docs/superpowers/([A-Za-z0-9_./-]+\\.md)\\)}{]($github_blob/docs/superpowers/\$1)}g" *.md operators/*.md
