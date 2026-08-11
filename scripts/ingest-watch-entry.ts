@@ -12,7 +12,7 @@
  * skipped, unsupported formats are refused up-front. Partially-written files
  * are retried every poll until their filesystem fingerprint settles.
  */
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { mkdirSync, readdirSync, statSync, watch, type FSWatcher, type Stats } from "node:fs";
 import { open, type FileHandle } from "node:fs/promises";
 import { basename, extname, join, resolve } from "node:path";
@@ -46,17 +46,23 @@ const AUTH_RETRY_MS = 5_000;
 
 type Candidate = { changedAt: number; fingerprint: string };
 type UploadSessionStatus = {
+  bytesExpected: number;
+  bytesReceived: number;
   integrityState: string;
   nextAction: "resume" | "restart" | "finalize" | "none";
+  sessionId: string;
   state: string;
+  warning?: string | null;
 };
 const candidates = new Map<string, Candidate>();
 const completedPaths = new Map<string, string>();
 const done = new Set<string>();
-const pendingFinalizations = new Map<string, string>();
+const sessionsByDigest = new Map<string, string>();
+const unresumableDigests = new Set<string>();
 const refused = new Set<string>();
 const retryWakeups = new Set<() => void>();
 const http = new BoundedFetch();
+const runId = randomUUID();
 let cookie = "";
 let stopping = false;
 let watcher: FSWatcher | null = null;
@@ -201,6 +207,28 @@ function isDurablyFinalized(status: UploadSessionStatus) {
   );
 }
 
+async function readSessionStatus(response: Response, operation: string) {
+  const payload = (await response.json().catch(() => ({}))) as {
+    error?: string;
+    message?: string;
+    status?: UploadSessionStatus;
+  };
+  if (!response.ok) {
+    throw new Error(payload.error ?? payload.message ?? `${operation} HTTP ${response.status}`);
+  }
+  const status = payload.status;
+  if (
+    !status?.sessionId ||
+    !Number.isInteger(status.bytesReceived) ||
+    !Number.isInteger(status.bytesExpected) ||
+    status.bytesReceived < 0 ||
+    status.bytesExpected < 0
+  ) {
+    throw new Error(`${operation} response did not include a valid session status`);
+  }
+  return status;
+}
+
 async function loadSessionStatus(sessionId: string) {
   const response = await request(`/api/ingest/sessions/${sessionId}`, {
     method: "GET",
@@ -209,23 +237,14 @@ async function loadSessionStatus(sessionId: string) {
   if (response.status === 404) {
     return null;
   }
-  const payload = (await response.json().catch(() => ({}))) as {
-    error?: string;
-    message?: string;
-    status?: UploadSessionStatus;
-  };
-  if (!response.ok) {
-    throw new Error(payload.error ?? payload.message ?? `session status HTTP ${response.status}`);
-  }
-  if (!payload.status) {
-    throw new Error("session status response did not include a status");
-  }
-  return payload.status;
+  return readSessionStatus(response, "session status");
 }
 
-function noteFinalized(digest: string, name: string) {
-  pendingFinalizations.delete(digest);
+function noteFinalized(digest: string, name: string, warning?: string | null) {
   done.add(digest);
+  if (warning) {
+    log(`WARNING ${name}: ${warning}`);
+  }
   log(`queued ${name} for governed transcription`);
   return true;
 }
@@ -236,9 +255,6 @@ async function reconcileFinalizeFailure(sessionId: string, digest: string, name:
     if (status && isDurablyFinalized(status)) {
       return noteFinalized(digest, name);
     }
-    if (!status || status.nextAction === "restart") {
-      pendingFinalizations.delete(digest);
-    }
   } catch (reconciliationError) {
     throw new Error(
       `${errorMessage(failure)}; finalize reconciliation failed: ${errorMessage(reconciliationError)}`,
@@ -248,37 +264,42 @@ async function reconcileFinalizeFailure(sessionId: string, digest: string, name:
 }
 
 async function finalizeSession(sessionId: string, digest: string, name: string) {
-  pendingFinalizations.set(digest, sessionId);
+  sessionsByDigest.set(digest, sessionId);
   try {
     const response = await request(`/api/ingest/sessions/${sessionId}/finalize`, {
       method: "POST",
     });
-    if (!response.ok) {
-      throw new Error(`finalize HTTP ${response.status}`);
-    }
-    return noteFinalized(digest, name);
+    const status = await readSessionStatus(response, "finalize");
+    return noteFinalized(digest, name, status.warning);
   } catch (error) {
     return reconcileFinalizeFailure(sessionId, digest, name, error);
   }
 }
 
-async function resumePendingFinalize(digest: string, name: string) {
-  const sessionId = pendingFinalizations.get(digest);
-  if (!sessionId) {
-    return false;
+async function getOrCreateSession(
+  digest: string,
+  body: Record<string, unknown>,
+) {
+  const knownSessionId = sessionsByDigest.get(digest);
+  if (knownSessionId) {
+    const status = await loadSessionStatus(knownSessionId);
+    if (status) {
+      return status;
+    }
+    sessionsByDigest.delete(digest);
   }
-  const status = await loadSessionStatus(sessionId);
-  if (status && isDurablyFinalized(status)) {
-    return noteFinalized(digest, name);
-  }
-  if (!status || status.nextAction === "restart") {
-    pendingFinalizations.delete(digest);
-    return false;
-  }
-  if (status.nextAction === "finalize") {
-    return finalizeSession(sessionId, digest, name);
-  }
-  throw new Error(`session ${sessionId} cannot be finalized while its next action is ${status.nextAction}`);
+
+  const response = await request("/api/ingest/sessions", {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      "x-superscriber-idempotency-key": `${runId}:${digest}`,
+    },
+    body: JSON.stringify(body),
+  });
+  const status = await readSessionStatus(response, "session");
+  sessionsByDigest.set(digest, status.sessionId);
+  return status;
 }
 
 async function ingestFile(path: string, expectedFingerprint: string) {
@@ -305,43 +326,38 @@ async function ingestFile(path: string, expectedFingerprint: string) {
       log(`skip ${name}: duplicate content already ingested this run`);
       return true;
     }
-    if (await resumePendingFinalize(digest, name)) {
-      return true;
+    if (unresumableDigests.has(digest)) {
+      throw new Error("a prior upload of these bytes changed in flight; restart the watcher before retrying");
     }
 
     const title = name.replace(/\.[^.]*$/, "") || name;
     log(`ingesting ${name} (${initialStats.size} bytes, sha256 ${digest.slice(0, 12)})`);
-    const sessionResponse = await request("/api/ingest/sessions", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({
-        title,
-        languageHint: process.env.SUPERSCRIBER_INGEST_WATCH_LANGUAGE?.trim() || "english",
-        source: "upload",
-        fileName: name,
-        mimeType: mimeTypeFor(name),
-        fileSize: initialStats.size,
-        transcriptModel: process.env.SUPERSCRIBER_TRANSCRIBE_MODEL?.trim() || null,
-      }),
+    const status = await getOrCreateSession(digest, {
+      title,
+      languageHint: process.env.SUPERSCRIBER_INGEST_WATCH_LANGUAGE?.trim() || "english",
+      source: "upload",
+      fileName: name,
+      mimeType: mimeTypeFor(name),
+      fileSize: initialStats.size,
+      transcriptModel: process.env.SUPERSCRIBER_TRANSCRIBE_MODEL?.trim() || null,
     });
-    const sessionPayload = (await sessionResponse.json().catch(() => ({}))) as {
-      error?: string;
-      message?: string;
-      status?: { sessionId?: string };
-    };
-    if (!sessionResponse.ok) {
-      throw new Error(sessionPayload.error ?? sessionPayload.message ?? `session HTTP ${sessionResponse.status}`);
+    if (isDurablyFinalized(status)) {
+      return noteFinalized(digest, name);
     }
-    const sessionId = sessionPayload.status?.sessionId;
-    if (!sessionId) {
-      throw new Error("session response did not include a session id");
+    if (status.nextAction === "restart") {
+      throw new Error(`session ${status.sessionId} requires a restart`);
+    }
+    if (status.nextAction === "none") {
+      throw new Error(`session ${status.sessionId} is not resumable or durably finalized`);
+    }
+    if (status.bytesExpected !== initialStats.size || status.bytesReceived > initialStats.size) {
+      throw new Error(`session ${status.sessionId} does not match the watched file size`);
     }
 
-    const uploadedHash = createHash("sha256");
-    for (let offset = 0; offset < initialStats.size;) {
+    let offset = status.bytesReceived;
+    while (offset < initialStats.size) {
       const chunk = await readChunk(handle, buffer, offset, initialStats.size);
-      uploadedHash.update(chunk);
-      const chunkResponse = await request(`/api/ingest/sessions/${sessionId}/chunk`, {
+      const chunkResponse = await request(`/api/ingest/sessions/${status.sessionId}/chunk`, {
         method: "PUT",
         headers: {
           "content-type": "application/octet-stream",
@@ -349,19 +365,26 @@ async function ingestFile(path: string, expectedFingerprint: string) {
         },
         body: chunk as unknown as BodyInit,
       });
-      if (!chunkResponse.ok) {
-        throw new Error(`chunk HTTP ${chunkResponse.status}`);
+      const chunkStatus = await readSessionStatus(chunkResponse, "chunk");
+      if (
+        chunkStatus.sessionId !== status.sessionId ||
+        chunkStatus.bytesReceived <= offset ||
+        chunkStatus.bytesReceived > initialStats.size
+      ) {
+        throw new Error(`session ${status.sessionId} returned an invalid committed byte offset`);
       }
-      offset += chunk.length;
+      offset = chunkStatus.bytesReceived;
     }
 
+    const uploadedDigest = await hashFile(handle, buffer, initialStats.size);
     if (
       fileFingerprint(await handle.stat()) !== expectedFingerprint ||
-      uploadedHash.digest("hex") !== digest
+      uploadedDigest !== digest
     ) {
+      unresumableDigests.add(digest);
       throw new Error("file changed during upload; retrying after it settles");
     }
-    return finalizeSession(sessionId, digest, name);
+    return finalizeSession(status.sessionId, digest, name);
   } finally {
     await handle.close();
   }
@@ -524,15 +547,19 @@ async function main() {
     return;
   }
 
-  const fileWatcher = watch(WATCH_DIR, { persistent: true }, scheduleSweep);
-  fileWatcher.on("error", (error) => {
-    log("watch error; continuing with polling", errorMessage(error));
-    fileWatcher.close();
-    if (watcher === fileWatcher) {
-      watcher = null;
-    }
-  });
-  watcher = fileWatcher;
+  try {
+    const fileWatcher = watch(WATCH_DIR, { persistent: true }, scheduleSweep);
+    fileWatcher.on("error", (error) => {
+      log("watch error; continuing with polling", errorMessage(error));
+      fileWatcher.close();
+      if (watcher === fileWatcher) {
+        watcher = null;
+      }
+    });
+    watcher = fileWatcher;
+  } catch (error) {
+    log("watch setup failed; continuing with polling", errorMessage(error));
+  }
   log(`watching ${resolve(WATCH_DIR)} as ${EMAIL} via ${BASE_URL}`);
   scheduleSweep();
   schedulePoll();

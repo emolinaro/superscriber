@@ -1,5 +1,5 @@
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
-import { chmod, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -15,9 +15,21 @@ type Gate = ReturnType<typeof createGate>;
 
 type FakeAppOptions = {
   expireFirstCookieOnChunks?: boolean;
+  finalizeWarning?: string;
   firstChunkGate?: Gate;
   firstSessionGate?: Gate;
+  loseFirstChunkResponse?: boolean;
   loseFirstFinalizeResponse?: boolean;
+  loseFirstSessionResponse?: boolean;
+  signInGate?: Gate;
+};
+
+type FakeSession = {
+  body: Record<string, unknown>;
+  bytesReceived: number;
+  finalized: boolean;
+  id: string;
+  idempotencyKey: string;
 };
 
 type FakeApp = {
@@ -26,7 +38,8 @@ type FakeApp = {
   finalized: string[];
   inspectedSessions: string[];
   passwords: string[];
-  sessions: Array<{ body: Record<string, unknown>; id: string }>;
+  sessionRequestKeys: string[];
+  sessions: FakeSession[];
   signIns: number;
 };
 
@@ -72,11 +85,31 @@ async function startFakeApp(options: FakeAppOptions = {}) {
     finalized: [],
     inspectedSessions: [],
     passwords: [],
+    sessionRequestKeys: [],
     sessions: [],
     signIns: 0,
   };
   let firstChunkGated = false;
+  let chunkResponseLost = false;
   let finalizeResponseLost = false;
+  let sessionResponseLost = false;
+  let signInGated = false;
+
+  function sessionStatus(session: FakeSession) {
+    const bytesExpected = Number(session.body.fileSize);
+    return {
+      sessionId: session.id,
+      state: session.finalized ? "verified" : "receiving",
+      integrityState: session.finalized ? "verifying" : "pending",
+      bytesReceived: session.bytesReceived,
+      bytesExpected,
+      nextAction: session.finalized
+        ? "none"
+        : session.bytesReceived === bytesExpected
+          ? "finalize"
+          : "resume",
+    };
+  }
 
   const server = createServer((request, response) => {
     void (async () => {
@@ -91,6 +124,10 @@ async function startFakeApp(options: FakeAppOptions = {}) {
         const credentials = new URLSearchParams((await readBody(request)).toString("utf8"));
         state.signIns += 1;
         state.passwords.push(credentials.get("password") ?? "");
+        if (!signInGated && options.signInGate) {
+          signInGated = true;
+          await options.signInGate.arrive();
+        }
         sendJson(response, 200, { url: "/workspace" }, {
           "set-cookie": `authjs.session-token=token-${state.signIns}; Path=/; HttpOnly`,
         });
@@ -98,12 +135,31 @@ async function startFakeApp(options: FakeAppOptions = {}) {
       }
       if (request.method === "POST" && url.pathname === "/api/ingest/sessions") {
         const body = JSON.parse((await readBody(request)).toString("utf8")) as Record<string, unknown>;
-        const id = `session-${state.sessions.length + 1}`;
-        state.sessions.push({ body, id });
+        const header = request.headers["x-superscriber-idempotency-key"];
+        const idempotencyKey = Array.isArray(header) ? header[0] : (header ?? "");
+        state.sessionRequestKeys.push(idempotencyKey);
+        let session = idempotencyKey
+          ? state.sessions.find((candidate) => candidate.idempotencyKey === idempotencyKey)
+          : undefined;
+        if (!session) {
+          session = {
+            body,
+            bytesReceived: 0,
+            finalized: false,
+            id: `session-${state.sessions.length + 1}`,
+            idempotencyKey,
+          };
+          state.sessions.push(session);
+        }
         if (state.sessions.length === 1 && options.firstSessionGate) {
           await options.firstSessionGate.arrive();
         }
-        sendJson(response, 200, { ok: true, status: { sessionId: id } });
+        if (options.loseFirstSessionResponse && !sessionResponseLost) {
+          sessionResponseLost = true;
+          response.destroy();
+          return;
+        }
+        sendJson(response, 200, { ok: true, status: sessionStatus(session) });
         return;
       }
 
@@ -115,46 +171,75 @@ async function startFakeApp(options: FakeAppOptions = {}) {
           sendJson(response, 401, { error: "Authentication expired." });
           return;
         }
+        const session = state.sessions.find((candidate) => candidate.id === chunkMatch[1]);
+        if (!session) {
+          sendJson(response, 404, { error: "Upload session not found." });
+          return;
+        }
+        const start = Number(request.headers["x-superscriber-byte-start"]);
+        if (start !== session.bytesReceived) {
+          sendJson(response, 409, { error: `Expected byte offset ${session.bytesReceived}.` });
+          return;
+        }
         state.chunks.push({
           bytes,
           cookie,
           sessionId: chunkMatch[1],
-          start: Number(request.headers["x-superscriber-byte-start"]),
+          start,
         });
+        session.bytesReceived += bytes.length;
         if (!firstChunkGated && chunkMatch[1] === "session-1" && options.firstChunkGate) {
           firstChunkGated = true;
           await options.firstChunkGate.arrive();
         }
-        sendJson(response, 200, { ok: true });
+        if (options.loseFirstChunkResponse && !chunkResponseLost) {
+          chunkResponseLost = true;
+          response.destroy();
+          return;
+        }
+        sendJson(response, 200, { ok: true, status: sessionStatus(session) });
         return;
       }
 
       const finalizeMatch = url.pathname.match(/^\/api\/ingest\/sessions\/([^/]+)\/finalize$/);
       if (request.method === "POST" && finalizeMatch) {
         await readBody(request);
-        state.finalized.push(finalizeMatch[1]);
+        const session = state.sessions.find((candidate) => candidate.id === finalizeMatch[1]);
+        if (!session) {
+          sendJson(response, 404, { error: "Upload session not found." });
+          return;
+        }
+        session.finalized = true;
+        if (!state.finalized.includes(finalizeMatch[1])) {
+          state.finalized.push(finalizeMatch[1]);
+        }
         if (options.loseFirstFinalizeResponse && !finalizeResponseLost) {
           finalizeResponseLost = true;
           response.destroy();
           return;
         }
-        sendJson(response, 200, { ok: true });
+        sendJson(response, 200, {
+          ok: true,
+          status: {
+            ...sessionStatus(session),
+            warning: options.finalizeWarning,
+          },
+        });
         return;
       }
 
       const statusMatch = url.pathname.match(/^\/api\/ingest\/sessions\/([^/]+)$/);
       if (request.method === "GET" && statusMatch) {
         const sessionId = statusMatch[1];
-        const finalized = state.finalized.includes(sessionId);
+        const session = state.sessions.find((candidate) => candidate.id === sessionId);
         state.inspectedSessions.push(sessionId);
+        if (!session) {
+          sendJson(response, 404, { error: "Upload session not found." });
+          return;
+        }
         sendJson(response, 200, {
           ok: true,
-          status: {
-            sessionId,
-            state: finalized ? "verified" : "receiving",
-            integrityState: finalized ? "verifying" : "pending",
-            nextAction: finalized ? "none" : "finalize",
-          },
+          status: sessionStatus(session),
         });
         return;
       }
@@ -413,6 +498,98 @@ test("reconciles a lost finalize response without creating another session", asy
   watcher.child.kill("SIGTERM");
   await waitForExit(watcher.child);
 }, 11_000);
+
+test("reuses one upload session after its creation response is lost", async () => {
+  const app = await startFakeApp({ loseFirstSessionResponse: true });
+  const directory = await makeWatchDirectory();
+  const watcher = startWatcher(directory, app.baseUrl);
+  await waitUntilWatching(watcher);
+
+  await writeFile(join(directory, "session-loss.wav"), "one governed recording");
+  await waitFor(
+    () => watcher.output().includes("queued session-loss.wav"),
+    `session creation recovery\n${watcher.output()}`,
+    7_000,
+  );
+
+  expect(app.sessions).toHaveLength(1);
+  expect(app.sessionRequestKeys.length).toBeGreaterThanOrEqual(2);
+  expect(app.sessionRequestKeys.every(Boolean)).toBe(true);
+  expect(new Set(app.sessionRequestKeys).size).toBe(1);
+  expect(app.finalized).toEqual(["session-1"]);
+  watcher.child.kill("SIGTERM");
+  await waitForExit(watcher.child);
+}, 11_000);
+
+test("resumes committed chunks after their response is lost", async () => {
+  const app = await startFakeApp({ loseFirstChunkResponse: true });
+  const directory = await makeWatchDirectory();
+  const watcher = startWatcher(directory, app.baseUrl);
+  await waitUntilWatching(watcher);
+  const bytes = Buffer.alloc(CHUNK_BYTES + 23, 0x73);
+
+  await writeFile(join(directory, "chunk-loss.wav"), bytes);
+  await waitFor(
+    () => watcher.output().includes("queued chunk-loss.wav"),
+    `chunk response recovery\n${watcher.output()}`,
+    8_000,
+  );
+
+  expect(app.sessions).toHaveLength(1);
+  expect(app.chunks.map((chunk) => chunk.start)).toEqual([0, CHUNK_BYTES]);
+  expect(Buffer.concat(app.chunks.map((chunk) => chunk.bytes))).toEqual(bytes);
+  expect(app.finalized).toEqual(["session-1"]);
+  watcher.child.kill("SIGTERM");
+  await waitForExit(watcher.child);
+}, 12_000);
+
+test("reports a finalize warning without retrying durable bytes", async () => {
+  const warning = "Backend dispatch unavailable.";
+  const app = await startFakeApp({ finalizeWarning: warning });
+  const directory = await makeWatchDirectory();
+  const watcher = startWatcher(directory, app.baseUrl);
+  await waitUntilWatching(watcher);
+
+  await writeFile(join(directory, "warning.wav"), "durable before dispatch");
+  await waitFor(
+    () => watcher.output().includes(`WARNING warning.wav: ${warning}`),
+    `finalize warning\n${watcher.output()}`,
+    6_000,
+  );
+  await new Promise((resolve) => setTimeout(resolve, 2_500));
+
+  expect(app.sessions).toHaveLength(1);
+  expect(app.finalized).toEqual(["session-1"]);
+  watcher.child.kill("SIGTERM");
+  await waitForExit(watcher.child);
+}, 10_000);
+
+test("falls back to polling when native watch setup fails", async () => {
+  const signInGate = createGate();
+  const app = await startFakeApp({ signInGate });
+  const directory = await makeWatchDirectory();
+  const watcher = startWatcher(directory, app.baseUrl);
+
+  await signInGate.entered;
+  await rm(directory, { recursive: true });
+  signInGate.release();
+  await waitFor(
+    () => watcher.output().includes("watch setup failed; continuing with polling"),
+    `native watch fallback\n${watcher.output()}`,
+    5_000,
+  );
+  await mkdir(directory, { recursive: true });
+  await writeFile(join(directory, "polling.wav"), "poll this file");
+  await waitFor(
+    () => watcher.output().includes("queued polling.wav"),
+    `polling recovery\n${watcher.output()}`,
+    6_000,
+  );
+
+  expect(app.finalized).toEqual(["session-1"]);
+  watcher.child.kill("SIGTERM");
+  await waitForExit(watcher.child);
+}, 12_000);
 
 test("aborts a stalled ingest request during termination", async () => {
   const firstChunkGate = createGate();

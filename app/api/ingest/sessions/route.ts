@@ -17,6 +17,17 @@ function parseNumber(value: unknown) {
   return typeof value === "number" && Number.isFinite(value) ? value : null;
 }
 
+function parseIdempotencyKey(request: Request) {
+  const value = request.headers.get("x-superscriber-idempotency-key");
+  if (value === null) {
+    return null;
+  }
+  if (!/^[A-Za-z0-9:_-]{1,160}$/.test(value)) {
+    throw new IngestError("VALIDATION_ERROR", "The idempotency key is invalid.");
+  }
+  return value;
+}
+
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
@@ -73,6 +84,7 @@ export async function POST(request: Request) {
       // recording; absent = engine default.
       transcriptModel: parseString(body.transcriptModel) || null,
       fileSize,
+      idempotencyKey: parseIdempotencyKey(request),
     });
 
     revalidatePath("/workspace");
