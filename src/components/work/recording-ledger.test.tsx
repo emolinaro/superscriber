@@ -143,13 +143,16 @@ describe("RecordingLedger", () => {
     expect(row?.querySelector(".status-badge__icon")).not.toBeNull();
   });
 
-  it("omits the desktop row action when the server does not supply an action label", () => {
+  it("renders the Open record fallback link when the server supplies no action label", () => {
     render(<RecordingLedger role="uploader" rows={[uploaderRow]} />);
 
     const rowHeader = screen.getByRole("rowheader", { name: /Owned ready item/i });
     const row = rowHeader.closest("tr");
     expect(row).not.toBeNull();
-    expect(within(row!).queryByRole("link")).not.toBeInTheDocument();
+    const action = within(row!).getByRole("link", { name: "Owned ready item" });
+    expect(action).toHaveAttribute("href", "/recordings/rec-owned?revision=rev-owned");
+    expect(action).toHaveTextContent("Open record");
+    expect(within(row!).getAllByRole("link")).toHaveLength(1);
   });
 
   it("renders a labeled narrow list below 960 px without duplicating the desktop table", () => {
@@ -160,7 +163,9 @@ describe("RecordingLedger", () => {
     expect(screen.queryByRole("table", { name: "Work recordings" })).not.toBeInTheDocument();
     expect(screen.queryByRole("columnheader", { name: "Assignment" })).not.toBeInTheDocument();
     expect(screen.getByText("Uploaded by you")).toBeVisible();
-    expect(screen.queryByRole("link")).not.toBeInTheDocument();
+    const fallback = screen.getByRole("link", { name: "Owned ready item" });
+    expect(fallback).toHaveAttribute("href", "/recordings/rec-owned?revision=rev-owned");
+    expect(fallback).toHaveTextContent("Open record");
   });
 
   it("keeps the mobile action text visible while exposing the recording title as the link name", () => {

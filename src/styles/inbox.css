@@ -243,6 +243,23 @@
   text-align: center;
 }
 
+/* Every ledger row opens its casefile: the row's single action link stretches
+   a transparent overlay across the whole table row (desktop) or card (narrow
+   list), so clicking anywhere on a row navigates while the labeled link stays
+   the one keyboard/AT target. Scoped to ledger rows and cards on purpose -
+   the next-action strip reuses .recording-action but must not stretch. */
+.recording-table tbody tr,
+.recording-card {
+  position: relative;
+}
+
+.recording-table tbody .recording-action::after,
+.recording-card .recording-action::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+}
+
 .recording-list {
   list-style: none;
   display: grid;
