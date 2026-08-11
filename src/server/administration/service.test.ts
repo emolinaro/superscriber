@@ -817,7 +817,10 @@ describe("revision recovery (demo-governance-bringback)", () => {
       }).run();
       bundle.db
         .update(recordings)
-        .set({ pendingRevisionId: "rev-v2-pending" })
+        .set({
+          currentRevisionId: "rev-v2-pending",
+          pendingRevisionId: "rev-v2-pending",
+        })
         .where(eq(recordings.id, "rec-pending"))
         .run();
 
@@ -832,7 +835,7 @@ describe("revision recovery (demo-governance-bringback)", () => {
       // Nothing mutated: the pending row is untouched, no active swap happened.
       expect(bundle.db.select().from(revisions).all()).toHaveLength(revisionsBefore);
       const after = bundle.db.select().from(recordings).where(eq(recordings.id, "rec-pending")).get()!;
-      expect(after.currentRevisionId).toBe("rev-v1");
+      expect(after.currentRevisionId).toBe("rev-v2-pending");
       expect(after.pendingRevisionId).toBe("rev-v2-pending");
     } finally {
       bundle.sqlite.close();
