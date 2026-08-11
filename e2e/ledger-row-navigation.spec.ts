@@ -1,21 +1,7 @@
 import { expect, test } from "@playwright/test";
 import { adminUser, bootstrapAndLogin, uploadFixture } from "./support/appliance";
 
-/**
- * Ledger row navigation regression (demo bring-back).
- *
- * The governed-redesign squash (pr2-head b421809 "honor server action labels",
- * landed as 2ef883b in v0.4.0) made the per-row case link conditional on a
- * role action label. Admin and uploader rows, and reviewer/approver rows in
- * waiting stages, get `actionLabel: null` from the server, so they rendered
- * no affordance at all and pointer users could not open a case from the
- * ledger - even though admin oversight covers "every inbox row, every current
- * casefile" (DESIGN.md). The demo line had the "Open record" fallback per row.
- *
- * Contract: every ledger row exposes exactly one case link named by the
- * recording title (the role action label, or the "Open record" fallback), and
- * clicking anywhere on the row/card opens the casefile.
- */
+/** Regression coverage for the Work Inbox navigation contract in DESIGN.md. */
 
 test.describe.serial("ledger row navigation", () => {
   test("admin opens a case by clicking anywhere on a desktop ledger row", async ({ page }) => {
@@ -31,8 +17,6 @@ test.describe.serial("ledger row navigation", () => {
       .getByRole("row")
       .filter({ hasText: recordingId });
 
-    // Exactly one case link per row, named by the recording title, carrying
-    // the oversight fallback label when no role action applies.
     const link = row.getByRole("link", { name: title });
     await expect(link).toHaveCount(1);
     await expect(link).toHaveText("Open record");

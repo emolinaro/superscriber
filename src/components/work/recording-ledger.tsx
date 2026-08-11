@@ -136,8 +136,6 @@ function LedgerTable({
               <UpdatedTime row={row} />
             </td>
             <td>
-              {/* Every row opens its casefile: rows without a role action
-                  carry the oversight fallback label (demo bring-back). */}
               <Link
                 aria-label={row.title}
                 className="recording-action interactive-target"

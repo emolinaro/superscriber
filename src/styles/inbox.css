@@ -243,11 +243,9 @@
   text-align: center;
 }
 
-/* Every ledger row opens its casefile: the row's single action link stretches
-   a transparent overlay across the whole table row (desktop) or card (narrow
-   list), so clicking anywhere on a row navigates while the labeled link stays
-   the one keyboard/AT target. Scoped to ledger rows and cards on purpose -
-   the next-action strip reuses .recording-action but must not stretch. */
+/* Scope the overlay to ledger containers because the next-action strip reuses
+   .recording-action and must keep its own hit area. The link remains the only
+   keyboard and assistive-technology target. */
 .recording-table tbody tr,
 .recording-card {
   position: relative;
