@@ -42,11 +42,30 @@ test.describe.serial("demo governance bring-back", () => {
   // (same guard as the governed casefile suite).
   test.setTimeout(240_000);
 
+  // The transcribe->draft handoff rides the status poller's soft refresh; on
+  // piled hosts the refresh can land before the draft commit settles and the
+  // banner never repaints (same contention class the README calls out). A
+  // bounded reload loop waits for the entry point instead of flaking.
+  async function waitForReviewerModeEntry(
+    page: Parameters<typeof enterAdminActionMode>[0],
+  ) {
+    const entry = page.getByRole("button", { name: "Enter reviewer action mode" });
+    for (let attempt = 0; attempt < 10; attempt += 1) {
+      if ((await entry.count()) > 0 && (await entry.isVisible().catch(() => false))) {
+        return;
+      }
+      await page.waitForTimeout(3_000);
+      await page.reload();
+    }
+    await expect(entry).toBeVisible();
+  }
+
   test("one administrator edits, submits, and approves the same casefile (D-4)", async ({ page }) => {
     await bootstrapAndLogin(page, adminUser);
     const recordingId = await uploadFixture(page, { title: "Admin universal role record" });
 
     await openCasefile(page, recordingId);
+    await waitForReviewerModeEntry(page);
     await enterAdminActionMode(page, "reviewer", "Admin covers the full review loop.");
     await saveEditedDraft(page, "Admin universal role draft.");
     await expect(page.getByLabel("Admin action mode")).toContainText(
@@ -92,6 +111,7 @@ test.describe.serial("demo governance bring-back", () => {
     // Danger zone + export affordance are visible to admin oversight before
     // any approval exists (D-13: honest empty state instead of no button).
     await openCasefile(page, recordingId);
+    await waitForReviewerModeEntry(page);
     await expect(page.getByRole("heading", { name: "Danger zone" })).toBeVisible();
     await page.getByRole("button", { name: "Export transcript" }).click();
     const emptyExport = page.getByRole("dialog", { name: "Export approved transcript" });
@@ -182,6 +202,10 @@ test.describe.serial("demo governance bring-back", () => {
     const recoverDialog = page.getByRole("dialog", { name: "Recover revision" });
     await expect(recoverDialog).toBeVisible();
     await recoverDialog.getByRole("button", { name: "Recover v1 as active draft" }).click();
+    // Hard navigation with the recover notice: the page reloads into the new
+    // active draft; the URL carrying the notice is the success signal.
+    await expect(page).toHaveURL(/notice=Recovered/, { timeout: 15_000 });
+    await expect(page.getByText("Draft").first()).toBeVisible();
 
     await openGovernanceTab(page, "Revisions");
     const postRecoverPanel = page.getByRole("tabpanel");

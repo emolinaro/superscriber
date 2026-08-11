@@ -6,14 +6,12 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { baseSegments, createCasefile } from "./test-fixtures";
 import { RevisionHistory } from "./revision-history";
 
-const { mockRecover, mockPush, mockRefresh } = vi.hoisted(() => ({
+const { mockRecover } = vi.hoisted(() => ({
   mockRecover: vi.fn(),
-  mockPush: vi.fn(),
-  mockRefresh: vi.fn(),
 }));
 
 vi.mock("next/navigation", () => ({
-  useRouter: () => ({ push: mockPush, refresh: mockRefresh }),
+  useRouter: () => ({ push: vi.fn(), refresh: vi.fn() }),
 }));
 
 vi.mock("@/server/actions/administration-actions", () => ({
@@ -112,6 +110,12 @@ describe("RevisionHistory (demo-governance-bringback)", () => {
 
   it("lets admin oversight recover an archived revision through the server action", async () => {
     const user = userEvent.setup();
+    const locationDescriptor = Object.getOwnPropertyDescriptor(window, "location");
+    const assign = vi.fn();
+    Object.defineProperty(window, "location", {
+      configurable: true,
+      value: { ...window.location, assign },
+    });
     mockRecover.mockResolvedValueOnce({
       ok: true,
       data: { href: "/recordings/rec-1", userId: "user-admin" },
@@ -131,7 +135,13 @@ describe("RevisionHistory (demo-governance-bringback)", () => {
       recordingId: "rec-1",
       sourceRevisionId: "rev-0",
     });
-    expect(mockRefresh).toHaveBeenCalled();
+    // Hard navigation (not router.push inside the async transition - that
+    // races the casefile's RSC refresh and wedges on the client).
+    await vi.waitFor(() => expect(assign).toHaveBeenCalledWith(expect.stringContaining("notice=")));
+    await vi.waitFor(() => expect(assign).toHaveBeenCalledWith(expect.stringContaining("Recovered%20revision%20draft")));
+    if (locationDescriptor) {
+      Object.defineProperty(window, "location", locationDescriptor);
+    }
   });
 
   it("keeps the modal open and shows the server error on a failing recovery", async () => {
@@ -151,6 +161,6 @@ describe("RevisionHistory (demo-governance-bringback)", () => {
     expect(
       await screen.findByText("That revision is already the active one."),
     ).toBeVisible();
-    expect(mockPush).not.toHaveBeenCalled();
+    expect(mockRecover).toHaveBeenCalledTimes(1);
   });
 });

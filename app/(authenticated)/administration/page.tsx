@@ -83,5 +83,8 @@ export default async function AdministrationPage({
     ...parseAdministrationFilters(section, params),
   });
 
-  return <AdministrationShell model={model} section={section} />;
+  const notice = firstValue(params.notice);
+  const pageError = firstValue(params.error);
+
+  return <AdministrationShell error={pageError ?? null} model={model} notice={notice ?? null} section={section} />;
 }

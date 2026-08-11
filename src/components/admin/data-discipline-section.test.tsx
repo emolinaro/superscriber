@@ -52,8 +52,14 @@ describe("DataDisciplineSection (demo-governance-bringback)", () => {
     ).toBeNull();
   });
 
-  it("double-gates the wipe on the typed phrase and surfaces the result notice", async () => {
+  it("double-gates the wipe on the typed phrase and lands on a fresh readout", async () => {
     const user = userEvent.setup();
+    const locationDescriptor = Object.getOwnPropertyDescriptor(window, "location");
+    const assign = vi.fn();
+    Object.defineProperty(window, "location", {
+      configurable: true,
+      value: { ...window.location, assign },
+    });
     mockReset.mockResolvedValueOnce({
       ok: true,
       data: { href: "/administration?section=discipline", userId: "user-admin" },
@@ -80,8 +86,15 @@ describe("DataDisciplineSection (demo-governance-bringback)", () => {
     await user.click(confirm);
 
     expect(mockReset).toHaveBeenCalledWith({ expectedPhrase: "RESET REQUIRED" });
-    expect(await screen.findByText("Ledger reset complete.")).toBeVisible();
-    expect(mockRefresh).toHaveBeenCalled();
+    // Hard navigation repaint: router.refresh() inside the async transition
+    // can paint the stale pre-reset counts.
+    await vi.waitFor(() => {
+      expect(assign).toHaveBeenCalledWith(expect.stringContaining("administration?section=discipline"));
+      expect(assign).toHaveBeenCalledWith(expect.stringContaining("Ledger%20reset%20complete"));
+    });
+    if (locationDescriptor) {
+      Object.defineProperty(window, "location", locationDescriptor);
+    }
   });
 
   it("keeps the dialog open with the server refusal inline", async () => {

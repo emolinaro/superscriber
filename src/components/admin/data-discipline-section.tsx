@@ -1,6 +1,5 @@
 "use client";
 
-import { useRouter } from "next/navigation";
 import { useRef, useState, useTransition } from "react";
 
 import { resetLedgerAction } from "@/server/actions/administration-actions";
@@ -19,11 +18,9 @@ export function DataDisciplineSection({
   counts: AdministrationDisciplineViewModel["counts"];
   phoneSafetyMode?: boolean;
 }) {
-  const router = useRouter();
   const [open, setOpen] = useState(false);
   const [phrase, setPhrase] = useState("");
   const [error, setError] = useState<string | null>(null);
-  const [notice, setNotice] = useState<string | null>(null);
   const [pending, startTransition] = useTransition();
   const inputRef = useRef<HTMLInputElement | null>(null);
 
@@ -78,8 +75,6 @@ export function DataDisciplineSection({
         </div>
       )}
 
-      {notice ? <InlineNotice tone="info">{notice}</InlineNotice> : null}
-
       <Modal
         onClose={() => {
           if (!pending) {
@@ -133,9 +128,14 @@ export function DataDisciplineSection({
                     setError(result.message ?? "Reset failed; nothing was cleared.");
                     return;
                   }
-                  setOpen(false);
-                  setNotice(result.notice ?? "Ledger reset complete.");
-                  router.refresh();
+                  // Hard navigation OUTSIDE the transition: router.refresh()
+                  // inside this async scope races the server re-render and can
+                  // leave the count readout painted from the pre-reset model
+                  // (same failure class the recording danger zone names). A
+                  // hard reload repaints the counts from the server fresh.
+                  window.location.assign(
+                    `/administration?section=discipline&notice=${encodeURIComponent(result.notice ?? "Ledger reset complete.")}`,
+                  );
                 });
               }}
               type="button"

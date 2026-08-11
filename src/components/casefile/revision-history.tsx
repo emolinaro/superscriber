@@ -2,7 +2,6 @@
 
 import { useState, useTransition } from "react";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
 import type { TranscriptSegment } from "@/domain/models";
 import { Modal } from "@/components/ui/modal";
 import { InlineNotice } from "@/components/ui/inline-notice";
@@ -57,7 +56,6 @@ const MARKER_LABEL: Record<DiffMarker, string> = {
  * draft's summary; the audit trail records actor + from-version).
  */
 export function RevisionHistory({ casefile }: { casefile: CasefileViewModel }) {
-  const router = useRouter();
   const [diffFor, setDiffFor] = useState<string | null>(null);
   const [recover, setRecover] = useState<CasefileRevisionViewModel | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -78,8 +76,14 @@ export function RevisionHistory({ casefile }: { casefile: CasefileViewModel }) {
         return;
       }
       setRecover(null);
-      router.push(`/recordings/${casefile.recordingId}?notice=${encodeURIComponent("Recovered revision draft is now active.")}`);
-      router.refresh();
+      // Navigate OUTSIDE the transition: router.push/refresh inside this
+      // async scope races an RSC refresh of the current page - the casefile
+      // props change identity under the transition and the push can wedge
+      // (same failure class the danger-zone callout names). A hard
+      // navigation unloads the page outright - no race.
+      window.location.assign(
+        `/recordings/${casefile.recordingId}?notice=${encodeURIComponent("Recovered revision draft is now active.")}`,
+      );
     });
   }
 
