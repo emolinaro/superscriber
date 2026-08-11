@@ -27,6 +27,7 @@ export type InternalTranscriptJobClaim = {
   mediaPath: string | null;
   originalFileName: string | null;
   languageHint: string;
+  transcriptModel: string | null;
   ingestionSessionId: string | null;
   transcriptJobState: TranscriptJob["state"];
   attemptCount: number;
@@ -86,6 +87,7 @@ function buildClaim(state: AppState, workerId: string, jobId: string): InternalT
     mediaPath: recording.mediaPath,
     originalFileName: recording.originalFileName,
     languageHint: recording.languageHint,
+    transcriptModel: recording.transcriptModel,
     ingestionSessionId: recording.ingestionSessionId,
     transcriptJobState: job.state,
     attemptCount: job.attemptCount,

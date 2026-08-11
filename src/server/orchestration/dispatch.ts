@@ -89,6 +89,9 @@ export async function dispatchRecordingToConfiguredEngine(
           mediaPath: recording.mediaPath,
           originalFileName: recording.originalFileName,
           languageHint: recording.languageHint,
+          // demo-advanced-model-picker: external engines see the chosen tier,
+          // same as the internal claim payload.
+          transcriptModel: recording.transcriptModel,
           uploadedByRole: recording.uploadedByRole,
           createdAt: recording.createdAt,
         },

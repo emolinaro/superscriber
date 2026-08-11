@@ -10,7 +10,9 @@ playwright-report/
 test-results/
 data/media
 data/uploads
-models/
+# Model-weights cache at the REPO ROOT only (worker/model_root). Anchored so
+# src/server/models/ and app/api/models/ source stay tracked (audit D-9).
+/models/
 data/*.db*
 data/*.secret
 *plan*.md

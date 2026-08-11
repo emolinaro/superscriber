@@ -1356,3 +1356,163 @@ describe("IngestFlow", () => {
     expect(window.localStorage.getItem("superscriber.pendingIngest")).toBeNull();
   });
 });
+
+const MODEL_CATALOG = {
+  defaultModel: "large-v3-turbo",
+  tiers: [
+    {
+      id: "large-v3",
+      speedNote: "Slowest on CPU (largest model)",
+      qualityNote: "Best accuracy; high-stakes recordings",
+      available: false,
+      default: false,
+    },
+    {
+      id: "large-v3-turbo",
+      speedNote: "Much faster than large-v3",
+      qualityNote: "Near-large accuracy",
+      available: true,
+      default: true,
+    },
+    {
+      id: "tiny",
+      speedNote: "Fastest",
+      qualityNote: "Smoke tests only",
+      available: true,
+      default: false,
+    },
+  ],
+};
+
+function mockCatalogServer() {
+  vi.mocked(fetch).mockImplementation((input, init) => {
+    const url = String(input);
+    if (url === "/api/models/catalog") {
+      return mockJsonResponse(MODEL_CATALOG);
+    }
+    if (url === "/api/ingest/sessions" && init?.method === "POST") {
+      return mockJsonResponse({ ok: true, status: buildStatus() });
+    }
+    if (url.includes("/chunk")) {
+      const start = Number((init?.headers as Record<string, string>)["x-superscriber-byte-start"]);
+      const size = (init?.body as ArrayBuffer).byteLength;
+      return mockJsonResponse({
+        ok: true,
+        status: buildStatus({
+          bytesReceived: start + size,
+          bytesExpected: start + size,
+          progressPercent: 100,
+          nextAction: "finalize",
+        }),
+      });
+    }
+    if (url.includes("/finalize")) {
+      return mockJsonResponse({
+        ok: true,
+        nextPath: "/workspace",
+        status: buildStatus({ progressPercent: 100, nextAction: "none" }),
+      });
+    }
+    return Promise.resolve(new Response("not found", { status: 404 }));
+  });
+}
+
+describe("model tier picker (demo-model-tier-picker)", () => {
+  beforeEach(() => {
+    Object.defineProperty(window, "localStorage", {
+      configurable: true,
+      value: createStorage(),
+    });
+    global.fetch = vi.fn();
+  });
+
+  it("loads the catalog lazily on first Advanced settings expansion, selects the host default, and disables unprovisioned tiers", async () => {
+    const user = userEvent.setup();
+    mockCatalogServer();
+    renderFlow();
+
+    // No catalog request before the disclosure opens; control stays inert.
+    expect(vi.mocked(fetch).mock.calls.some(([url]) => String(url) === "/api/models/catalog")).toBe(false);
+    expect(screen.getByLabelText("Transcription model")).toBeDisabled();
+
+    await user.click(screen.getByText("Advanced settings"));
+
+    const select = await screen.findByRole("combobox", { name: "Transcription model" });
+    await waitFor(() => {
+      expect(select).toBeEnabled();
+    });
+    expect(fetch).toHaveBeenCalledWith("/api/models/catalog", { cache: "no-store" });
+
+    const unprovisioned = screen.getByRole("option", {
+      name: "large-v3 - not available on this host",
+    }) as HTMLOptionElement;
+    expect(unprovisioned.disabled).toBe(true);
+    expect(
+      screen.getByRole("option", { name: "large-v3-turbo - default (best quality on this host)" }),
+    ).toBeEnabled();
+    expect(screen.getByRole("option", { name: "tiny" })).toBeEnabled();
+    // The server-named default is preselected.
+    expect((select as HTMLSelectElement).value).toBe("large-v3-turbo");
+
+    // Unprovisioned tiers are announced in the notes list too.
+    expect(screen.getByRole("list", { name: "Model speed and quality notes" })).toHaveTextContent(
+      "large-v3: Best accuracy; high-stakes recordings · Slowest on CPU (largest model) - not provisioned here",
+    );
+  });
+
+  it("sends the chosen tier on the ingest session and leaves untouched picks at the engine default", async () => {
+    const user = userEvent.setup();
+    mockCatalogServer();
+    renderFlow();
+
+    await user.type(screen.getByLabelText("Title"), "Tiered interview");
+    await user.selectOptions(screen.getByLabelText("Language"), "english");
+
+    await user.click(screen.getByText("Advanced settings"));
+    const select = await screen.findByRole("combobox", { name: "Transcription model" });
+    await waitFor(() => {
+      expect(select).toBeEnabled();
+    });
+    await user.selectOptions(select, "tiny");
+
+    await user.upload(screen.getByLabelText("Audio or video file"), new File(["abcdef"], "clip.wav", { type: "audio/wav" }));
+    await user.click(screen.getByRole("button", { name: "Upload file" }));
+
+    await waitFor(() => {
+      expect(mockPush).toHaveBeenCalled();
+    });
+
+    const sessionCall = vi
+      .mocked(fetch)
+      .mock.calls.find(
+        ([input, init]) => String(input) === "/api/ingest/sessions" && init?.method === "POST",
+      );
+    expect(sessionCall).toBeTruthy();
+    const body = JSON.parse(String(sessionCall?.[1]?.body)) as Record<string, unknown>;
+    expect(body.transcriptModel).toBe("tiny");
+  });
+
+  it("omits transcriptModel when Advanced settings was never opened", async () => {
+    const user = userEvent.setup();
+    mockCatalogServer();
+    renderFlow();
+
+    await user.type(screen.getByLabelText("Title"), "Plain interview");
+    await user.selectOptions(screen.getByLabelText("Language"), "english");
+    await user.upload(screen.getByLabelText("Audio or video file"), new File(["abcdef"], "clip.wav", { type: "audio/wav" }));
+    await user.click(screen.getByRole("button", { name: "Upload file" }));
+
+    await waitFor(() => {
+      expect(mockPush).toHaveBeenCalled();
+    });
+
+    expect(vi.mocked(fetch).mock.calls.some(([url]) => String(url) === "/api/models/catalog")).toBe(false);
+    const sessionCall = vi
+      .mocked(fetch)
+      .mock.calls.find(
+        ([input, init]) => String(input) === "/api/ingest/sessions" && init?.method === "POST",
+      );
+    const body = JSON.parse(String(sessionCall?.[1]?.body)) as Record<string, unknown>;
+    expect(body.transcriptModel).toBeNull();
+  });
+});

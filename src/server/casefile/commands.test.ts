@@ -97,6 +97,7 @@ function insertDraftFixture(bundle: TestBundle) {
     mediaPath: null,
     originalFileName: "recording.wav",
     languageHint: "en",
+    transcriptModel: null,
     uploadedByRole: "uploader",
     uploadedByUserId: null,
     ingestionSessionId: null,

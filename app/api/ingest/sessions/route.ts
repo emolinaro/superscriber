@@ -6,6 +6,7 @@ import {
   describeIngestFailure,
   IngestError,
 } from "@/server/ingest/service";
+import { isModelProvisioned } from "@/server/models/catalog";
 import { getActivePrincipal } from "@/server/session";
 
 function parseString(value: unknown) {
@@ -50,6 +51,17 @@ export async function POST(request: Request) {
       });
     }
 
+    const requestedModel = parseString(body.transcriptModel) || null;
+    // demo-model-tier-picker: availability is server-checked against actual
+    // provisioned artifacts; unknown/unprovisioned tiers are refused.
+    if (requestedModel && !isModelProvisioned(requestedModel)) {
+      throw new IngestError(
+        "VALIDATION_ERROR",
+        `Transcription model '${requestedModel}' is not provisioned on this host.`,
+        { transcriptModel: `Transcription model '${requestedModel}' is not provisioned on this host.` },
+      );
+    }
+
     const status = createResumableUploadSession({
       principal,
       title: parseString(body.title),
@@ -57,6 +69,9 @@ export async function POST(request: Request) {
       source: parseString(body.source) === "record" ? "record" : "upload",
       fileName: parseString(body.fileName),
       mimeType: parseString(body.mimeType) || null,
+      // demo-advanced-model-picker: explicit model stays attached to the
+      // recording; absent = engine default.
+      transcriptModel: parseString(body.transcriptModel) || null,
       fileSize,
     });
 

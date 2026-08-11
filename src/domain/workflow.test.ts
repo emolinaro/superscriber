@@ -13,6 +13,7 @@ function buildRecording(overrides: Partial<Recording> = {}): Recording {
     mediaPath: null,
     originalFileName: "interview.wav",
     languageHint: "english",
+    transcriptModel: null,
     uploadedByRole: "uploader",
     uploadedByUserId: null,
     ingestionSessionId: "ingest-1",

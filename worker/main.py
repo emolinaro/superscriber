@@ -96,32 +96,62 @@ class Transcriber:
         self.config = config
         self._model: Any | None = None
         self._model_path: Path | None = None
+        self._model_name: str | None = None
 
     def preflight(self) -> None:
         self._load_model()
 
-    def _load_model(self) -> tuple[Any, Path]:
-        if self._model is not None and self._model_path is not None:
-            return self._model, self._model_path
+    def _load_model(self, override_name: str | None = None) -> tuple[Any, Path, bool]:
+        """demo-advanced-model-picker: jobs may name a per-recording model.
 
-        configure_model_environment(self.config)
-        model_path = ensure_local_model(self.config)
+        An override this host cannot provision or load falls back to the
+        configured default instead of wedging the job (returns fallback=True;
+        the summary then names the bundle that actually ran). The configured
+        default itself stays load-or-raise.
+        """
+        from dataclasses import replace
+
+        name = (override_name or "").strip() or self.config.model_name
+        if (
+            self._model is not None
+            and self._model_path is not None
+            and self._model_name == name
+        ):
+            return self._model, self._model_path, False
+
+        config = replace(self.config, model_name=name)
+        configure_model_environment(config)
+        try:
+            model_path = ensure_local_model(config)
+        except (ModelUnavailable, SpeechStackUnavailable):
+            if name == self.config.model_name:
+                raise
+            model, model_path, _ = self._load_model(None)
+            return model, model_path, True
 
         try:
             from faster_whisper import WhisperModel  # type: ignore
         except Exception as exc:
             raise SpeechStackUnavailable("faster-whisper is not installed.") from exc
 
-        model = WhisperModel(
-            str(model_path),
-            device=self.config.device,
-            compute_type=self.config.compute_type,
-            download_root=str(self.config.model_root),
-            local_files_only=True,
-        )
+        try:
+            model = WhisperModel(
+                str(model_path),
+                device=config.device,
+                compute_type=config.compute_type,
+                download_root=str(config.model_root),
+                local_files_only=True,
+            )
+        except Exception:
+            if name == self.config.model_name:
+                raise
+            model, model_path, _ = self._load_model(None)
+            return model, model_path, True
+
         self._model = model
         self._model_path = model_path
-        return model, model_path
+        self._model_name = name
+        return model, model_path, False
 
     def transcribe(
         self,
@@ -134,7 +164,11 @@ class Transcriber:
         if not Path(media_path).exists():
             raise FileNotFoundError(f"Media file does not exist: {media_path}")
 
-        model, model_path = self._load_model()
+        # demo-advanced-model-picker: the recording's stored tier pick; absent
+        # means the configured default. Unrunnable overrides fall back to the
+        # default and the summary says so.
+        requested_model = str(job.get("transcriptModel") or "").strip() or None
+        model, model_path, used_default_instead = self._load_model(requested_model)
         language = resolve_model_language(job.get("languageHint"))
         segments_iter, _info = model.transcribe(
             media_path,
@@ -171,6 +205,11 @@ class Transcriber:
             f"Transcript prepared by faster-whisper on {self.config.device} "
             f"using local model bundle {model_path.name}. Speaker separation remains degraded until diarization is added."
         )
+        if used_default_instead:
+            summary += (
+                f" Requested model '{requested_model}' is not provisioned on this host;"
+                f" ran the default '{self.config.model_name}' instead."
+            )
         return summary, segments, "degraded"
 
 
@@ -364,6 +403,15 @@ def process_job(config: WorkerConfig, transcriber: Transcriber, job: dict[str, A
 
             print(f"[worker] degraded fallback for {job_id}: {exc}", file=sys.stderr)
             summary, segments, diarization_status = build_mock_transcript(job)
+            # The persisted per-recording pick must stay visible even when the
+            # run degrades to the stub engine - it proved the choice reached
+            # the worker.
+            requested_model = str(job.get("transcriptModel") or "").strip()
+            if requested_model:
+                summary += (
+                    f" Requested model '{requested_model}' could not run on this host;"
+                    " the degraded fallback engine produced this transcript instead."
+                )
 
         heartbeat.flush()
         complete_job(config, job_id, summary, segments, diarization_status)

@@ -164,6 +164,11 @@ export function normalizeState(state: AppState): AppState {
     if (recording.transcriptJobId === undefined) {
       recording.transcriptJobId = null;
     }
+    // Pre-v12 states predate the tier picker: the recording ran/on the
+    // engine default, so absent means default.
+    if (recording.transcriptModel === undefined) {
+      recording.transcriptModel = null;
+    }
 
     let session = state.ingestionSessions.find(
       (entry) => entry.id === recording.ingestionSessionId,

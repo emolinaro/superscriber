@@ -53,6 +53,7 @@ describe("orchestration service", () => {
       mediaPath: "/tmp/queued.webm",
       originalFileName: "queued.webm",
       languageHint: "english",
+      transcriptModel: null,
       role: "uploader",
     });
 
@@ -82,6 +83,7 @@ describe("orchestration service", () => {
       mediaPath: null,
       originalFileName: "legacy.wav",
       languageHint: "english",
+      transcriptModel: null,
       uploadedByRole: "uploader",
       uploadedByUserId: null,
       ingestionSessionId: null,
@@ -119,6 +121,7 @@ describe("orchestration service", () => {
       mediaPath: "/tmp/mixed.mp4",
       originalFileName: "mixed.mp4",
       languageHint: "mixed",
+      transcriptModel: null,
       role: "uploader",
     });
 
@@ -143,6 +146,7 @@ describe("orchestration service", () => {
       mediaPath: "/tmp/webhook.wav",
       originalFileName: "webhook.wav",
       languageHint: "english",
+      transcriptModel: null,
       role: "uploader",
       adapterId: "external-webhook-engine",
     });
