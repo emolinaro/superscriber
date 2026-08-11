@@ -189,6 +189,35 @@ describe("ExportDialog", () => {
     expect(screen.getByText("Legacy approval metadata is incomplete for this revision.")).toBeVisible();
   });
 
+  it("renders neutral copy when the viewed revision is not the approved record", () => {
+    render(
+      <ExportDialog
+        actionModeId={null}
+        approvedAt="2026-08-01T12:40:00.000Z"
+        approvedBy="Approver Example"
+        onAnnouncement={vi.fn()}
+        onClose={vi.fn()}
+        onSessionRecoveryRequested={vi.fn()}
+        open
+        recordingId="rec-1"
+        revision={{ version: 1, id: "rev-1" }}
+        revisionOptions={[
+          { id: "rev-1", version: 1, state: "superseded", stateLabel: "Archived" },
+          { id: "rev-2", version: 2, state: "approved", stateLabel: "Approved" },
+        ]}
+        hasApprovedRevision
+      />,
+    );
+
+    expect(screen.getByText("Revision v1 (Archived)")).toBeVisible();
+    expect(
+      screen.getByText(
+        "This revision is not the approved record; its export is still attributed in the audit.",
+      ),
+    ).toBeVisible();
+    expect(screen.queryByText(/approved revision v1/)).toBeNull();
+  });
+
   it("locks the viewport, traps focus, supports Escape, and restores focus to the trigger", async () => {
     const user = userEvent.setup();
     const appRoot = document.createElement("div");

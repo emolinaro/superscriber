@@ -723,6 +723,8 @@ describe("revision recovery (demo-governance-bringback)", () => {
         title: "History casefile",
         uploadedByUserId: admin.userId,
         currentRevisionId: "rev-v2",
+        currentRevisionState: "approved",
+        approvedRevisionId: "rev-v2",
         updatedAt: FIXED_NOW,
       });
       bundle.db
@@ -764,6 +766,7 @@ describe("revision recovery (demo-governance-bringback)", () => {
 
       const recordingAfter = bundle.db.select().from(recordings).where(eq(recordings.id, "rec-1")).get()!;
       expect(recordingAfter.currentRevisionId).toBe(result.newRevisionId);
+      expect(recordingAfter.approvedRevisionId).toBeNull();
       expect(recordingAfter.pendingRevisionId).toBeNull();
 
       const auditRows = bundle.db.select().from(auditEvents).all();

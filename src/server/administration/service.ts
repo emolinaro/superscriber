@@ -672,6 +672,7 @@ export function recoverRevisionVersion(
     tx.update(recordings)
       .set({
         currentRevisionId: newRevisionId,
+        approvedRevisionId: null,
         pendingRevisionId: null,
         updatedAt: now,
       })
@@ -702,7 +703,7 @@ export function recoverRevisionVersion(
           detail: `Administrator recovered revision v${sourceRow.version} as the active draft.`,
           metadata: { recordingId: input.recordingId, fromVersion: sourceRow.version },
         },
-        db,
+        tx,
       );
     } catch {
       // security log must never break the control operation
