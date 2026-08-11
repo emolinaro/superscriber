@@ -526,6 +526,135 @@ export function cleanupRuntimeModelTiers() {
   resetRuntimeModelTiers();
 }
 
+// model-tier-provisioning: unlike resetRuntimeModelTiers (host-only, because
+// the container's /app/models is rebuilt per run), this removes ONE tier in
+// whichever runtime hosts the app - sibling specs fabricate tiers and never
+// clean them container-side, so a provisioning spec must be able to return a
+// tier to its unprovisioned truth.
+export function removeRuntimeModelTier(tierId: string) {
+  if (e2eContainerName()) {
+    execContainerPython(
+      `import shutil, sys, os
+root = os.environ.get("SUPERSCRIBER_TRANSCRIBE_MODEL_DIR", "/app/models")
+shutil.rmtree(os.path.join(root, sys.argv[1]), ignore_errors=True)
+`,
+      [tierId],
+    );
+    return;
+  }
+
+  rmSync(join(hostRuntimeModelRoot(), tierId), { recursive: true, force: true });
+}
+
+// The e2e fixture seam for downloads: the app reads
+// SUPERSCRIBER_MODEL_DOWNLOAD_FIXTURE_DIR and, when <dir>/<tier>/ holds the
+// tier's COMPLETE pinned file set, copies from disk instead of fetching from
+// the pinned huggingface.co URLs (per-request detection - remove the tier's
+// fixture dir and the next download goes real).
+const CONTAINER_MODEL_DOWNLOAD_FIXTURE_DIR = "/app/data/model-download-fixture";
+
+const DOWNLOAD_FIXTURE_CONTENT: Record<string, string> = {
+  "config.json": "{}",
+  "model.bin": "fixture-model-bin",
+  "tokenizer.json": "fixture-tokenizer",
+  "vocabulary.txt": "fixture-vocabulary",
+  "vocabulary.json": "fixture-vocabulary",
+};
+
+function hostModelDownloadFixtureRoot() {
+  const root = process.env.SUPERSCRIBER_MODEL_DOWNLOAD_FIXTURE_DIR?.trim();
+  if (!root) {
+    throw new Error(
+      "Host E2E model-download fixtures require SUPERSCRIBER_MODEL_DOWNLOAD_FIXTURE_DIR to be set on the app and suite processes.",
+    );
+  }
+  const resolved = resolve(root);
+  const safeParent = resolve(process.cwd(), ".tmp");
+  const relativeRoot = relative(safeParent, resolved);
+  if (
+    !relativeRoot ||
+    relativeRoot.startsWith("..") ||
+    isAbsolute(relativeRoot) ||
+    !basename(resolved).startsWith("e2e-model-fixture")
+  ) {
+    throw new Error(
+      "Host E2E model download fixture directories must use .tmp/e2e-model-fixture*.",
+    );
+  }
+  return resolved;
+}
+
+export function seedModelDownloadFixture(
+  tierId: string,
+  files: string[],
+  options: { modelBinBytes?: number } = {},
+) {
+  const modelBinBytes = options.modelBinBytes ?? 0;
+  if (e2eContainerName()) {
+    execContainerPython(
+      `import os, sys, json
+tier = sys.argv[1]
+files = json.loads(sys.argv[2])
+content = json.loads(sys.argv[3])
+bin_bytes = int(sys.argv[4])
+dir_path = os.path.join("${CONTAINER_MODEL_DOWNLOAD_FIXTURE_DIR}", tier)
+os.makedirs(dir_path, exist_ok=True)
+for name in files:
+    with open(os.path.join(dir_path, name), "wb") as handle:
+        if name == "model.bin" and bin_bytes > 0:
+            handle.write(b"x" * bin_bytes)
+        else:
+            handle.write(content[name].encode("utf8"))
+`,
+      [tierId, JSON.stringify(files), JSON.stringify(DOWNLOAD_FIXTURE_CONTENT), String(modelBinBytes)],
+    );
+    return;
+  }
+
+  const dir = join(hostModelDownloadFixtureRoot(), tierId);
+  mkdirSync(dir, { recursive: true });
+  for (const file of files) {
+    if (file === "model.bin" && modelBinBytes > 0) {
+      writeFileSync(join(dir, file), Buffer.alloc(modelBinBytes, 120));
+    } else {
+      writeFileSync(join(dir, file), DOWNLOAD_FIXTURE_CONTENT[file]);
+    }
+  }
+}
+
+export function clearModelDownloadFixture(tierId?: string) {
+  if (e2eContainerName()) {
+    execContainerPython(
+      `import os, shutil, sys
+tier = sys.argv[1]
+root = "${CONTAINER_MODEL_DOWNLOAD_FIXTURE_DIR}"
+target = os.path.join(root, tier) if tier else root
+shutil.rmtree(target, ignore_errors=True)
+`,
+      [tierId ?? ""],
+    );
+    return;
+  }
+
+  const root = hostModelDownloadFixtureRoot();
+  rmSync(tierId ? join(root, tierId) : root, { recursive: true, force: true });
+}
+
+export function runtimeModelTierFileSize(tierId: string, file: string): number {
+  if (e2eContainerName()) {
+    const out = execContainerPython(
+      `import os, sys
+root = os.environ.get("SUPERSCRIBER_TRANSCRIBE_MODEL_DIR", "/app/models")
+print(os.path.getsize(os.path.join(root, sys.argv[1], sys.argv[2])))
+`,
+      [tierId, file],
+    );
+    return Number(out.trim());
+  }
+
+  return statSync(join(hostRuntimeModelRoot(), tierId, file)).size;
+}
+
 export function queryRuntimeRows<Row>(sql: string, params: string[]): Row[] {
   if (e2eContainerName()) {
     return queryContainerDb<Row>(sql, params);

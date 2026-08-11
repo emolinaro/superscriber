@@ -21,8 +21,12 @@ vi.mock("next/navigation", () => ({
   }),
 }));
 
+const { mockPhoneSafety } = vi.hoisted(() => ({
+  mockPhoneSafety: { value: false },
+}));
+
 vi.mock("@/components/ui/phone-safety", () => ({
-  usePhoneSafetyMode: () => false,
+  usePhoneSafetyMode: () => mockPhoneSafety.value,
 }));
 
 type UploadSessionStatus = {
@@ -1367,6 +1371,7 @@ const MODEL_CATALOG = {
       qualityNote: "Best accuracy; high-stakes recordings",
       available: false,
       default: false,
+      downloadSizeBytes: 3_090_835_362,
     },
     {
       id: "large-v3-turbo",
@@ -1374,6 +1379,7 @@ const MODEL_CATALOG = {
       qualityNote: "Near-large accuracy",
       available: true,
       default: true,
+      downloadSizeBytes: 1_621_665_643,
     },
     {
       id: "tiny",
@@ -1381,6 +1387,7 @@ const MODEL_CATALOG = {
       qualityNote: "Smoke tests only",
       available: true,
       default: false,
+      downloadSizeBytes: 78_203_619,
     },
   ],
 };
@@ -1560,5 +1567,281 @@ describe("model tier picker (demo-model-tier-picker)", () => {
       );
     const body = JSON.parse(String(sessionCall?.[1]?.body)) as Record<string, unknown>;
     expect(body.transcriptModel).toBeNull();
+  });
+});
+
+// model-tier-provisioning: admins can install an unprovisioned tier straight
+// from the picker - size on the button, live progress, honest failures - and
+// the tier flips selectable when the install lands. Uploaders and
+// phone-safety sessions never see the controls.
+type ProvisioningFixture = Record<
+  string,
+  { state: "idle" | "downloading" | "completed" | "failed"; bytesReceived: number; bytesTotal: number; error: string | null }
+>;
+
+function provisioningBody(fixture: ProvisioningFixture) {
+  return {
+    activeTierId:
+      Object.entries(fixture).find(([, view]) => view.state === "downloading")?.[0] ?? null,
+    tiers: Object.entries(fixture).map(([tierId, view]) => ({
+      tierId,
+      available: view.state === "completed",
+      downloadSizeBytes: 78_203_619,
+      download: view,
+    })),
+  };
+}
+
+function mockProvisioningServer(options: {
+  catalog: typeof MODEL_CATALOG;
+  statuses: ProvisioningFixture[];
+  postResponse?: { status: number; body: unknown };
+}) {
+  let statusCalls = 0;
+  let catalogCalls = 0;
+  vi.mocked(fetch).mockImplementation((input, init) => {
+    const url = String(input);
+    if (url === "/api/models/catalog") {
+      const catalog = options.catalog;
+      catalogCalls += 1;
+      // After more than one catalog fetch the download has landed.
+      if (catalogCalls > 1) {
+        return mockJsonResponse({
+          ...catalog,
+          tiers: catalog.tiers.map((tier) =>
+            tier.id === "tiny"
+              ? { ...tier, available: true }
+              : tier,
+          ),
+        });
+      }
+      return mockJsonResponse(catalog);
+    }
+    if (url === "/api/models/provisioning" && init?.method === "POST") {
+      const reply = options.postResponse ?? {
+        status: 202,
+        body: {
+          ok: true,
+          status: {
+            tierId: "tiny",
+            state: "downloading",
+            bytesReceived: 0,
+            bytesTotal: 78_203_619,
+            error: null,
+            startedAt: "2026-08-11T00:00:00.000Z",
+            finishedAt: null,
+          },
+        },
+      };
+      return Promise.resolve(
+        new Response(JSON.stringify(reply.body), {
+          status: reply.status,
+          headers: { "content-type": "application/json" },
+        }),
+      );
+    }
+    if (url === "/api/models/provisioning") {
+      const fixture = options.statuses[Math.min(statusCalls, options.statuses.length - 1)];
+      statusCalls += 1;
+      return mockJsonResponse(provisioningBody(fixture));
+    }
+    if (url === "/api/ingest/sessions" && init?.method === "POST") {
+      return mockJsonResponse({ ok: true, status: buildStatus() });
+    }
+    return Promise.resolve(new Response("not found", { status: 404 }));
+  });
+  return {
+    get statusCalls() {
+      return statusCalls;
+    },
+    get catalogCalls() {
+      return catalogCalls;
+    },
+  };
+}
+
+const UNPROVISIONED_TINY_CATALOG = {
+  configuredModel: "small",
+  defaultModel: "large-v3-turbo",
+  tiers: MODEL_CATALOG.tiers.map((tier) =>
+    tier.id === "tiny" ? { ...tier, available: false } : tier,
+  ),
+};
+
+describe("model tier provisioning (model-tier-provisioning)", () => {
+  beforeEach(() => {
+    mockPhoneSafety.value = false;
+    Object.defineProperty(window, "localStorage", {
+      configurable: true,
+      value: createStorage(),
+    });
+    global.fetch = vi.fn();
+  });
+
+  it("shows admins a sized Download action per unprovisioned tier, completes it, and flips the tier selectable", async () => {
+    const user = userEvent.setup();
+    mockProvisioningServer({
+      catalog: UNPROVISIONED_TINY_CATALOG,
+      statuses: [
+        // First status read (after catalog load): tiny idle.
+        { tiny: { state: "idle", bytesReceived: 0, bytesTotal: 78_203_619, error: null } },
+        // After POST: in flight, part way.
+        { tiny: { state: "downloading", bytesReceived: 39_101_810, bytesTotal: 78_203_619, error: null } },
+        // Poll: complete.
+        { tiny: { state: "completed", bytesReceived: 78_203_619, bytesTotal: 78_203_619, error: null } },
+      ],
+    });
+    renderFlow("admin");
+
+    await user.click(screen.getByText("Advanced settings"));
+    const select = await screen.findByRole("combobox", { name: "Transcription model" });
+    await waitFor(() => expect(select).toBeEnabled());
+
+    const download = await screen.findByRole("button", { name: "Download tiny (74.6 MB)" });
+    // Available tiers never offer a download control.
+    expect(screen.queryByRole("button", { name: /Download large-v3-turbo/ })).not.toBeInTheDocument();
+    await user.click(download);
+
+    // One-click start hit the server route.
+    await waitFor(() => {
+      expect(
+        vi.mocked(fetch).mock.calls.some(
+          ([url, init]) => String(url) === "/api/models/provisioning" && init?.method === "POST",
+        ),
+      ).toBe(true);
+    });
+
+    // Progress view while it runs.
+    expect(
+      await screen.findByRole("progressbar", { name: "Downloading tiny model" }),
+    ).toBeInTheDocument();
+    expect(screen.getByText(/Downloading tiny:/)).toHaveTextContent(
+      "Downloading tiny: 37.3 MB of 74.6 MB",
+    );
+
+    // Completion flips the tier selectable in the refreshed catalog - no reload.
+    await waitFor(
+      () => {
+        expect(screen.getByRole("option", { name: "tiny" })).toBeEnabled();
+      },
+      { timeout: 5_000 },
+    );
+    expect(screen.queryByRole("button", { name: /Download tiny/ })).not.toBeInTheDocument();
+  });
+
+  it("surfaces a refused start honestly (for example a full disk) and leaves the action retryable", async () => {
+    const user = userEvent.setup();
+    mockProvisioningServer({
+      catalog: UNPROVISIONED_TINY_CATALOG,
+      statuses: [
+        { tiny: { state: "idle", bytesReceived: 0, bytesTotal: 78_203_619, error: null } },
+        {
+          tiny: {
+            state: "failed",
+            bytesReceived: 12,
+            bytesTotal: 78_203_619,
+            error: "network reset mid-file",
+          },
+        },
+      ],
+      postResponse: {
+        status: 507,
+        body: {
+          error: "insufficient_disk_space",
+          message: "Not enough free disk space to install the 'tiny' model.",
+        },
+      },
+    });
+    renderFlow("admin");
+
+    await user.click(screen.getByText("Advanced settings"));
+    await screen.findByRole("combobox", { name: "Transcription model" });
+    await waitFor(() =>
+      expect(screen.getByRole("combobox", { name: "Transcription model" })).toBeEnabled(),
+    );
+
+    // A refused start (for example a full disk) surfaces inline.
+    await user.click(await screen.findByRole("button", { name: "Download tiny (74.6 MB)" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "Not enough free disk space to install the 'tiny' model.",
+    );
+    // The action stays available for a retry.
+    expect(screen.getByRole("button", { name: "Download tiny (74.6 MB)" })).toBeEnabled();
+  });
+
+  it("keeps a mid-download failure on screen with the server error and a retry", async () => {
+    const user = userEvent.setup();
+    mockProvisioningServer({
+      catalog: UNPROVISIONED_TINY_CATALOG,
+      statuses: [
+        { tiny: { state: "idle", bytesReceived: 0, bytesTotal: 78_203_619, error: null } },
+        { tiny: { state: "downloading", bytesReceived: 100, bytesTotal: 78_203_619, error: null } },
+        {
+          tiny: {
+            state: "failed",
+            bytesReceived: 100,
+            bytesTotal: 78_203_619,
+            error: "network reset mid-file",
+          },
+        },
+      ],
+    });
+    renderFlow("admin");
+
+    await user.click(screen.getByText("Advanced settings"));
+    const select = await screen.findByRole("combobox", { name: "Transcription model" });
+    await waitFor(() => expect(select).toBeEnabled());
+
+    await user.click(await screen.findByRole("button", { name: "Download tiny (74.6 MB)" }));
+
+    expect(
+      await screen.findByRole(
+        "alert",
+        {},
+        { timeout: 5_000 },
+      ),
+    ).toHaveTextContent("Download of tiny failed: network reset mid-file");
+    expect(screen.getByRole("button", { name: /Retry download tiny/ })).toBeEnabled();
+    // The tier never turned selectable off a failed install.
+    expect(screen.getByRole("option", { name: "tiny - not available on this host" })).toBeDisabled();
+  });
+
+  it("hides the controls from uploaders entirely", async () => {
+    const user = userEvent.setup();
+    const server = mockProvisioningServer({
+      catalog: UNPROVISIONED_TINY_CATALOG,
+      statuses: [
+        { tiny: { state: "downloading", bytesReceived: 1, bytesTotal: 78_203_619, error: null } },
+      ],
+    });
+    renderFlow("uploader");
+
+    await user.click(screen.getByText("Advanced settings"));
+    const select = await screen.findByRole("combobox", { name: "Transcription model" });
+    await waitFor(() => expect(select).toBeEnabled());
+
+    expect(screen.queryByRole("button", { name: /Download / })).not.toBeInTheDocument();
+    expect(screen.queryByRole("progressbar", { name: /Downloading/ })).not.toBeInTheDocument();
+    // An uploader never even polls the provisioning surface.
+    expect(server.statusCalls).toBe(0);
+  });
+
+  it("hides the controls in phone-safety mode even for admins", async () => {
+    mockPhoneSafety.value = true;
+    const user = userEvent.setup();
+    const server = mockProvisioningServer({
+      catalog: UNPROVISIONED_TINY_CATALOG,
+      statuses: [
+        { tiny: { state: "idle", bytesReceived: 0, bytesTotal: 78_203_619, error: null } },
+      ],
+    });
+    renderFlow("admin");
+
+    await user.click(screen.getByText("Advanced settings"));
+    const select = await screen.findByRole("combobox", { name: "Transcription model" });
+    await waitFor(() => expect(select).toBeEnabled());
+
+    expect(screen.queryByRole("button", { name: /Download / })).not.toBeInTheDocument();
+    expect(server.statusCalls).toBe(0);
   });
 });

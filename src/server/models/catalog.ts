@@ -1,12 +1,16 @@
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 
+import { TIER_DOWNLOADS } from "./tier-downloads";
+
 // demo-model-tier-picker: the faster-whisper tier catalog. Availability is
 // SERVER-CHECKED against actual provisioned artifacts (model.bin +
 // config.json) in the worker's model directory - a tier is selectable only
 // when verifiably usable on this host; everything else renders as explicitly
-// unavailable. The default is the highest-quality provisioned tier, honoring
-// SUPERSCRIBER_TRANSCRIBE_MODEL when that default itself is provisioned.
+// unavailable.
+// model-tier-provisioning (captain ruling): the default is ALWAYS the
+// highest-quality provisioned tier - a provisioned configured model no
+// longer overrides a stronger provisioned tier.
 
 export type ModelTier = {
   id: string;
@@ -15,6 +19,7 @@ export type ModelTier = {
   qualityNote: string;
   available: boolean;
   default: boolean;
+  downloadSizeBytes: number;
 };
 
 const TIER_META: Array<{ id: string; qualityRank: number; speedNote: string; qualityNote: string }> = [
@@ -55,20 +60,17 @@ export function listModelCatalog(): {
     ...tier,
     available: isModelProvisioned(tier.id),
     default: false,
+    downloadSizeBytes: TIER_DOWNLOADS[tier.id].sizeBytes,
   }));
 
   const configuredModel =
     (process.env.SUPERSCRIBER_TRANSCRIBE_MODEL || "").trim() || "small";
-  let defaultModel: string | null = null;
-  if (tiers.some((tier) => tier.id === configuredModel && tier.available)) {
-    defaultModel = configuredModel;
-  } else {
-    // Best available quality wins the default.
-    const best = [...tiers]
-      .filter((tier) => tier.available)
-      .sort((a, b) => b.qualityRank - a.qualityRank)[0];
-    defaultModel = best?.id ?? null;
-  }
+  // Best available quality always wins the default, even when the configured
+  // model is itself provisioned (captain ruling: best-available stands).
+  const best = [...tiers]
+    .filter((tier) => tier.available)
+    .sort((a, b) => b.qualityRank - a.qualityRank)[0];
+  const defaultModel = best?.id ?? null;
 
   return {
     tiers: tiers.map((tier) => ({

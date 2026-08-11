@@ -81,16 +81,39 @@ describe("model catalog (demo-model-tier-picker)", () => {
     ]);
   });
 
-  it("honors a provisioned configured default over the quality rank", () => {
+  it("keeps the best-available default even when the configured model is provisioned", () => {
+    // model-tier-provisioning (captain ruling): the picker's default is always
+    // the best provisioned tier - a provisioned configured model no longer
+    // wins the default when a stronger tier is available on the host.
     snapshotEnv();
     const root = mkdtempSync(join(tmpdir(), "model-catalog-default-"));
     provision(root, "small", "large-v3");
     process.env.SUPERSCRIBER_TRANSCRIBE_MODEL_DIR = root;
     process.env.SUPERSCRIBER_TRANSCRIBE_MODEL = "small";
 
-    expect(listModelCatalog()).toMatchObject({
+    const catalog = listModelCatalog();
+    expect(catalog).toMatchObject({
       configuredModel: "small",
-      defaultModel: "small",
+      defaultModel: "large-v3",
     });
+    const byId = Object.fromEntries(catalog.tiers.map((tier) => [tier.id, tier]));
+    expect(byId["large-v3"].default).toBe(true);
+    expect(byId["small"].default).toBe(false);
+  });
+
+  it("exposes the pinned download size for every tier", () => {
+    snapshotEnv();
+    const root = mkdtempSync(join(tmpdir(), "model-catalog-sizes-"));
+    process.env.SUPERSCRIBER_TRANSCRIBE_MODEL_DIR = root;
+    delete process.env.SUPERSCRIBER_TRANSCRIBE_MODEL;
+
+    const catalog = listModelCatalog();
+    const byId = Object.fromEntries(catalog.tiers.map((tier) => [tier.id, tier]));
+    for (const tier of catalog.tiers) {
+      expect(Number.isFinite(tier.downloadSizeBytes)).toBe(true);
+      expect(tier.downloadSizeBytes).toBeGreaterThan(0);
+    }
+    expect(byId.tiny.downloadSizeBytes).toBe(78_203_619);
+    expect(byId["large-v3-turbo"].downloadSizeBytes).toBe(1_621_665_643);
   });
 });

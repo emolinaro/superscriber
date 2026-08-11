@@ -2,7 +2,7 @@
 
 import { cleanup, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it } from "vitest";
-import { TransferProgress, nextProgressAnnouncement } from "./transfer-progress";
+import { formatBytes, TransferProgress, nextProgressAnnouncement } from "./transfer-progress";
 
 afterEach(() => {
   cleanup();
@@ -27,6 +27,16 @@ describe("nextProgressAnnouncement", () => {
       "20 percent uploaded.",
       "Upload complete.",
     ]);
+  });
+});
+
+describe("formatBytes", () => {
+  it("scales from bytes through gigabytes", () => {
+    expect(formatBytes(512)).toBe("512 B");
+    expect(formatBytes(2048)).toBe("2.0 KB");
+    expect(formatBytes(78_203_619)).toBe("74.6 MB");
+    expect(formatBytes(1_621_665_643)).toBe("1.5 GB");
+    expect(formatBytes(3_090_835_362)).toBe("2.9 GB");
   });
 });
 
