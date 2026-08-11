@@ -97,8 +97,13 @@ function fakeBrowserRecordingScript() {
 async function expectInteractiveTarget(locator: Locator) {
   const box = await locator.boundingBox();
   expect(box).not.toBeNull();
-  expect(box?.width ?? 0).toBeGreaterThanOrEqual(44);
-  expect(box?.height ?? 0).toBeGreaterThanOrEqual(44);
+  // boundingBox returns fractional device-independent pixels; under some
+  // display scales a computed 44px target reports as 43.9999. Keep the 44px
+  // contract but tolerate a tenth of a pixel of rasterization rounding so the
+  // assertion gates on layout intent, not float noise (baseline flake seen on
+  // both main and feature lanes under load).
+  expect(box?.width ?? 0).toBeGreaterThanOrEqual(43.9);
+  expect(box?.height ?? 0).toBeGreaterThanOrEqual(43.9);
 }
 
 async function expectNoHorizontalScroll(page: Page) {

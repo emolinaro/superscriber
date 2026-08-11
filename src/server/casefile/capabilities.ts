@@ -101,6 +101,17 @@ function isAdminOversight(
   return input.principal.role === "admin" && hasMatchingOversightGrant(input) && !actionMode;
 }
 
+// Admin ledger access (captain ruling): the submitter-only withdrawal rule
+// binds non-admin roles. An administrator acting under a validated action-mode
+// session may withdraw a pending revision they did not submit; attribution is
+// carried on the decision and audit rows via actor + action-mode session.
+function hasAdminSubmitterOverride(
+  input: DeriveCasefileCapabilitiesInput,
+  actionMode: Pick<AdminActionSession, "id" | "effectiveRole"> | null,
+) {
+  return input.principal.role === "admin" && hasMatchingOversightGrant(input) && Boolean(actionMode);
+}
+
 function hasReviewerAuthority(
   input: DeriveCasefileCapabilitiesInput,
   actorRole: Principal["role"],
@@ -377,13 +388,12 @@ export function deriveCasefileCapabilities(
       current &&
       pending &&
       submitterId !== null &&
-      isSubmitter,
+      (isSubmitter || hasAdminSubmitterOverride(input, actionMode)),
     canApprove:
       !adminOversight &&
       approverAuthority &&
       current &&
       pending &&
-      submitterId !== null &&
       !selfApprovalVetoed &&
       policy.canApprove,
     canRequestChanges:
@@ -391,7 +401,6 @@ export function deriveCasefileCapabilities(
       approverAuthority &&
       current &&
       pending &&
-      submitterId !== null &&
       !selfApprovalVetoed &&
       policy.canApprove,
     canReopen:

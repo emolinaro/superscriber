@@ -19,8 +19,8 @@ It runs as a single-institution deployment with local accounts, SQLite persisten
 - Password reset for lost local credentials: self-service reset links and an audited administrator reset - reset mail is opt-in (`SUPERSCRIBER_RESET_MAIL_MODE`), otherwise resets run operator-assisted ([`docs/operators/password-reset.md`](./docs/operators/password-reset.md))
 - Role-aware work inbox ledgers (tabbed per role) and a transcript-first casefile for review
 - Live, engine-derived transcription progress in work ledgers and uploader status casefiles
-- Governed decision commands - save draft, submit, withdraw submission, request changes, approve, reopen - with the submitter barred from deciding their own revision
-- Admin read-only oversight by default, plus an explicit, record-bound, audited reviewer/approver action mode for casefile work
+- Governed casefile commands - save draft, submit, withdraw submission, request changes, approve, reopen - with non-admin submitters barred from approving or requesting changes on their own revisions; see the [behavioral contract](./DESIGN.md#revision-and-decision-commands)
+- Admin read-only oversight by default, plus an explicit, record-bound, audited reviewer/approver action mode across every casefile; see [admin oversight and action mode](./DESIGN.md#admin-oversight-and-action-mode)
 - Append-only assignment history, with approval completing all active assignments atomically
 - Unified resumable ingest (1 MiB chunks) for upload and browser audio recording, with host-verified faster-whisper model selection under Advanced settings
 - Audited, policy-gated transcript export in `DOCX`, `TXT`, `MD`, `SRT`, `VTT`, `CSV`, `TSV`, and `JSON` - defaulting to the approved record, with revision-picker export of any revision under the same authority

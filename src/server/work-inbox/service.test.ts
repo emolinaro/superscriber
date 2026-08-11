@@ -673,6 +673,17 @@ describe("listWorkInbox", () => {
       expect(adminInbox.rows[0]?.recordingId).toBe("rec-problem");
       expect(adminInbox.rows.at(-1)?.recordingId).toBe("rec-approved");
 
+      // Admin ledger access (captain ruling): every oversight row links into
+      // the casefile regardless of owner; oversight navigation never becomes
+      // an implied next action.
+      expect(adminInbox.rows.length).toBeGreaterThan(0);
+      for (const row of adminInbox.rows) {
+        expect(row.href).toMatch(new RegExp(`^/recordings/${row.recordingId}$`));
+        expect(row.actionLabel).toBe("Open casefile");
+        expect(row.actionable).toBe(false);
+      }
+      expect(adminInbox.nextAction).toBeNull();
+
       const filtered = listWorkInbox(
         admin,
         {

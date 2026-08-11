@@ -608,6 +608,84 @@ describe("getCasefile", () => {
     }
   });
 
+  // Admin ledger access (captain ruling): on a pending revision submitted by
+  // someone else the read model must offer BOTH audited entry points - the
+  // approver mode to decide and the reviewer mode to withdraw. Today the
+  // submitter-only withdrawal binding hides the reviewer entry entirely.
+  it("offers eligible admin action modes on pending casefiles", async () => {
+    const bundle = openAppDatabase(":memory:");
+    insertWorkspace(bundle);
+
+    try {
+      const uploader = await createPrincipal(bundle.db, {
+        displayName: "Uploader",
+        email: "pending-uploader@example.com",
+        role: "uploader",
+      });
+      const reviewer = await createPrincipal(bundle.db, {
+        displayName: "Pending Reviewer",
+        email: "pending-reviewer@example.com",
+        role: "reviewer",
+      });
+      const admin = await createPrincipal(bundle.db, {
+        displayName: "Pending Admin",
+        email: "pending-admin@example.com",
+        role: "admin",
+      });
+
+      insertDraftRecording(bundle, {
+        recordingId: "rec-pending",
+        title: "Pending casefile owned by another user",
+        uploadedByUserId: uploader.userId,
+      });
+      assignRecordingToUser(
+        {
+          recordingId: "rec-pending",
+          userId: reviewer.userId,
+          assignedBy: admin,
+        },
+        bundle,
+      );
+      submitRevisionCommand(
+        reviewer,
+        {
+          recordingId: "rec-pending",
+          expectedCurrentRevisionId: "rev-1",
+          summary: "Pending review transcript.",
+          segments: baseSegments,
+          hasUnsavedChanges: false,
+        },
+        bundle,
+      );
+
+      const casefile = getCasefile(admin, "rec-pending", {}, bundle.db);
+      expect(casefile).toEqual(
+        expect.objectContaining({
+          stage: "pending_approval",
+          access: expect.objectContaining({ kind: "admin_oversight" }),
+        }),
+      );
+      expect(casefile?.capabilities.canWithdraw).toBe(false);
+      expect(casefile?.capabilities.denials.canWithdraw).toBe("admin_action_mode_required");
+      expect(
+        (casefile?.adminActionModeOptions ?? []).map((option) => option.effectiveRole).sort(),
+      ).toEqual(["approver", "reviewer"]);
+
+      bundle.db
+        .update(revisions)
+        .set({ submittedByUserId: null })
+        .where(eq(revisions.id, "rev-1"))
+        .run();
+
+      const legacyCasefile = getCasefile(admin, "rec-pending", {}, bundle.db);
+      expect(
+        (legacyCasefile?.adminActionModeOptions ?? []).map((option) => option.effectiveRole),
+      ).toEqual(["approver"]);
+    } finally {
+      bundle.sqlite.close();
+    }
+  });
+
   it("synchronizes mock orchestration while repeatedly reading an assigned casefile", async () => {
     process.env.SUPERSCRIBER_ENGINE_MODE = "mock";
     const { bundle, reviewer } = await setupInFlightCasefileFixture();

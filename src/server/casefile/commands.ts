@@ -865,7 +865,13 @@ export function withdrawRevisionCommand(
       );
     }
 
-    if (pending.submittedByUserId !== state.actor.userId) {
+    // Admin ledger access (captain ruling): the submitter-only withdrawal
+    // rule binds non-admin roles. An administrator reaches this branch only
+    // under a validated reviewer action-mode session (loadCommandState and
+    // the capability gate fail closed without one), so the override never
+    // weakens attribution: the decision and audit rows record the acting
+    // admin, the reviewer effective role, and the action-mode session.
+    if (pending.submittedByUserId !== state.actor.userId && state.actor.actorRole !== "admin") {
       throw new CasefileCommandError(
         "ACCESS_DENIED",
         "Only the submitting reviewer can withdraw this revision.",
@@ -920,6 +926,14 @@ export function withdrawRevisionCommand(
         revisionId: pending.id,
         nextDraftRevisionId: draft.id,
         reason,
+        // Admin ledger access: when the acting admin is not the submitter,
+        // the audit row names both so the ledger alone shows the override.
+        ...(pending.submittedByUserId !== state.actor.userId
+          ? {
+              submitterUserId: pending.submittedByUserId,
+              submitterOverrideByAdmin: true,
+            }
+          : {}),
       },
       createdAt: now,
     });
