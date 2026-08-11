@@ -370,3 +370,68 @@ textarea[aria-invalid="true"] {
     scroll-behavior: auto !important;
   }
 }
+
+/* Engine-driven transcription progress bar. Token-based so both appearance
+   modes inherit the accent; reduced-motion keeps a static pulse (no slide). */
+.tp-progress {
+  display: grid;
+  gap: var(--space-1);
+}
+
+.tp-progress__heading {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: var(--space-3);
+  font-size: var(--type-14);
+}
+
+.tp-progress__cue {
+  font-family: var(--font-mono);
+  font-size: var(--type-12);
+  color: var(--color-muted);
+}
+
+.tp-progress__track {
+  height: 10px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--color-line) 55%, transparent);
+  overflow: hidden;
+  position: relative;
+}
+
+.tp-progress__fill {
+  display: block;
+  height: 100%;
+  border-radius: 999px;
+  background: var(--color-focus);
+  transition: width var(--motion-slow) linear;
+}
+
+.tp-progress__pulse {
+  position: absolute;
+  inset-block: 0;
+  left: 0;
+  width: 24%;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--color-focus) 60%, transparent);
+  animation: tp-pulse-slide 1.6s ease-in-out infinite alternate;
+}
+
+@keyframes tp-pulse-slide {
+  from { transform: translateX(0); }
+  to { transform: translateX(300%); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .tp-progress__pulse {
+    animation: none;
+  }
+  .tp-progress__fill {
+    transition: none;
+  }
+}
+
+.tp-progress--compact .tp-progress__track {
+  height: 6px;
+}

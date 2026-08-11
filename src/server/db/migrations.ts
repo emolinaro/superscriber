@@ -13,7 +13,7 @@ type Migration = {
   rebuildsTables?: boolean;
 };
 
-export const LATEST_SCHEMA_VERSION = 10;
+export const LATEST_SCHEMA_VERSION = 11;
 
 const migrations: Migration[] = [
   { version: 1, name: "baseline-appliance", up: createBaselineSchema },
@@ -26,6 +26,7 @@ const migrations: Migration[] = [
   { version: 8, name: "account-role-guards", up: addAccountRoleGuards },
   { version: 9, name: "user-theme-preference", up: addUserThemePreferenceSchema },
   { version: 10, name: "password-reset-tokens", up: addPasswordResetTokensSchema },
+  { version: 11, name: "transcript-job-engine-progress", up: addTranscriptJobEngineProgressSchema },
 ];
 
 const LEGACY_AUDIT_METADATA_JSON = serializeAuditMetadata(LEGACY_AUDIT_METADATA);
@@ -969,6 +970,16 @@ function addPasswordResetTokensSchema(sqlite: Database.Database) {
     CREATE INDEX IF NOT EXISTS password_reset_tokens_user_idx
       ON password_reset_tokens (user_id);
   `);
+}
+
+function addTranscriptJobEngineProgressSchema(sqlite: Database.Database) {
+  // Real engine progress samples on transcript jobs: what the worker has
+  // transcribed so far, the full audio duration, and how many segments the
+  // engine has emitted. Nullable: no engine sample yet means the UI renders a
+  // liveness cue instead of a fabricated fill.
+  ensureColumn(sqlite, "transcript_jobs", "transcribed_until_ms", "transcribed_until_ms INTEGER");
+  ensureColumn(sqlite, "transcript_jobs", "audio_duration_ms", "audio_duration_ms INTEGER");
+  ensureColumn(sqlite, "transcript_jobs", "segments_seen", "segments_seen INTEGER");
 }
 
 export function runMigrations(

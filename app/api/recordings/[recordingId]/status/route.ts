@@ -64,6 +64,9 @@ export async function GET(
         transcriptJobState: recording.transcriptJobState,
         transcriptJobProgressPercent: transcriptJob?.progressPercent ?? null,
         transcriptJobEtaSeconds: transcriptJob?.etaSeconds ?? null,
+        transcriptionTranscribedUntilMs: transcriptJob?.transcribedUntilMs ?? null,
+        transcriptionAudioDurationMs: transcriptJob?.audioDurationMs ?? null,
+        transcriptionSegmentsSeen: transcriptJob?.segmentsSeen ?? null,
       },
       updatedAt: recording.updatedAt,
     });

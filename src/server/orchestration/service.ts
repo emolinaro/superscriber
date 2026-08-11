@@ -140,6 +140,9 @@ function bootstrapTranscriptJob(recording: Recording): TranscriptJob {
           ? 90
           : 30,
     progressPercent: progressForState(recording.transcriptJobState),
+    transcribedUntilMs: null,
+    audioDurationMs: null,
+    segmentsSeen: null,
     outputRevisionId:
       recording.transcriptJobState === "completed" ? recording.currentRevisionId : null,
     lastError:

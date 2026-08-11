@@ -41,6 +41,9 @@ export type InternalTranscriptJobSnapshot = {
   claimedByWorkerId: string | null;
   progressPercent: number | null;
   etaSeconds: number | null;
+  transcribedUntilMs?: number | null;
+  audioDurationMs?: number | null;
+  segmentsSeen?: number | null;
   lastHeartbeatAt: string | null;
   completedAt: string | null;
   lastError: string | null;
@@ -90,6 +93,20 @@ function buildClaim(state: AppState, workerId: string, jobId: string): InternalT
   };
 }
 
+export function engineProgressFromMs(
+  transcribedUntilMs: number | null,
+  audioDurationMs: number | null,
+): number | null {
+  if (
+    typeof transcribedUntilMs === "number" &&
+    typeof audioDurationMs === "number" &&
+    audioDurationMs > 0
+  ) {
+    return Math.min(99, Math.max(0, Math.floor((transcribedUntilMs / audioDurationMs) * 100)));
+  }
+  return null;
+}
+
 function buildSnapshot(job: TranscriptJob): InternalTranscriptJobSnapshot {
   return {
     jobId: job.id,
@@ -99,6 +116,9 @@ function buildSnapshot(job: TranscriptJob): InternalTranscriptJobSnapshot {
     claimedByWorkerId: job.claimedByWorkerId,
     progressPercent: job.progressPercent,
     etaSeconds: job.etaSeconds,
+    transcribedUntilMs: job.transcribedUntilMs,
+    audioDurationMs: job.audioDurationMs,
+    segmentsSeen: job.segmentsSeen,
     lastHeartbeatAt: job.lastHeartbeatAt,
     completedAt: job.completedAt,
     lastError: job.lastError,
@@ -327,6 +347,11 @@ export function heartbeatTranscriptJob(params: {
   progressPercent?: number | null;
   etaSeconds?: number | null;
   diarizationStatus?: TranscriptJob["diarizationStatus"];
+  /** Real engine samples. When both ms fields have landed, the stored
+     percent is DERIVED from them (never the staged stall number). */
+  transcribedUntilMs?: number | null;
+  audioDurationMs?: number | null;
+  segmentsSeen?: number | null;
   bundle?: AppDatabaseBundle;
 }) {
   const bundle = activeBundle(params.bundle);
@@ -346,7 +371,17 @@ export function heartbeatTranscriptJob(params: {
     refs.job.adapter = "internal-python-worker";
     refs.job.updatedAt = timestamp;
     refs.job.lastHeartbeatAt = timestamp;
-    refs.job.progressPercent = params.progressPercent ?? refs.job.progressPercent;
+    refs.job.transcribedUntilMs = params.transcribedUntilMs ?? refs.job.transcribedUntilMs;
+    refs.job.audioDurationMs = params.audioDurationMs ?? refs.job.audioDurationMs;
+    refs.job.segmentsSeen = params.segmentsSeen ?? refs.job.segmentsSeen;
+
+    // Real engine progress wins: percent = floor(done/total*100), clamped a
+    // point shy of 100 until /complete lands; the supplied percent is only a
+    // fallback when no engine sample exists yet.
+    const enginePercent =
+      engineProgressFromMs(refs.job.transcribedUntilMs, refs.job.audioDurationMs);
+    refs.job.progressPercent =
+      enginePercent ?? params.progressPercent ?? refs.job.progressPercent;
     refs.job.etaSeconds = params.etaSeconds ?? refs.job.etaSeconds;
     refs.job.diarizationStatus = params.diarizationStatus ?? refs.job.diarizationStatus;
     refs.job.lastError = null;

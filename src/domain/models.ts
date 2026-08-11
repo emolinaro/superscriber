@@ -158,6 +158,11 @@ export type TranscriptJob = {
   lastHeartbeatAt: string | null;
   etaSeconds: number | null;
   progressPercent: number | null;
+  /** Real engine samples (nullable until the first engine segment lands);
+     percent is derived from these, never synthesized by the app. */
+  transcribedUntilMs: number | null;
+  audioDurationMs: number | null;
+  segmentsSeen: number | null;
   outputRevisionId: string | null;
   lastError: string | null;
   diarizationStatus: DiarizationStatus;

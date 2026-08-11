@@ -334,13 +334,20 @@ describe("CasefileWorkspace", () => {
         integrityState: "verified",
         transcriptJobState: "running",
         progressPercent: 42,
+        transcribedUntilMs: 25_000,
+        audioDurationMs: 60_000,
+        segmentsSeen: 7,
         etaSeconds: 18,
         verificationSummary: "Verifying upload.",
         recoveryHint: "Keep this tab open while transcript preparation finishes.",
       },
     });
 
-    expect(screen.getByText("42% complete")).toBeVisible();
+    const bar = screen.getByRole("progressbar", { name: "Transcription progress" });
+    expect(bar).toBeVisible();
+    expect(bar).toHaveAttribute("aria-valuenow", "42");
+    expect(screen.getByText(/Segment 7/)).toBeVisible();
+    expect(screen.getByText(/0:25 of 1:00/)).toBeVisible();
     expect(screen.getByText("Keep this tab open while transcript preparation finishes.")).toBeVisible();
     expect(screen.queryByRole("textbox")).not.toBeInTheDocument();
   });

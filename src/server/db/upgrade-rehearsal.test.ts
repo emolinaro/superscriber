@@ -110,7 +110,7 @@ function invariants(sqlite: Database.Database) {
 }
 
 describe("migration rehearsal on production-shaped copies", () => {
-  it("stages v2 through v10 preserving every id and reference count; backup stays restorable", () => {
+  it("stages v2 through v11 preserving every id and reference count; backup stays restorable", () => {
     const production = new Database(":memory:");
     production.pragma("foreign_keys = ON");
     runMigrations(production, 2);
@@ -121,13 +121,19 @@ describe("migration rehearsal on production-shaped copies", () => {
     const backup = Buffer.from(production.serialize());
 
     // Staged migration, one version at a time, as runbooks describe.
-    for (const stage of [3, 4, 5, 6, 7, 8, 9, 10]) {
+    for (const stage of [3, 4, 5, 6, 7, 8, 9, 10, 11]) {
       runMigrations(production, stage);
       expect(invariants(production)).toEqual(before);
       expect(production.prepare(`PRAGMA foreign_key_check`).all()).toEqual([]);
     }
 
-    // The new auth surfaces exist and the upgrade recorded its one-time event.
+    // The new auth surfaces exist, engine progress columns landed, and the
+    // upgrade recorded its one-time event.
+    expect(
+      production.prepare(`PRAGMA table_info(transcript_jobs)`).all().map((c) => (c as { name: string }).name),
+    ).toEqual(
+      expect.arrayContaining(["transcribed_until_ms", "audio_duration_ms", "segments_seen"]),
+    );
     expect(
       production.prepare(`SELECT COUNT(*) AS c FROM security_events WHERE type = 'auth.legacy_sessions_invalidated'`).get(),
     ).toEqual({ c: 1 });
@@ -152,7 +158,7 @@ describe("migration rehearsal on production-shaped copies", () => {
         .prepare(`SELECT version FROM schema_migrations ORDER BY version`)
         .all()
         .map((row) => (row as { version: number }).version),
-    ).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9, 10]);
+    ).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]);
 
     production.close();
     restored.close();

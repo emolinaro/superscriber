@@ -42,6 +42,9 @@ function renderStatusOnlyWorkspace(overrides: Record<string, unknown> = {}) {
           integrityState: "verifying",
           transcriptJobState: "running",
           progressPercent: 42,
+          transcribedUntilMs: null,
+          audioDurationMs: null,
+          segmentsSeen: null,
           etaSeconds: 18,
           verificationSummary: "Verifying upload.",
           recoveryHint: "Keep this tab open while transcript preparation finishes.",
@@ -129,7 +132,9 @@ describe("CasefileWorkspace status-only polling", () => {
 
     const view = renderStatusOnlyWorkspace();
 
-    expect(screen.getByText("42% complete")).toBeVisible();
+    const bar = screen.getByRole("progressbar", { name: "Transcription progress" });
+    expect(bar).toBeVisible();
+    expect(bar).toHaveAttribute("aria-valuenow", "42");
 
     await advancePollingWindow();
 

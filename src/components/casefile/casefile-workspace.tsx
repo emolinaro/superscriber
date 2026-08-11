@@ -34,6 +34,7 @@ import { ConflictPanel } from "./conflict-panel";
 import { ExportDialog } from "./export-dialog";
 import { GovernanceDrawer } from "./governance-drawer";
 import { RecordingDangerZone } from "./recording-danger-zone";
+import { TranscriptionProgressBar } from "@/components/ui/transcription-progress";
 import { MediaTransport } from "./media-transport";
 import { StateActionBar } from "./state-action-bar";
 import { TranscriptDocument } from "./transcript-document";
@@ -172,11 +173,20 @@ function CasefileStatusCards({ casefile }: { casefile: CasefileViewModel }) {
       <article className="panel panel-strong">
         <div className="panel-inner stack-tight">
           <h2 className="section-title">Processing progress</h2>
-          <p className="body-copy">
-            {casefile.processing.progressPercent === null
-              ? casefile.stageLabel
-              : `${Math.round(casefile.processing.progressPercent)}% complete`}
-          </p>
+          {casefile.processing.active ? (
+            <TranscriptionProgressBar
+              audioDurationMs={casefile.processing.audioDurationMs ?? null}
+              percent={casefile.processing.progressPercent}
+              segmentsSeen={casefile.processing.segmentsSeen ?? null}
+              transcribedUntilMs={casefile.processing.transcribedUntilMs ?? null}
+            />
+          ) : (
+            <p className="body-copy">
+              {casefile.processing.progressPercent === null
+                ? casefile.stageLabel
+                : `${Math.round(casefile.processing.progressPercent)}% complete`}
+            </p>
+          )}
           <p className="field-note">{casefile.processing.verificationSummary ?? "Status available."}</p>
           {casefile.processing.recoveryHint ? (
             <p className="field-note">{casefile.processing.recoveryHint}</p>

@@ -74,6 +74,68 @@ function queueVerifiedRecording(state: AppState, title: string) {
 }
 
 describe("internal transcript queue", () => {
+  it("derives the progress percent from real engine samples and keeps the liveness fields", () => {
+    const bundle = openAppDatabase(":memory:");
+
+    try {
+      const state = createBaseState();
+      const { job } = queueVerifiedRecording(state, "Engine progress probe");
+      writeState(state, bundle.db);
+
+      claimAvailableTranscriptJob({ workerId: "worker-a", bundle });
+
+      // Staged base first, then three real samples.
+      const base = heartbeatTranscriptJob({
+        jobId: job.id,
+        workerId: "worker-a",
+        progressPercent: 15,
+        bundle,
+      });
+      expect(base.progressPercent).toBe(15);
+
+      const first = heartbeatTranscriptJob({
+        jobId: job.id,
+        workerId: "worker-a",
+        transcribedUntilMs: 5000,
+        audioDurationMs: 60000,
+        segmentsSeen: 1,
+        bundle,
+      });
+      expect(first.progressPercent).toBe(8);
+      expect(first.segmentsSeen).toBe(1);
+
+      const second = heartbeatTranscriptJob({
+        jobId: job.id,
+        workerId: "worker-a",
+        transcribedUntilMs: 30000,
+        audioDurationMs: 60000,
+        segmentsSeen: 7,
+        progressPercent: 15, // stale staged value loses to engine data
+        bundle,
+      });
+      expect(second.progressPercent).toBe(50);
+
+      // Clamp: never report 100 before /complete lands.
+      const late = heartbeatTranscriptJob({
+        jobId: job.id,
+        workerId: "worker-a",
+        transcribedUntilMs: 60000,
+        audioDurationMs: 60000,
+        segmentsSeen: 11,
+        bundle,
+      });
+      expect(late.progressPercent).toBe(99);
+
+      // Engine-free beats (no ms fields) keep the last real percent - a
+      // heartbeat without new samples must not lurch the bar backwards.
+      const quiet = heartbeatTranscriptJob({ jobId: job.id, workerId: "worker-a", bundle });
+      expect(quiet.progressPercent).toBe(99);
+      expect(quiet.segmentsSeen).toBe(11);
+    } finally {
+      bundle.sqlite.close();
+    }
+  });
+
   it("claims a queued verified job, accepts heartbeats, and completes with a first draft", () => {
     const bundle = openAppDatabase(":memory:");
 
