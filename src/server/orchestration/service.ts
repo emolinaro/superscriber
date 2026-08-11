@@ -12,6 +12,7 @@ import {
   CanonicalOrchestrationAdapter,
 } from "@/server/orchestration/mock-engine";
 import { resolveAdapter } from "@/server/orchestration/adapters";
+import { persistedDispatchFailure } from "@/server/orchestration/dispatch-warning";
 
 function nowIsoFromMs(nowMs: number) {
   return new Date(nowMs).toISOString();
@@ -364,7 +365,7 @@ export function noteOrchestrationDispatchFailure(
   normalizeState(workingState);
   const { recording, session, job } = resolveRecordingRefs(workingState, recordingId);
   const nowMs = Date.now();
-  session.lastError = detail;
+  session.lastError = persistedDispatchFailure(detail);
   session.updatedAt = nowIsoFromMs(nowMs);
   session.verificationSummary = detail;
   job.lastError = detail;

@@ -11,6 +11,7 @@ import {
 } from "@/server/ingest/service";
 import { createLocalUser, toPrincipal } from "@/server/auth/service";
 import { resetAppDatabaseForTests } from "@/server/db/client";
+import { noteOrchestrationDispatchFailure } from "@/server/orchestration/service";
 import { readState, withState } from "@/server/store";
 
 const { dispatchRecordingToConfiguredEngineMock } = vi.hoisted(() => ({
@@ -397,13 +398,10 @@ describe("resumable ingest service", () => {
     expect(finalized.warning).toBe("Upload stored, but backend dispatch failed: Engine unavailable.");
 
     withState((state) => {
-      const ingest = state.ingestionSessions.find((entry) => entry.id === session.sessionId);
-      if (!ingest) {
-        throw new Error("Expected ingest session.");
-      }
-      ingest.lastError = "Engine unavailable.";
-      ingest.verificationSummary = "Engine unavailable.";
+      noteOrchestrationDispatchFailure(session.recordingId, "Engine unavailable.", state);
     });
+    const persisted = readState().ingestionSessions.find((entry) => entry.id === session.sessionId);
+    expect(persisted?.lastError).toBe("Backend dispatch failed: Engine unavailable.");
     expect(getResumableUploadSession(session.sessionId, uploaderPrincipal).warning).toBe(
       "Upload stored, but backend dispatch failed: Engine unavailable.",
     );
@@ -412,6 +410,38 @@ describe("resumable ingest service", () => {
     const recording = state.recordings.find((entry) => entry.id === session.recordingId);
     expect(recording?.mediaPath).toBeTruthy();
     expect(readFileSync(recording?.mediaPath ?? "", "utf8")).toBe("governed-upload");
+  });
+
+  it("does not label a post-storage verification error as a dispatch warning", async () => {
+    const payload = Buffer.from("verified-before-engine-error");
+    const session = createResumableUploadSession({
+      principal: uploaderPrincipal,
+      title: "Interview verification error",
+      languageHint: "english",
+      transcriptModel: null,
+      source: "upload",
+      fileName: "interview.wav",
+      mimeType: "audio/wav",
+      fileSize: payload.length,
+    });
+    appendUploadChunk({
+      principal: uploaderPrincipal,
+      sessionId: session.sessionId,
+      chunkStart: 0,
+      bytes: payload,
+    });
+    await finalizeResumableUploadSession(session.sessionId, uploaderPrincipal);
+
+    withState((state) => {
+      const ingest = state.ingestionSessions.find((entry) => entry.id === session.sessionId);
+      if (!ingest) {
+        throw new Error("Expected ingest session.");
+      }
+      ingest.lastError = "Engine verification rejected the media.";
+      ingest.verificationSummary = "Engine verification rejected the media.";
+    });
+
+    expect(getResumableUploadSession(session.sessionId, uploaderPrincipal).warning).toBeNull();
   });
 
   it("expires stale incomplete uploads and forces restart", () => {

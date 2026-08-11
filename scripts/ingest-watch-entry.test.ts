@@ -1,5 +1,5 @@
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
-import { chmod, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, rename, rm, symlink, writeFile } from "node:fs/promises";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -18,6 +18,7 @@ type FakeAppOptions = {
   finalizeWarning?: string;
   firstChunkGate?: Gate;
   firstSessionGate?: Gate;
+  firstStatusGate?: Gate;
   forceSessionRestart?: boolean;
   loseFirstChunkResponse?: boolean;
   loseFirstFinalizeResponse?: boolean;
@@ -96,6 +97,7 @@ async function startFakeApp(options: FakeAppOptions = {}) {
   let finalizeResponseLost = false;
   let sessionResponseLost = false;
   let signInGated = false;
+  let statusGated = false;
 
   function sessionStatus(session: FakeSession) {
     const bytesExpected = Number(session.body.fileSize);
@@ -243,6 +245,10 @@ async function startFakeApp(options: FakeAppOptions = {}) {
         if (!session) {
           sendJson(response, 404, { error: "Upload session not found." });
           return;
+        }
+        if (!statusGated && options.firstStatusGate) {
+          statusGated = true;
+          await options.firstStatusGate.arrive();
         }
         sendJson(response, 200, {
           ok: true,
@@ -583,6 +589,44 @@ test("never finalizes transient file bytes after a lost chunk response", async (
   watcher.child.kill("SIGTERM");
   await waitForExit(watcher.child);
 }, 14_000);
+
+test("does not resume through a live symlink retargeted during status lookup", async () => {
+  const firstStatusGate = createGate();
+  const app = await startFakeApp({
+    firstStatusGate,
+    loseFirstChunkResponse: true,
+  });
+  const directory = await makeWatchDirectory();
+  const sourceDirectory = await makeWatchDirectory();
+  const watcher = startWatcher(directory, app.baseUrl);
+  await waitUntilWatching(watcher);
+  const original = Buffer.alloc(CHUNK_BYTES + 31, 0x51);
+  const replacement = Buffer.alloc(original.length, 0x62);
+  const originalPath = join(sourceDirectory, "original.wav");
+  const replacementPath = join(sourceDirectory, "replacement.wav");
+  const replacementLink = join(sourceDirectory, "replacement-link.wav");
+  const path = join(directory, "atomic-replacement.wav");
+
+  await writeFile(originalPath, original);
+  await writeFile(replacementPath, replacement);
+  await symlink(originalPath, path);
+  await waitFor(() => app.chunks.length === 1, `first committed chunk\n${watcher.output()}`, 6_000);
+  await firstStatusGate.entered;
+  await symlink(replacementPath, replacementLink);
+  await rename(replacementLink, path);
+  firstStatusGate.release();
+  await waitFor(
+    () =>
+      app.finalized.includes("session-1") ||
+      watcher.output().includes("file changed before upload resume"),
+    `live path replacement detection\n${watcher.output()}`,
+    6_000,
+  );
+
+  expect(app.finalized).not.toContain("session-1");
+  watcher.child.kill("SIGTERM");
+  await waitForExit(watcher.child);
+}, 13_000);
 
 test("reports a finalize warning without retrying durable bytes", async () => {
   const warning = "Backend dispatch unavailable.";

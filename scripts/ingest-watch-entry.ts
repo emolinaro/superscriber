@@ -14,7 +14,7 @@
  */
 import { createHash, randomUUID } from "node:crypto";
 import { mkdirSync, readdirSync, statSync, watch, type FSWatcher, type Stats } from "node:fs";
-import { open, type FileHandle } from "node:fs/promises";
+import { open, stat, type FileHandle } from "node:fs/promises";
 import { basename, extname, join, resolve } from "node:path";
 import { BoundedFetch, resolveIngestWatchBaseUrl } from "./ingest-watch-http";
 
@@ -186,7 +186,7 @@ async function readChunk(handle: FileHandle, buffer: Buffer, position: number, t
   const length = Math.min(buffer.length, totalSize - position);
   const { bytesRead } = await handle.read(buffer, 0, length, position);
   if (bytesRead === 0) {
-    throw new Error("file changed while it was being read; retrying after it settles");
+    throw new Error("file changed while it was being read");
   }
   return buffer.subarray(0, bytesRead);
 }
@@ -199,6 +199,41 @@ async function hashFile(handle: FileHandle, buffer: Buffer, size: number) {
     offset += chunk.length;
   }
   return hash.digest("hex");
+}
+
+async function livePathMatches(path: string, expectedFingerprint: string) {
+  try {
+    return fileFingerprint(await stat(path)) === expectedFingerprint;
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+      return false;
+    }
+    throw error;
+  }
+}
+
+async function withLiveFile<T>(
+  path: string,
+  expectedFingerprint: string,
+  operation: (handle: FileHandle, stats: Stats) => Promise<T>,
+) {
+  const handle = await open(path, "r");
+  try {
+    const stats = await handle.stat();
+    if (fileFingerprint(stats) !== expectedFingerprint) {
+      return null;
+    }
+    const result = await operation(handle, stats);
+    if (
+      fileFingerprint(await handle.stat()) !== expectedFingerprint ||
+      !(await livePathMatches(path, expectedFingerprint))
+    ) {
+      return null;
+    }
+    return result;
+  } finally {
+    await handle.close();
+  }
 }
 
 function isDurablyFinalized(status: UploadSessionStatus) {
@@ -277,10 +312,7 @@ async function finalizeSession(sessionId: string, digest: string, name: string) 
   }
 }
 
-async function getOrCreateSession(
-  digest: string,
-  body: Record<string, unknown>,
-) {
+async function getOrCreateSession(digest: string, body: Record<string, unknown>) {
   const knownSessionId = sessionsByDigest.get(digest);
   if (knownSessionId) {
     const status = await loadSessionStatus(knownSessionId);
@@ -308,111 +340,111 @@ async function getOrCreateSession(
 
 async function ingestFile(path: string, expectedFingerprint: string) {
   const name = basename(path);
-  const handle = await open(path, "r");
-  try {
-    const initialStats = await handle.stat();
-    if (fileFingerprint(initialStats) !== expectedFingerprint) {
-      log(`defer ${name}: file changed before ingest started`);
-      return false;
-    }
-    if (initialStats.size === 0) {
-      log(`skip ${name}: zero bytes (partial write?)`);
-      return true;
-    }
-
-    const buffer = Buffer.allocUnsafe(Math.min(CHUNK_BYTES, initialStats.size));
-    const digest = await hashFile(handle, buffer, initialStats.size);
-    if (fileFingerprint(await handle.stat()) !== expectedFingerprint) {
-      log(`defer ${name}: file changed while hashing`);
-      return false;
-    }
-    if (done.has(digest)) {
-      log(`skip ${name}: duplicate content already ingested this run`);
-      return true;
-    }
-    if (unresumableDigests.has(digest)) {
-      blockedPaths.set(name, expectedFingerprint);
-      throw new Error("a prior upload of these bytes changed in flight; restart the watcher before retrying");
-    }
-
-    const title = name.replace(/\.[^.]*$/, "") || name;
-    log(`ingesting ${name} (${initialStats.size} bytes, sha256 ${digest.slice(0, 12)})`);
-    const session = await getOrCreateSession(digest, {
-      title,
-      languageHint: process.env.SUPERSCRIBER_INGEST_WATCH_LANGUAGE?.trim() || "english",
-      source: "upload",
-      fileName: name,
-      mimeType: mimeTypeFor(name),
-      fileSize: initialStats.size,
-      transcriptModel: process.env.SUPERSCRIBER_TRANSCRIBE_MODEL?.trim() || null,
-    });
-    const { status } = session;
-    if (session.resumed) {
-      const resumedDigest = await hashFile(handle, buffer, initialStats.size);
-      if (
-        fileFingerprint(await handle.stat()) !== expectedFingerprint ||
-        resumedDigest !== digest
-      ) {
-        unresumableDigests.add(digest);
-        blockedPaths.set(name, expectedFingerprint);
-        throw new Error("file changed before upload resume; restart the watcher before retrying");
-      }
-    }
-    if (isDurablyFinalized(status)) {
-      return noteFinalized(digest, name, status.warning);
-    }
-    if (status.nextAction === "restart") {
-      unresumableDigests.add(digest);
-      blockedPaths.set(name, expectedFingerprint);
-      throw new Error(`session ${status.sessionId} requires a restart`);
-    }
-    if (status.nextAction === "none") {
-      throw new Error(`session ${status.sessionId} is not resumable or durably finalized`);
-    }
-    if (status.bytesExpected !== initialStats.size || status.bytesReceived > initialStats.size) {
-      throw new Error(`session ${status.sessionId} does not match the watched file size`);
-    }
-
-    let offset = status.bytesReceived;
-    while (offset < initialStats.size) {
-      const chunk = await readChunk(handle, buffer, offset, initialStats.size);
-      if (fileFingerprint(await handle.stat()) !== expectedFingerprint) {
-        unresumableDigests.add(digest);
-        blockedPaths.set(name, expectedFingerprint);
-        throw new Error("file changed during upload; restart the watcher before retrying");
-      }
-      const chunkResponse = await request(`/api/ingest/sessions/${status.sessionId}/chunk`, {
-        method: "PUT",
-        headers: {
-          "content-type": "application/octet-stream",
-          "x-superscriber-byte-start": String(offset),
-        },
-        body: chunk as unknown as BodyInit,
-      });
-      const chunkStatus = await readSessionStatus(chunkResponse, "chunk");
-      if (
-        chunkStatus.sessionId !== status.sessionId ||
-        chunkStatus.bytesReceived <= offset ||
-        chunkStatus.bytesReceived > initialStats.size
-      ) {
-        throw new Error(`session ${status.sessionId} returned an invalid committed byte offset`);
-      }
-      offset = chunkStatus.bytesReceived;
-    }
-
-    const uploadedDigest = await hashFile(handle, buffer, initialStats.size);
-    if (
-      fileFingerprint(await handle.stat()) !== expectedFingerprint ||
-      uploadedDigest !== digest
-    ) {
-      unresumableDigests.add(digest);
-      blockedPaths.set(name, expectedFingerprint);
-      throw new Error("file changed during upload; retrying after it settles");
-    }
-    return finalizeSession(status.sessionId, digest, name);
-  } finally {
-    await handle.close();
+  const initial = await withLiveFile(path, expectedFingerprint, async (handle, stats) => {
+    const buffer = Buffer.allocUnsafe(Math.min(CHUNK_BYTES, stats.size));
+    const digest = stats.size > 0 ? await hashFile(handle, buffer, stats.size) : "";
+    return { buffer, digest, size: stats.size };
+  });
+  if (!initial) {
+    log(`defer ${name}: live file changed before ingest started`);
+    return false;
   }
+  if (initial.size === 0) {
+    log(`skip ${name}: zero bytes (partial write?)`);
+    return true;
+  }
+
+  const { buffer, digest, size } = initial;
+  if (done.has(digest)) {
+    log(`skip ${name}: duplicate content already ingested this run`);
+    return true;
+  }
+  if (unresumableDigests.has(digest)) {
+    blockedPaths.set(name, expectedFingerprint);
+    throw new Error("a prior upload of these bytes changed in flight; restart the watcher before retrying");
+  }
+
+  const title = name.replace(/\.[^.]*$/, "") || name;
+  log(`ingesting ${name} (${size} bytes, sha256 ${digest.slice(0, 12)})`);
+  const session = await getOrCreateSession(digest, {
+    title,
+    languageHint: process.env.SUPERSCRIBER_INGEST_WATCH_LANGUAGE?.trim() || "english",
+    source: "upload",
+    fileName: name,
+    mimeType: mimeTypeFor(name),
+    fileSize: size,
+    transcriptModel: process.env.SUPERSCRIBER_TRANSCRIBE_MODEL?.trim() || null,
+  });
+  const { status } = session;
+  if (session.resumed) {
+    const resumedDigest = await withLiveFile(
+      path,
+      expectedFingerprint,
+      (handle) => hashFile(handle, buffer, size),
+    );
+    if (resumedDigest !== digest) {
+      unresumableDigests.add(digest);
+      blockedPaths.set(name, expectedFingerprint);
+      throw new Error("file changed before upload resume; restart the watcher before retrying");
+    }
+  }
+  if (isDurablyFinalized(status)) {
+    return noteFinalized(digest, name, status.warning);
+  }
+  if (status.nextAction === "restart") {
+    unresumableDigests.add(digest);
+    blockedPaths.set(name, expectedFingerprint);
+    throw new Error(`session ${status.sessionId} requires a restart`);
+  }
+  if (status.nextAction === "none") {
+    throw new Error(`session ${status.sessionId} is not resumable or durably finalized`);
+  }
+  if (status.bytesExpected !== size || status.bytesReceived > size) {
+    throw new Error(`session ${status.sessionId} does not match the watched file size`);
+  }
+
+  let offset = status.bytesReceived;
+  while (offset < size) {
+    const chunk = await withLiveFile(
+      path,
+      expectedFingerprint,
+      (handle) => readChunk(handle, buffer, offset, size),
+    );
+    if (!chunk) {
+      unresumableDigests.add(digest);
+      blockedPaths.set(name, expectedFingerprint);
+      throw new Error("file changed during upload; restart the watcher before retrying");
+    }
+    const chunkResponse = await request(`/api/ingest/sessions/${status.sessionId}/chunk`, {
+      method: "PUT",
+      headers: {
+        "content-type": "application/octet-stream",
+        "x-superscriber-byte-start": String(offset),
+      },
+      body: chunk as unknown as BodyInit,
+    });
+    const chunkStatus = await readSessionStatus(chunkResponse, "chunk");
+    if (
+      chunkStatus.sessionId !== status.sessionId ||
+      chunkStatus.bytesReceived <= offset ||
+      chunkStatus.bytesReceived > size
+    ) {
+      throw new Error(`session ${status.sessionId} returned an invalid committed byte offset`);
+    }
+    offset = chunkStatus.bytesReceived;
+  }
+
+  const uploadedDigest = await withLiveFile(
+    path,
+    expectedFingerprint,
+    (handle) => hashFile(handle, buffer, size),
+  );
+  if (uploadedDigest !== digest) {
+    unresumableDigests.add(digest);
+    blockedPaths.set(name, expectedFingerprint);
+    throw new Error("file changed during upload; restart the watcher before retrying");
+  }
+  return finalizeSession(status.sessionId, digest, name);
 }
 
 async function processCandidate(name: string) {

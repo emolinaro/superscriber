@@ -21,6 +21,7 @@ import {
 import { type IngestionSession, type Principal, type Recording, type RecordingSource } from "@/domain/models";
 import type { ErrorCode } from "@/lib/command-result";
 import { dispatchRecordingToConfiguredEngine } from "@/server/orchestration/dispatch";
+import { dispatchWarningFromLastError } from "@/server/orchestration/dispatch-warning";
 import { getConfiguredAdapterId } from "@/server/orchestration/config";
 import { MEDIA_DIR, readState, withState } from "@/server/store";
 
@@ -183,10 +184,9 @@ function buildSessionStatus(state: ReturnType<typeof readState>, sessionId: stri
   const bytesReceived = session.bytesReceived ?? 0;
   const bytesExpected = session.bytesExpected ?? 0;
   const completed = bytesExpected > 0 && bytesReceived >= bytesExpected;
-  const warning =
-    recording.mediaPath && session.lastError
-      ? `Upload stored, but backend dispatch failed: ${session.lastError}`
-      : null;
+  const warning = recording.mediaPath
+    ? dispatchWarningFromLastError(session.lastError)
+    : null;
 
   let nextAction: "resume" | "restart" | "finalize" | "none" = "resume";
   if (session.state === "verification_failed") {

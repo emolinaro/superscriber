@@ -45,7 +45,8 @@ profile, or provision the identity under OIDC and upload manually).
 - `.webm` is treated as `audio/webm` only. Video WebM is unsupported and must
   be converted to a supported video container before entering the drop folder.
 - Files are hashed and uploaded through a bounded 1 MiB buffer. A file that
-  changes during either pass is left unfinalized and retried after it settles.
+  changes during ingest is left unfinalized and is retried only after the
+  watcher process is restarted.
 - An expired app session is renewed once at the request boundary before the
   current session, chunk, or finalize operation is failed and retried later.
 - HTTP requests time out after 30 seconds, and active requests are cancelled
