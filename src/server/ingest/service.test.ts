@@ -107,6 +107,41 @@ describe("resumable ingest service", () => {
     });
   });
 
+  it("attributes upload finalization to the authenticated session owner", async () => {
+    const payload = Buffer.from("watch-lane-upload");
+    const session = createResumableUploadSession({
+      principal: uploaderPrincipal,
+      title: "Folder watch interview",
+      languageHint: "english",
+      transcriptModel: null,
+      source: "upload",
+      fileName: "watch.wav",
+      mimeType: "audio/wav",
+      fileSize: payload.length,
+    });
+    appendUploadChunk({
+      principal: uploaderPrincipal,
+      sessionId: session.sessionId,
+      chunkStart: 0,
+      bytes: payload,
+    });
+
+    await finalizeResumableUploadSession(session.sessionId, uploaderPrincipal);
+
+    const audit = readState().auditEvents.find(
+      (entry) =>
+        entry.recordingId === session.recordingId &&
+        entry.detail === "Upload verified locally and queued for transcription.",
+    );
+    expect(audit).toMatchObject({
+      actorRole: uploaderPrincipal.role,
+      actorUserId: uploaderPrincipal.userId,
+      actorDisplayName: uploaderPrincipal.displayName,
+      effectiveRole: uploaderPrincipal.role,
+      type: "recording.created",
+    });
+  });
+
   it("keeps the chosen transcription model attached to the recording (demo-advanced-model-picker)", () => {
     const session = createResumableUploadSession({
       principal: uploaderPrincipal,

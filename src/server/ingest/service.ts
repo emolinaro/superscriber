@@ -446,6 +446,7 @@ export async function finalizeResumableUploadSession(sessionId: string, principa
       sessionId,
       mediaPath: finalPath,
       mimeType: recording.mimeType,
+      principal,
     });
 
     return {

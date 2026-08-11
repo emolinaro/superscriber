@@ -424,6 +424,7 @@ export function finalizeUploadSession(params: {
   sessionId: string;
   mediaPath: string;
   mimeType: string | null;
+  principal: Principal;
 }) {
   const { session, recording, job } = resolveUploadRefs(params.state, params.sessionId);
   const timestamp = nowIso();
@@ -453,7 +454,7 @@ export function finalizeUploadSession(params: {
   addAuditEvent(params.state, {
     workspaceId: recording.workspaceId,
     recordingId: recording.id,
-    actorRole: recording.uploadedByRole,
+    actor: actorContextForPrincipal(params.principal),
     type: "recording.created",
     detail: verificationSummary,
   });

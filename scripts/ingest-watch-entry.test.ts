@@ -1,4 +1,4 @@
-import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
+import { spawn, type ChildProcess } from "node:child_process";
 import { chmod, mkdir, mkdtemp, rename, rm, symlink, writeFile } from "node:fs/promises";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import { tmpdir } from "node:os";
@@ -7,7 +7,7 @@ import { afterEach, expect, test } from "vitest";
 import { BoundedFetch, resolveIngestWatchBaseUrl } from "./ingest-watch-http";
 
 const CHUNK_BYTES = 1024 * 1024;
-const children = new Set<ChildProcessWithoutNullStreams>();
+const children = new Set<ChildProcess>();
 const servers = new Set<Server>();
 const temporaryDirectories = new Set<string>();
 
@@ -323,7 +323,7 @@ async function waitFor(predicate: () => boolean, description: string, timeoutMs 
   throw new Error(`Timed out waiting for ${description}.`);
 }
 
-async function waitForExit(child: ChildProcessWithoutNullStreams, timeoutMs = 3_000) {
+async function waitForExit(child: ChildProcess, timeoutMs = 3_000) {
   await waitFor(
     () => child.exitCode !== null || child.signalCode !== null,
     "watcher process to exit",
