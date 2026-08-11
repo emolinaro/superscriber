@@ -515,10 +515,15 @@ describe("getCasefile", () => {
       );
       expect(deepLinked?.revision?.id).toBe(approvedRevisionId);
       expect(deepLinked?.revision?.segments).toBeDefined();
+      // The viewed snapshot is archived, but the view model still exposes the
+      // LIVE ledger-active revision id separately so the UI can distinguish
+      // 'currently viewed' from 'active' (governance copy on deep links).
+      expect(deepLinked?.activeRevisionId).toBe(reopenedRevisionId);
 
       // The default view is unaffected.
       const defaultView = getCasefile(admin, "rec-1", {}, bundle.db);
       expect(defaultView?.revision?.id).toBe(reopenedRevisionId);
+      expect(defaultView?.activeRevisionId).toBe(reopenedRevisionId);
 
       // An active assignee ignores the deep link: pinned to the current revision.
       const reviewerView = getCasefile(
@@ -528,6 +533,7 @@ describe("getCasefile", () => {
         bundle.db,
       );
       expect(reviewerView?.revision?.id).toBe(reopenedRevisionId);
+      expect(reviewerView?.activeRevisionId).toBe(reopenedRevisionId);
     } finally {
       bundle.sqlite.close();
     }

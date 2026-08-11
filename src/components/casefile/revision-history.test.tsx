@@ -80,6 +80,39 @@ describe("RevisionHistory (demo-governance-bringback)", () => {
     );
   });
 
+  it("labels the viewed snapshot as 'Currently viewed' (not 'Active') on a historical deep link", async () => {
+    // Regression: on ?revision=<archived id> the read model swaps
+    // casefile.revision to the VIEWED revision; the drawer must still label
+    // 'Active' by the live activeRevisionId and diff 'vs active' against the
+    // live active revision's segments, not the viewed snapshot's.
+    const user = userEvent.setup();
+    const casefile = createCasefile(buildOverrides("admin_oversight"));
+    casefile.activeRevisionId = "rev-1";
+    casefile.revision = casefile.revisions[1]; // viewed snapshot = archived v1
+    render(<RevisionHistory casefile={casefile} />);
+
+    const rows = screen.getAllByRole("listitem");
+    const activeRow = rows.find((row) => row.textContent?.includes("v2"))!;
+    const viewedRow = rows.find((row) => row.textContent?.includes("v1"))!;
+
+    expect(
+      activeRow.querySelector('[data-tone="success"]'),
+    ).toHaveTextContent("Active");
+    expect(viewedRow.querySelector('[data-tone="success"]')).toBeNull();
+    expect(viewedRow).toHaveTextContent("Currently viewed");
+    expect(viewedRow).toHaveTextContent("Superseded");
+
+    // 'Diff vs active' on the viewed row still compares against the LIVE
+    // active revision (v2 segments), not the viewed snapshot's own segments.
+    await user.click(screen.getByTestId("diff-toggle-v1"));
+    const diffRows = screen
+      .getByRole("list", { name: "Diff of v1 against the active revision" })
+      .querySelectorAll("li");
+    expect(diffRows).toHaveLength(2);
+    expect(diffRows[0]).toHaveAttribute("data-marker", "changed");
+    expect(diffRows[1]).toHaveAttribute("data-marker", "same");
+  });
+
   it("diffs an archived revision against the active one inline", async () => {
     const user = userEvent.setup();
     render(<RevisionHistory casefile={createCasefile(buildOverrides("active_reviewer"))} />);

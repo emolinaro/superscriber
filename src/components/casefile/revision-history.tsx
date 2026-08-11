@@ -61,8 +61,15 @@ export function RevisionHistory({ casefile }: { casefile: CasefileViewModel }) {
   const [error, setError] = useState<string | null>(null);
   const [pending, startTransition] = useTransition();
 
-  const currentSegments = casefile.revision?.segments ?? [];
   const isAdmin = casefile.access.kind === "admin_oversight";
+  // "Diff vs active" must compare against the LIVE ledger-active revision,
+  // not the viewed one: on a ?revision=<archived id> deep link, the read
+  // model swaps `casefile.revision` to the viewed snapshot, so use
+  // `activeRevisionId` (the live recording.currentRevisionId) and look up its
+  // segments in the lineage list (all rows carry segment bodies).
+  const activeSegments =
+    casefile.revisions.find((revision) => revision.id === casefile.activeRevisionId)?.segments ??
+    [];
 
   function runRecover(source: CasefileRevisionViewModel) {
     setError(null);
@@ -91,10 +98,11 @@ export function RevisionHistory({ casefile }: { casefile: CasefileViewModel }) {
     <>
       <ul className="governance-panel__items revision-history">
         {casefile.revisions.map((revision) => {
-          const isActive = revision.id === casefile.revision?.id;
+          const isActive = revision.id === casefile.activeRevisionId;
+          const isViewed = revision.id === casefile.revision?.id;
           const diffRows =
             diffFor === revision.id && revision.segments
-              ? diffSegments(currentSegments, revision.segments)
+              ? diffSegments(activeSegments, revision.segments)
               : null;
           return (
             <li className="revision-history__row" key={revision.id}>
@@ -105,6 +113,9 @@ export function RevisionHistory({ casefile }: { casefile: CasefileViewModel }) {
                   <span className="status-badge" data-tone="success">
                     Active
                   </span>
+                ) : null}
+                {isViewed && !isActive ? (
+                  <span className="status-badge">Currently viewed</span>
                 ) : null}
                 <span className="revision-history__date">{revision.createdAtLabel}</span>
               </div>

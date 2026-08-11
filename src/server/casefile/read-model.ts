@@ -212,6 +212,11 @@ export type CasefileViewModel = {
     reopenLabel: string;
   };
   revision: CasefileRevisionViewModel | null;
+  /** The LIVE ledger-active revision id (recording.currentRevisionId). On a
+     ?revision=<archived id> deep link, `revision` above is the VIEWED snapshot,
+     so consumers distinguishing "currently viewed" from "active" must use
+     this id (D-8 deep links). */
+  activeRevisionId: string | null;
   revisions: CasefileRevisionViewModel[];
   /** demo-diff-highlights (casefile UX batch): inline "Edited vs vN" markers
      on the viewed revision, when it derives from an in-casefile parent. */
@@ -931,6 +936,7 @@ export function getCasefile(
     revision: selectedRevision
       ? toRevisionViewModel(selectedRevision, userDisplayMap, { includeSegments: true })
       : null,
+    activeRevisionId: recording.currentRevisionId,
     revisions:
       grant.kind === "uploader_status"
         ? []

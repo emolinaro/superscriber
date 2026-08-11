@@ -120,6 +120,7 @@ export function createCasefile(overrides: Record<string, unknown> = {}) {
       basedOnRevisionId: null,
       segments: baseSegments,
     },
+    activeRevisionId: "rev-1",
     revisions: [
       {
         id: "rev-1",
