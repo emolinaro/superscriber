@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import {
   closeSync,
   existsSync,
@@ -20,6 +21,7 @@ import {
 import { type IngestionSession, type Principal, type Recording, type RecordingSource } from "@/domain/models";
 import type { ErrorCode } from "@/lib/command-result";
 import { dispatchRecordingToConfiguredEngine } from "@/server/orchestration/dispatch";
+import { dispatchWarningFromLastError } from "@/server/orchestration/dispatch-warning";
 import { getConfiguredAdapterId } from "@/server/orchestration/config";
 import { MEDIA_DIR, readState, withState } from "@/server/store";
 
@@ -182,6 +184,9 @@ function buildSessionStatus(state: ReturnType<typeof readState>, sessionId: stri
   const bytesReceived = session.bytesReceived ?? 0;
   const bytesExpected = session.bytesExpected ?? 0;
   const completed = bytesExpected > 0 && bytesReceived >= bytesExpected;
+  const warning = recording.mediaPath
+    ? dispatchWarningFromLastError(session.lastError)
+    : null;
 
   let nextAction: "resume" | "restart" | "finalize" | "none" = "resume";
   if (session.state === "verification_failed") {
@@ -205,6 +210,7 @@ function buildSessionStatus(state: ReturnType<typeof readState>, sessionId: stri
       bytesExpected > 0 ? Math.min(Math.round((bytesReceived / bytesExpected) * 100), 100) : 0,
     resumeToken: session.resumeToken,
     nextAction,
+    warning,
     verificationSummary: session.verificationSummary,
     title: recording.title,
     source: recording.source,
@@ -253,6 +259,15 @@ function assertSessionAccess(
   );
 }
 
+function idempotentSessionId(userId: string, idempotencyKey: string) {
+  const digest = createHash("sha256")
+    .update(userId)
+    .update("\0")
+    .update(idempotencyKey)
+    .digest("hex");
+  return `ingest-idempotent-${digest}`;
+}
+
 export function createResumableUploadSession(params: {
   principal: Principal;
   title: string;
@@ -263,13 +278,27 @@ export function createResumableUploadSession(params: {
   fileName: string;
   mimeType: string | null;
   fileSize: number;
+  idempotencyKey?: string | null;
 }) {
   assertUploaderOrAdmin(params.principal);
   const title = validateTitle(params.title);
   ensureUploadDirs();
+  const requestedSessionId = params.idempotencyKey
+    ? idempotentSessionId(params.principal.userId, params.idempotencyKey)
+    : null;
 
   const result = withState((state) => {
     cleanupExpiredUploadsInState(state);
+    if (requestedSessionId) {
+      const existing = state.ingestionSessions.find((entry) => entry.id === requestedSessionId);
+      if (existing) {
+        assertSessionAccess(existing, params.principal, "mutate");
+        return {
+          created: false,
+          sessionId: existing.id,
+        };
+      }
+    }
 
     const created = createUploadSessionEntry({
       state,
@@ -284,15 +313,18 @@ export function createResumableUploadSession(params: {
       principal: params.principal,
       bytesExpected: params.fileSize,
       adapterId: getConfiguredAdapterId(),
+      sessionId: requestedSessionId ?? undefined,
     });
 
     return {
+      created: true,
       sessionId: created.ingestionSession.id,
-      recordingId: created.recording.id,
     };
   });
 
-  writeFileSync(uploadTempPath(result.sessionId), Buffer.alloc(0));
+  if (result.created) {
+    writeFileSync(uploadTempPath(result.sessionId), Buffer.alloc(0));
+  }
   const refreshed = readState();
   return buildSessionStatus(refreshed, result.sessionId);
 }
@@ -414,6 +446,7 @@ export async function finalizeResumableUploadSession(sessionId: string, principa
       sessionId,
       mediaPath: finalPath,
       mimeType: recording.mimeType,
+      principal,
     });
 
     return {

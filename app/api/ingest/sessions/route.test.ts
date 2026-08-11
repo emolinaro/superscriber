@@ -16,12 +16,15 @@ import type { Principal } from "@/domain/models";
 
 let uploaderPrincipal: Principal;
 
-function callPost(body: unknown) {
+function callPost(body: unknown, idempotencyKey?: string) {
   return import("./route").then(({ POST }) =>
     POST(
       new Request("http://localhost/api/ingest/sessions", {
         method: "POST",
-        headers: { "content-type": "application/json" },
+        headers: {
+          "content-type": "application/json",
+          ...(idempotencyKey ? { "x-superscriber-idempotency-key": idempotencyKey } : {}),
+        },
         body: JSON.stringify(body),
       }),
     ),
@@ -133,5 +136,23 @@ describe("ingest session route (demo-model-tier-picker)", () => {
       (entry) => entry.id === createdDefault.status.recordingId,
     );
     expect(recordingDefault?.transcriptModel).toBeNull();
+  });
+
+  it("returns the same session for a repeated idempotency key", async () => {
+    vi.mocked(getActivePrincipal).mockResolvedValue(uploaderPrincipal);
+    const idempotencyKey = "watch-run-1:stable-content-digest";
+
+    const firstResponse = await callPost(VALID_BODY, idempotencyKey);
+    const secondResponse = await callPost(VALID_BODY, idempotencyKey);
+    expect(firstResponse.status).toBe(200);
+    expect(secondResponse.status).toBe(200);
+    const first = (await firstResponse.json()) as { status: { sessionId: string } };
+    const second = (await secondResponse.json()) as { status: { sessionId: string } };
+
+    expect(second.status.sessionId).toBe(first.status.sessionId);
+    const { readState } = await import("@/server/store");
+    expect(
+      readState().recordings.filter((entry) => entry.title === VALID_BODY.title),
+    ).toHaveLength(1);
   });
 });

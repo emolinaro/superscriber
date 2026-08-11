@@ -99,6 +99,7 @@ function createIngestionSession(
   mediaBytes: number | null,
   adapterId: string,
   options?: {
+    id?: string;
     state?: IngestionSession["state"];
     verificationSummary?: string;
     bytesReceived?: number | null;
@@ -109,7 +110,7 @@ function createIngestionSession(
   const timestamp = nowIso();
   const nextState = options?.state ?? "verifying";
   return {
-    id: createId("ingest"),
+    id: options?.id ?? createId("ingest"),
     recordingId: recording.id,
     source: recording.source,
     state: nextState,
@@ -283,6 +284,7 @@ export function createUploadSessionEntry(params: {
   principal: Principal;
   bytesExpected: number;
   adapterId?: string;
+  sessionId?: string;
 }) {
   const adapterId = params.adapterId ?? "mock-governed-engine";
   const timestamp = nowIso();
@@ -314,6 +316,7 @@ export function createUploadSessionEntry(params: {
   };
 
   const ingestionSession = createIngestionSession(recording, params.bytesExpected, adapterId, {
+    id: params.sessionId,
     state: "uploading",
     verificationSummary:
       "Upload session started. Continue from the last committed byte if the transfer is interrupted.",
@@ -421,6 +424,7 @@ export function finalizeUploadSession(params: {
   sessionId: string;
   mediaPath: string;
   mimeType: string | null;
+  principal: Principal;
 }) {
   const { session, recording, job } = resolveUploadRefs(params.state, params.sessionId);
   const timestamp = nowIso();
@@ -450,7 +454,7 @@ export function finalizeUploadSession(params: {
   addAuditEvent(params.state, {
     workspaceId: recording.workspaceId,
     recordingId: recording.id,
-    actorRole: recording.uploadedByRole,
+    actor: actorContextForPrincipal(params.principal),
     type: "recording.created",
     detail: verificationSummary,
   });

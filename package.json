@@ -14,6 +14,7 @@
     "e2e:container": "bash scripts/run-e2e-appliance.sh test",
     "typecheck": "tsc --noEmit",
     "identity:import": "tsx scripts/identity-import.ts",
+    "ingest:watch": "tsx scripts/ingest-watch-entry.ts",
     "auth:revoke": "tsx scripts/auth-revoke.ts",
     "break-glass:designate": "tsx scripts/break-glass.ts designate",
     "break-glass:transfer": "tsx scripts/break-glass.ts transfer",

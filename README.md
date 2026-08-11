@@ -167,6 +167,7 @@ The default build prefetches the configured model into the image. Runtime downlo
 - `npm run e2e:install` — install the local Chromium browser for Playwright
 - `npm run e2e:container` — build and test the single Docker image end to end
 - `npm run identity:import` - dry-run or apply Authentik identity-link mappings
+- `npm run ingest:watch` - run governed folder-watch ingest ([operator runbook](./docs/operators/ingest-watch.md))
 - `npm run auth:revoke` - revoke all sessions for a user (incident response)
 - `npm run break-glass:designate` - designate the single break-glass admin
 - `npm run break-glass:transfer` - atomically transfer the break-glass designation
@@ -182,14 +183,14 @@ The default build prefetches the configured model into the image. Runtime downlo
 - [`src/server/`](./src/server/) — auth, access, persistence, ingest, orchestration, casefile, and work-inbox logic
 - [`data/`](./data/) — local SQLite data, secrets, temp uploads, and media files
 - [`worker/`](./worker/) — internal Python transcription worker
-- [`scripts/`](./scripts/) — container/runtime helpers and operator auth commands (identity import, session revoke, break-glass)
+- [`scripts/`](./scripts/) - container/runtime helpers, operator commands, and governed folder-watch ingest
 
 ## Project Docs
 
 - [`CHANGELOG.md`](./CHANGELOG.md) — release history and shipped behavior notes
 - [`DESIGN.md`](./DESIGN.md) — design record and behavioral contract for the governed casefile workspace
 - [`TODOS.md`](./TODOS.md) — deferred follow-on work after the current appliance release
-- [`docs/operators/`](./docs/operators/) - operator runbooks for Authentik OIDC deployment, identity linking, break-glass, the no-mail profile, password reset, and auth outage and rollback
+- [`docs/operators/`](./docs/operators/) - operator runbooks for authentication and account recovery, including [governed folder-watch ingest](./docs/operators/ingest-watch.md)
 
 ## Orchestration Modes
 

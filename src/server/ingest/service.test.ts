@@ -11,6 +11,7 @@ import {
 } from "@/server/ingest/service";
 import { createLocalUser, toPrincipal } from "@/server/auth/service";
 import { resetAppDatabaseForTests } from "@/server/db/client";
+import { noteOrchestrationDispatchFailure } from "@/server/orchestration/service";
 import { readState, withState } from "@/server/store";
 
 const { dispatchRecordingToConfiguredEngineMock } = vi.hoisted(() => ({
@@ -97,6 +98,41 @@ describe("resumable ingest service", () => {
     expect(recording?.uploadedByRole).toBe("uploader");
     expect(recording?.uploadedByUserId).toBe(uploaderPrincipal.userId);
     expect(ingest?.createdByUserId).toBe(uploaderPrincipal.userId);
+    expect(audit).toMatchObject({
+      actorRole: uploaderPrincipal.role,
+      actorUserId: uploaderPrincipal.userId,
+      actorDisplayName: uploaderPrincipal.displayName,
+      effectiveRole: uploaderPrincipal.role,
+      type: "recording.created",
+    });
+  });
+
+  it("attributes upload finalization to the authenticated session owner", async () => {
+    const payload = Buffer.from("watch-lane-upload");
+    const session = createResumableUploadSession({
+      principal: uploaderPrincipal,
+      title: "Folder watch interview",
+      languageHint: "english",
+      transcriptModel: null,
+      source: "upload",
+      fileName: "watch.wav",
+      mimeType: "audio/wav",
+      fileSize: payload.length,
+    });
+    appendUploadChunk({
+      principal: uploaderPrincipal,
+      sessionId: session.sessionId,
+      chunkStart: 0,
+      bytes: payload,
+    });
+
+    await finalizeResumableUploadSession(session.sessionId, uploaderPrincipal);
+
+    const audit = readState().auditEvents.find(
+      (entry) =>
+        entry.recordingId === session.recordingId &&
+        entry.detail === "Upload verified locally and queued for transcription.",
+    );
     expect(audit).toMatchObject({
       actorRole: uploaderPrincipal.role,
       actorUserId: uploaderPrincipal.userId,
@@ -396,10 +432,51 @@ describe("resumable ingest service", () => {
     expect(finalized.integrityState).toBe("verified");
     expect(finalized.warning).toBe("Upload stored, but backend dispatch failed: Engine unavailable.");
 
+    withState((state) => {
+      noteOrchestrationDispatchFailure(session.recordingId, "Engine unavailable.", state);
+    });
+    const persisted = readState().ingestionSessions.find((entry) => entry.id === session.sessionId);
+    expect(persisted?.lastError).toBe("Backend dispatch failed: Engine unavailable.");
+    expect(getResumableUploadSession(session.sessionId, uploaderPrincipal).warning).toBe(
+      "Upload stored, but backend dispatch failed: Engine unavailable.",
+    );
+
     const state = readState();
     const recording = state.recordings.find((entry) => entry.id === session.recordingId);
     expect(recording?.mediaPath).toBeTruthy();
     expect(readFileSync(recording?.mediaPath ?? "", "utf8")).toBe("governed-upload");
+  });
+
+  it("does not label a post-storage verification error as a dispatch warning", async () => {
+    const payload = Buffer.from("verified-before-engine-error");
+    const session = createResumableUploadSession({
+      principal: uploaderPrincipal,
+      title: "Interview verification error",
+      languageHint: "english",
+      transcriptModel: null,
+      source: "upload",
+      fileName: "interview.wav",
+      mimeType: "audio/wav",
+      fileSize: payload.length,
+    });
+    appendUploadChunk({
+      principal: uploaderPrincipal,
+      sessionId: session.sessionId,
+      chunkStart: 0,
+      bytes: payload,
+    });
+    await finalizeResumableUploadSession(session.sessionId, uploaderPrincipal);
+
+    withState((state) => {
+      const ingest = state.ingestionSessions.find((entry) => entry.id === session.sessionId);
+      if (!ingest) {
+        throw new Error("Expected ingest session.");
+      }
+      ingest.lastError = "Engine verification rejected the media.";
+      ingest.verificationSummary = "Engine verification rejected the media.";
+    });
+
+    expect(getResumableUploadSession(session.sessionId, uploaderPrincipal).warning).toBeNull();
   });
 
   it("expires stale incomplete uploads and forces restart", () => {
