@@ -6,6 +6,7 @@ import type { TranscriptSegment } from "@/domain/models";
 import { Modal } from "@/components/ui/modal";
 import { InlineNotice } from "@/components/ui/inline-notice";
 import { formatSegmentWindow } from "@/lib/format";
+import { appendQueryMessages } from "@/lib/navigation-path";
 import { recoverRevisionAction } from "@/server/actions/administration-actions";
 import type { CasefileRevisionViewModel, CasefileViewModel } from "@/server/casefile/read-model";
 
@@ -89,7 +90,7 @@ export function RevisionHistory({ casefile }: { casefile: CasefileViewModel }) {
       // (same failure class the danger-zone callout names). A hard
       // navigation unloads the page outright - no race.
       window.location.assign(
-        `/recordings/${casefile.recordingId}?notice=${encodeURIComponent("Recovered revision draft is now active.")}`,
+        appendQueryMessages(result.data.href, { notice: result.notice }),
       );
     });
   }

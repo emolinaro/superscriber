@@ -5,6 +5,7 @@ import { useRef, useState, useTransition } from "react";
 import { deleteRecordingAction } from "@/server/actions/administration-actions";
 import { InlineNotice } from "@/components/ui/inline-notice";
 import { Modal } from "@/components/ui/modal";
+import { appendQueryMessages } from "@/lib/navigation-path";
 
 // demo-recording-remove: admin-only permanent deletion UI, mounted on the
 // casefile only for admin_oversight. The typed-confirm phrase is the exact
@@ -114,7 +115,9 @@ export function RecordingDangerZone({
                   // which now 404s (the recording is gone) and wedges the
                   // transition pending state forever (captain-caught hang).
                   // A hard navigation unloads the page outright - no race.
-                  window.location.assign(result.data.href);
+                  window.location.assign(
+                    appendQueryMessages(result.data.href, { notice: result.notice }),
+                  );
                 });
               }}
               type="button"

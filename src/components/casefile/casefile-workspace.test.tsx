@@ -36,7 +36,7 @@ vi.mock("@/components/orchestration-status-poller", () => ({
   },
 }));
 
-function renderWorkspace(overrides: Record<string, unknown> = {}) {
+function renderWorkspace(overrides: Record<string, unknown> = {}, pageNotice?: string) {
   const saveAction = vi.fn();
   const submitAction = vi.fn();
   const withdrawAction = vi.fn();
@@ -52,6 +52,7 @@ function renderWorkspace(overrides: Record<string, unknown> = {}) {
       enterAdminActionModeAction={enterAdminActionModeAction}
       exitAdminActionModeAction={exitAdminActionModeAction}
       initialCasefile={createCasefile(overrides)}
+      pageNotice={pageNotice}
       reopenAction={reopenAction}
       requestChangesAction={requestChangesAction}
       saveAction={saveAction}
@@ -169,6 +170,14 @@ describe("CasefileWorkspace", () => {
 
   afterEach(() => {
     vi.restoreAllMocks();
+  });
+
+  it("renders a page-level success notice from the recording route", () => {
+    renderWorkspace({}, "Recovered archived content into active draft v3; history kept.");
+
+    expect(screen.getByText("Recovered archived content into active draft v3; history kept.")).toHaveTextContent(
+      "Recovered archived content into active draft v3; history kept.",
+    );
   });
 
   it.each([

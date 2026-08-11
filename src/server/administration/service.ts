@@ -27,7 +27,7 @@ import {
 } from "@/server/db/mappers";
 import { mkdirSync, unlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { and, desc, eq, isNull, sql } from "drizzle-orm";
+import { and, desc, eq, isNotNull, isNull, or, sql } from "drizzle-orm";
 import {
   adminActionSessions,
   approvals,
@@ -355,6 +355,13 @@ function assignmentCompatibility(
 // sessions, and media are untouched. The reset ITSELF keeps exactly one
 // surviving record in security_events (actor, counts, snapshot path,
 // timestamp) so the namespace never lies.
+function endedAssignmentPredicate() {
+  return or(
+    eq(recordingAssignments.status, "completed"),
+    isNotNull(recordingAssignments.endReason),
+  );
+}
+
 function ledgerCounts(db: AppDatabase) {
   return {
     auditEvents: db.select({ id: auditEvents.id }).from(auditEvents).all().length,
@@ -366,7 +373,7 @@ function ledgerCounts(db: AppDatabase) {
     endedAssignments: db
       .select({ id: recordingAssignments.id })
       .from(recordingAssignments)
-      .where(sql`${recordingAssignments.endReason} IS NOT NULL`)
+      .where(endedAssignmentPredicate())
       .all().length,
     securityEvents: db.select({ id: securityEvents.id }).from(securityEvents).all().length,
   };
@@ -421,7 +428,7 @@ export function resetWorkspaceLedger(
       endedAssignments: db
         .select()
         .from(recordingAssignments)
-        .where(sql`${recordingAssignments.endReason} IS NOT NULL`)
+        .where(endedAssignmentPredicate())
         .all(),
       securityEvents: db.select().from(securityEvents).all(),
     },
@@ -434,7 +441,7 @@ export function resetWorkspaceLedger(
     tx.delete(adminActionSessions).run();
     tx
       .delete(recordingAssignments)
-      .where(sql`${recordingAssignments.endReason} IS NOT NULL`)
+      .where(endedAssignmentPredicate())
       .run();
     tx.delete(securityEvents).run();
 

@@ -972,6 +972,53 @@ describe("ledger reset (demo-governance-bringback)", () => {
         email: "ada@example.com",
         role: "admin",
       });
+      const approver = await createPrincipal(bundle.db, {
+        displayName: "Ari Approver",
+        email: "ari@example.com",
+        role: "approver",
+      });
+      const reviewer = await createPrincipal(bundle.db, {
+        displayName: "Riley Reviewer",
+        email: "riley@example.com",
+        role: "reviewer",
+      });
+      insertRecording(bundle, {
+        recordingId: "rec-reset",
+        title: "Ledger reset fixture",
+        uploadedByUserId: admin.userId,
+        currentRevisionId: "rev-reset",
+        currentRevisionState: "approved",
+        approvedRevisionId: "rev-reset",
+        updatedAt: FIXED_NOW,
+      });
+      insertAssignment(bundle, {
+        id: "assignment-completed",
+        recordingId: "rec-reset",
+        userId: approver.userId,
+        assignedByUserId: admin.userId,
+        role: "approver",
+        status: "completed",
+        completedRevisionId: "rev-reset",
+        updatedAt: FIXED_NOW,
+      });
+      insertAssignment(bundle, {
+        id: "assignment-removed",
+        recordingId: "rec-reset",
+        userId: reviewer.userId,
+        assignedByUserId: admin.userId,
+        role: "reviewer",
+        status: "removed",
+        updatedAt: FIXED_NOW,
+      });
+      insertAssignment(bundle, {
+        id: "assignment-active",
+        recordingId: "rec-reset",
+        userId: reviewer.userId,
+        assignedByUserId: admin.userId,
+        role: "reviewer",
+        status: "active",
+        updatedAt: FIXED_NOW,
+      });
 
       bundle.db.insert(auditEvents).values({
         id: "a1", workspaceId: "workspace-1", recordingId: null, type: "recording.created",
@@ -997,6 +1044,7 @@ describe("ledger reset (demo-governance-bringback)", () => {
         snapshotDir,
       );
       expect(result.before.auditEvents).toBe(1);
+      expect(result.before.endedAssignments).toBe(2);
       expect(result.before.securityEvents).toBe(1);
 
       // The pre-wipe snapshot (D-5 compensating control) holds every cleared row.
@@ -1006,14 +1054,21 @@ describe("ledger reset (demo-governance-bringback)", () => {
       };
       expect(snapshot.type).toBe("ledger.reset");
       expect(snapshot.tables.auditEvents).toHaveLength(1);
+      expect(snapshot.tables.endedAssignments).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ id: "assignment-completed" }),
+          expect.objectContaining({ id: "assignment-removed" }),
+        ]),
+      );
+      expect(snapshot.tables.endedAssignments).toHaveLength(2);
       expect(snapshot.tables.securityEvents).toHaveLength(1);
 
       expect(bundle.db.select().from(auditEvents).all()).toHaveLength(0);
       expect(bundle.db.select().from(approvals).all()).toHaveLength(0);
       expect(bundle.db.select().from(adminActionSessions).all()).toHaveLength(0);
-      expect(
-        bundle.db.select().from(recordingAssignments).all(),
-      ).toHaveLength(0);
+      expect(bundle.db.select().from(recordingAssignments).all()).toEqual([
+        expect.objectContaining({ id: "assignment-active" }),
+      ]);
 
       const surviving = bundle.db.select().from(securityEvents).all();
       expect(surviving).toHaveLength(1);

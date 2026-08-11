@@ -76,7 +76,7 @@ describe("RecordingDangerZone (demo-governance-bringback)", () => {
 
     mockDelete.mockResolvedValueOnce({
       ok: true,
-      data: { href: "/", userId: "user-admin" },
+      data: { href: "/workspace", userId: "user-admin" },
       notice: 'Permanently deleted "Quarterly Review" and 1 revision; the ledger retains one deletion record and the pre-delete export snapshot.',
     });
 
@@ -89,6 +89,8 @@ describe("RecordingDangerZone (demo-governance-bringback)", () => {
     await user.click(screen.getByRole("button", { name: "Delete permanently" }));
 
     // Full unload, not a client-side RSC refresh of a 404'd page.
-    expect(assign).toHaveBeenCalledWith("/");
+    expect(assign).toHaveBeenCalledWith(
+      "/workspace?notice=Permanently+deleted+%22Quarterly+Review%22+and+1+revision%3B+the+ledger+retains+one+deletion+record+and+the+pre-delete+export+snapshot.",
+    );
   });
 });

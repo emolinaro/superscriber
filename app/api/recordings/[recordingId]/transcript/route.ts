@@ -157,11 +157,12 @@ export async function GET(
         sql`${revisions.id} = ${requestedRevisionId} AND ${revisions.recordingId} = ${recordingId}`,
       )
       .get();
-    if (row) {
-      exportRevision = toRevision(row);
+    if (!row) {
+      return new NextResponse("Requested transcript revision is not available for export.", {
+        status: 409,
+      });
     }
-    // Stray revision ids that do not belong to this casefile fall back to
-    // the approved default (pre-existing caller tolerance).
+    exportRevision = toRevision(row);
   }
 
   if (

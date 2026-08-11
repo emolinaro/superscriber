@@ -170,8 +170,11 @@ describe("RevisionHistory (demo-governance-bringback)", () => {
     });
     // Hard navigation (not router.push inside the async transition - that
     // races the casefile's RSC refresh and wedges on the client).
-    await vi.waitFor(() => expect(assign).toHaveBeenCalledWith(expect.stringContaining("notice=")));
-    await vi.waitFor(() => expect(assign).toHaveBeenCalledWith(expect.stringContaining("Recovered%20revision%20draft")));
+    await vi.waitFor(() =>
+      expect(assign).toHaveBeenCalledWith(
+        "/recordings/rec-1?notice=Recovered+archived+content+into+active+draft+v3%3B+history+kept.",
+      ),
+    );
     if (locationDescriptor) {
       Object.defineProperty(window, "location", locationDescriptor);
     }

@@ -370,7 +370,7 @@ describe("GET /api/recordings/[recordingId]/transcript", () => {
 
     const response = await GET(
       new Request(
-        `https://example.test/api/recordings/rec-1/transcript?format=txt&actionModeId=${actionMode.id}&revisionId=rev-legacy`,
+        `https://example.test/api/recordings/rec-1/transcript?format=txt&actionModeId=${actionMode.id}`,
       ),
       { params: Promise.resolve({ recordingId: "rec-1" }) },
     );
@@ -408,6 +408,20 @@ describe("GET /api/recordings/[recordingId]/transcript", () => {
     });
     expect(rows[0]?.metadata).toContain('"expectedApprovedRevisionId":"rev-approved"');
     expect(rows[0]?.metadata).toContain('"format":"txt"');
+  });
+
+  it("rejects an explicit revision id outside the recording without exporting or auditing", async () => {
+    const response = await GET(
+      new Request(
+        "https://example.test/api/recordings/rec-1/transcript?format=txt&revisionId=rev-legacy",
+      ),
+      { params: Promise.resolve({ recordingId: "rec-1" }) },
+    );
+
+    expect(response.status).toBe(409);
+    expect(await response.text()).toBe("Requested transcript revision is not available for export.");
+    expect(buildApprovedTranscriptExportMock).not.toHaveBeenCalled();
+    expect(exportAuditRows()).toHaveLength(0);
   });
 
   it("exports any named revision under the same authority, with revision attribution (demo-governance-bringback)", async () => {

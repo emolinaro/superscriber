@@ -37,8 +37,7 @@ function triggerObjectUrlDownload(blob: Blob, fileName: string) {
 
 export function ExportDialog({
   actionModeId,
-  approvedAt,
-  approvedBy,
+  approvalDecisions,
   onAnnouncement,
   onClose,
   onSessionRecoveryRequested,
@@ -49,8 +48,11 @@ export function ExportDialog({
   hasApprovedRevision,
 }: {
   actionModeId: string | null;
-  approvedAt: string | null;
-  approvedBy: string | null;
+  approvalDecisions: Array<{
+    revisionId: string;
+    state: string;
+    actorDisplay: string;
+  }>;
   onAnnouncement: (message: string) => void;
   onClose: () => void;
   onSessionRecoveryRequested: () => void;
@@ -59,7 +61,13 @@ export function ExportDialog({
   revision: { version: number; id: string } | null;
   /** Version history (demo-governance-bringback): revision picker for the
      export surface. */
-  revisionOptions: Array<{ id: string; version: number; state: string; stateLabel: string }>;
+  revisionOptions: Array<{
+    id: string;
+    version: number;
+    state: string;
+    stateLabel: string;
+    approvedAt: string | null;
+  }>;
   /** Export affordance (demo-governance-bringback): honest empty state when
      nothing is approved yet. */
   hasApprovedRevision: boolean;
@@ -76,29 +84,32 @@ export function ExportDialog({
   const buttonRefs = useRef(new Map<ApprovedTranscriptExportFormat, HTMLButtonElement>());
   const pendingRef = useRef(false);
   const isPending = pendingFormat !== null;
-  const viewedOption = revision
-    ? revisionOptions.find((option) => option.id === revision.id) ?? null
-    : null;
-  const viewedIsApproved = viewedOption?.state === "approved";
+  const selectedRevision =
+    revisionOptions.find((option) => option.id === selectedRevisionId) ?? null;
+  const selectedApprovalDecision = approvalDecisions.find(
+    (decision) =>
+      decision.revisionId === selectedRevisionId && decision.state === "approved",
+  );
+  const selectedIsApproved = selectedRevision?.state === "approved";
   const metadataCopy = useMemo(() => {
-    if (!revision) {
+    if (!selectedRevision) {
       return "No revision exists yet for this casefile.";
     }
 
-    if (!viewedIsApproved) {
+    if (!selectedIsApproved) {
       return "This revision is not the approved record; its export is still attributed in the audit.";
     }
 
-    if (approvedBy) {
-      return `${approvedBy} approved revision v${revision.version}.`;
+    if (selectedApprovalDecision) {
+      return `${selectedApprovalDecision.actorDisplay} approved revision v${selectedRevision.version}.`;
     }
 
-    if (approvedAt) {
-      return `Legacy approval metadata is incomplete for revision v${revision.version}. Approved at ${formatDateTimeUtc(approvedAt)}.`;
+    if (selectedRevision.approvedAt) {
+      return `Legacy approval metadata is incomplete for revision v${selectedRevision.version}. Approved at ${formatDateTimeUtc(selectedRevision.approvedAt)}.`;
     }
 
     return "Legacy approval metadata is incomplete for this revision.";
-  }, [approvedAt, approvedBy, revision?.version, viewedIsApproved]);
+  }, [selectedApprovalDecision, selectedIsApproved, selectedRevision]);
 
   useEffect(() => {
     if (!error || !selectedFormat) {
@@ -204,10 +215,10 @@ export function ExportDialog({
 
       <div className="stack-tight export-dialog__meta">
         <p>
-          {revision
-            ? viewedIsApproved
-              ? `Approved revision v${revision.version}`
-              : `Revision v${revision.version}${viewedOption ? ` (${viewedOption.stateLabel})` : ""}`
+          {selectedRevision
+            ? selectedIsApproved
+              ? `Approved revision v${selectedRevision.version}`
+              : `Revision v${selectedRevision.version} (${selectedRevision.stateLabel})`
             : "No revision exists yet for this casefile."}
         </p>
         <p>{metadataCopy}</p>

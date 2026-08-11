@@ -417,7 +417,7 @@ export async function deleteRecordingAction(input: {
     return {
       ok: true,
       data: {
-        href: "/",
+        href: "/workspace",
         userId: principal.userId,
       },
       notice: `Permanently deleted "${result.title}" and ${result.revisionCount} revision${result.revisionCount === 1 ? "" : "s"}; the ledger retains one deletion record and the pre-delete export snapshot.`,

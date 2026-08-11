@@ -26,6 +26,7 @@ const {
   adminIssuePasswordResetMock,
   sendPasswordResetEmailMock,
   headersMock,
+  deleteRecordingPermanentlyMock,
 } = vi.hoisted(() => ({
   getActivePrincipalMock: vi.fn(),
   getActiveSessionMock: vi.fn(),
@@ -48,6 +49,7 @@ const {
   adminIssuePasswordResetMock: vi.fn(),
   sendPasswordResetEmailMock: vi.fn(),
   headersMock: vi.fn(() => new Map([["origin", "https://app.test"]])),
+  deleteRecordingPermanentlyMock: vi.fn(),
 }));
 
 vi.mock("next/headers", () => ({
@@ -112,6 +114,11 @@ vi.mock("@/server/administration/account-role-service", async (importOriginal) =
     typeof import("@/server/administration/account-role-service")
   >()),
   changeAccountRole: changeAccountRoleMock,
+}));
+
+vi.mock("@/server/administration/service", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/server/administration/service")>()),
+  deleteRecordingPermanently: deleteRecordingPermanentlyMock,
 }));
 
 vi.mock("@/server/casefile/action-mode", () => ({
@@ -529,6 +536,25 @@ describe("typed administration actions", () => {
         expect(result.code).toBe("ACCESS_DENIED");
       }
     }
+  });
+
+  it("returns the workspace destination after a permanent recording deletion", async () => {
+    getActivePrincipalMock.mockResolvedValue(adminPrincipal);
+    deleteRecordingPermanentlyMock.mockReturnValue({
+      title: "Quarterly Review",
+      revisionCount: 1,
+    });
+
+    await expect(
+      deleteRecordingAction({
+        recordingId: "rec-1",
+        expectedTitle: "Quarterly Review",
+      }),
+    ).resolves.toMatchObject({
+      ok: true,
+      data: { href: "/workspace", userId: "admin-1" },
+      notice: 'Permanently deleted "Quarterly Review" and 1 revision; the ledger retains one deletion record and the pre-delete export snapshot.',
+    });
   });
 
   it("updates assignments without redirects", async () => {

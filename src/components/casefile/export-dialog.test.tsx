@@ -13,6 +13,19 @@ const revokeObjectUrlMock = vi.fn();
 const anchorClickMock = vi.fn();
 const originalCreateObjectURL = URL.createObjectURL;
 const originalRevokeObjectURL = URL.revokeObjectURL;
+const approvedRevisionOption = {
+  id: "rev-3",
+  version: 3,
+  state: "approved",
+  stateLabel: "Approved",
+  approvedAt: "2026-08-01T12:40:00.000Z",
+};
+const approvedDecision = {
+  revisionId: "rev-3",
+  state: "approved",
+  actorDisplay: "Approver Example",
+  createdAt: "2026-08-01T12:40:00.000Z",
+};
 
 function createDeferred<T>() {
   let resolve!: (value: T) => void;
@@ -80,14 +93,13 @@ describe("ExportDialog", () => {
         <button type="button">Open export</button>
         <ExportDialog
           actionModeId="mode-1"
-          approvedBy="Approver Example"
-          approvedAt="2026-08-01T12:40:00.000Z"
+          approvalDecisions={[approvedDecision]}
           onAnnouncement={onAnnouncement}
           onClose={onClose}
           onSessionRecoveryRequested={onSessionRecoveryRequested}
           open
           recordingId="rec-1"
-          revision={{ version: 3, id: "rev-3" }} revisionOptions={[{ id: "rev-3", version: 3, state: "approved", stateLabel: "Approved" }]} hasApprovedRevision
+          revision={{ version: 3, id: "rev-3" }} revisionOptions={[approvedRevisionOption]} hasApprovedRevision
           {...overrides}
         />
       </>,
@@ -116,8 +128,7 @@ describe("ExportDialog", () => {
           </button>
           <ExportDialog
             actionModeId="mode-1"
-            approvedBy="Approver Example"
-            approvedAt="2026-08-01T12:40:00.000Z"
+            approvalDecisions={[approvedDecision]}
             onAnnouncement={onAnnouncement}
             onClose={() => {
               onClose();
@@ -126,7 +137,7 @@ describe("ExportDialog", () => {
             onSessionRecoveryRequested={onSessionRecoveryRequested}
             open={open}
             recordingId="rec-1"
-            revision={{ version: 3, id: "rev-3" }} revisionOptions={[{ id: "rev-3", version: 3, state: "approved", stateLabel: "Approved" }]} hasApprovedRevision
+            revision={{ version: 3, id: "rev-3" }} revisionOptions={[approvedRevisionOption]} hasApprovedRevision
             {...overrides}
           />
         </>
@@ -147,14 +158,13 @@ describe("ExportDialog", () => {
     const { rerender } = render(
       <ExportDialog
         actionModeId={null}
-        approvedAt="2026-08-01T12:40:00.000Z"
-        approvedBy="Approver Example"
+        approvalDecisions={[approvedDecision]}
         onAnnouncement={vi.fn()}
         onClose={vi.fn()}
         onSessionRecoveryRequested={vi.fn()}
         open
         recordingId="rec-1"
-        revision={{ version: 3, id: "rev-3" }} revisionOptions={[{ id: "rev-3", version: 3, state: "approved", stateLabel: "Approved" }]} hasApprovedRevision
+        revision={{ version: 3, id: "rev-3" }} revisionOptions={[approvedRevisionOption]} hasApprovedRevision
       />,
     );
 
@@ -175,26 +185,32 @@ describe("ExportDialog", () => {
     rerender(
       <ExportDialog
         actionModeId={null}
-        approvedAt={null}
-        approvedBy={null}
+        approvalDecisions={[]}
         onAnnouncement={vi.fn()}
         onClose={vi.fn()}
         onSessionRecoveryRequested={vi.fn()}
         open
         recordingId="rec-1"
-        revision={{ version: 3, id: "rev-3" }} revisionOptions={[{ id: "rev-3", version: 3, state: "approved", stateLabel: "Approved" }]} hasApprovedRevision
+        revision={{ version: 3, id: "rev-3" }} revisionOptions={[{ ...approvedRevisionOption, approvedAt: null }]} hasApprovedRevision
       />,
     );
 
     expect(screen.getByText("Legacy approval metadata is incomplete for this revision.")).toBeVisible();
   });
 
-  it("renders neutral copy when the viewed revision is not the approved record", () => {
+  it("updates the heading and approval metadata when the export revision changes", async () => {
+    const user = userEvent.setup();
     render(
       <ExportDialog
         actionModeId={null}
-        approvedAt="2026-08-01T12:40:00.000Z"
-        approvedBy="Approver Example"
+        approvalDecisions={[
+          {
+            revisionId: "rev-2",
+            state: "approved",
+            actorDisplay: "Approver Example",
+            createdAt: "2026-08-01T12:40:00.000Z",
+          },
+        ]}
         onAnnouncement={vi.fn()}
         onClose={vi.fn()}
         onSessionRecoveryRequested={vi.fn()}
@@ -202,12 +218,17 @@ describe("ExportDialog", () => {
         recordingId="rec-1"
         revision={{ version: 1, id: "rev-1" }}
         revisionOptions={[
-          { id: "rev-1", version: 1, state: "superseded", stateLabel: "Archived" },
-          { id: "rev-2", version: 2, state: "approved", stateLabel: "Approved" },
+          { id: "rev-1", version: 1, state: "superseded", stateLabel: "Archived", approvedAt: null },
+          { id: "rev-2", version: 2, state: "approved", stateLabel: "Approved", approvedAt: "2026-08-01T12:40:00.000Z" },
         ]}
         hasApprovedRevision
       />,
     );
+
+    expect(screen.getByText("Approved revision v2")).toBeVisible();
+    expect(screen.getByText("Approver Example approved revision v2.")).toBeVisible();
+
+    await user.selectOptions(screen.getByRole("combobox", { name: "Revision to export" }), "rev-1");
 
     expect(screen.getByText("Revision v1 (Archived)")).toBeVisible();
     expect(
@@ -234,14 +255,13 @@ describe("ExportDialog", () => {
           </button>
           <ExportDialog
             actionModeId={null}
-            approvedAt="2026-08-01T12:40:00.000Z"
-            approvedBy="Approver Example"
+            approvalDecisions={[approvedDecision]}
             onAnnouncement={vi.fn()}
             onClose={() => setOpen(false)}
             onSessionRecoveryRequested={vi.fn()}
             open={open}
             recordingId="rec-1"
-            revision={{ version: 3, id: "rev-3" }} revisionOptions={[{ id: "rev-3", version: 3, state: "approved", stateLabel: "Approved" }]} hasApprovedRevision
+            revision={{ version: 3, id: "rev-3" }} revisionOptions={[approvedRevisionOption]} hasApprovedRevision
           />
         </>
       );

@@ -166,17 +166,6 @@ function stripActionMode(current: CasefileViewModel, expired = false): CasefileV
   };
 }
 
-function latestApprovedDecision(casefile: CasefileViewModel) {
-  for (let index = casefile.decisions.length - 1; index >= 0; index -= 1) {
-    const decision = casefile.decisions[index];
-    if (decision?.state === "approved") {
-      return decision;
-    }
-  }
-
-  return null;
-}
-
 function CasefileStatusCards({ casefile }: { casefile: CasefileViewModel }) {
   return (
     <div className="casefile-status-only__grid">
@@ -228,9 +217,16 @@ function unresolvedCasefileNotice(casefile: CasefileViewModel, conflict: Casefil
   return null;
 }
 
-function UploaderStatusCasefile({ casefile }: { casefile: CasefileViewModel }) {
+function UploaderStatusCasefile({
+  casefile,
+  pageNotice,
+}: {
+  casefile: CasefileViewModel;
+  pageNotice?: string | null;
+}) {
   return (
     <section className="casefile-status-only" aria-label="Recording status">
+      {pageNotice ? <InlineNotice tone="success">{pageNotice}</InlineNotice> : null}
       <CaseHeader casefile={casefile} />
       <CasefileStatusCards casefile={casefile} />
     </section>
@@ -239,6 +235,7 @@ function UploaderStatusCasefile({ casefile }: { casefile: CasefileViewModel }) {
 
 export function CasefileWorkspace({
   initialCasefile,
+  pageNotice,
   saveAction,
   submitAction,
   withdrawAction,
@@ -249,6 +246,7 @@ export function CasefileWorkspace({
   exitAdminActionModeAction,
 }: {
   initialCasefile: CasefileViewModel;
+  pageNotice?: string | null;
   saveAction: SaveAction;
   submitAction: SubmitAction;
   withdrawAction: WithdrawAction;
@@ -379,7 +377,6 @@ export function CasefileWorkspace({
     !casefile.access.historical &&
     phoneSafetyMode &&
     !unresolved;
-  const approvedDecision = latestApprovedDecision(casefile);
   // Export affordance (demo-governance-bringback): the export surface renders
   // for anyone with export authority OR a plain admin session, even before an
   // approved revision exists - the dialog carries an honest empty state
@@ -665,13 +662,14 @@ export function CasefileWorkspace({
     return (
       <>
         {statusPoller}
-        <UploaderStatusCasefile casefile={casefile} />
+        <UploaderStatusCasefile casefile={casefile} pageNotice={pageNotice} />
       </>
     );
   }
 
   return (
     <div className="casefile-page">
+      {pageNotice ? <InlineNotice tone="success">{pageNotice}</InlineNotice> : null}
       <span aria-live="polite" className="sr-only" role="status">
         {liveMessage}
       </span>
@@ -839,8 +837,11 @@ export function CasefileWorkspace({
       {exportOpen ? (
         <ExportDialog
           actionModeId={casefile.actionMode?.id ?? null}
-          approvedAt={approvedDecision?.createdAt ?? casefile.revision?.approvedAt ?? null}
-          approvedBy={approvedDecision?.actorDisplay ?? null}
+          approvalDecisions={casefile.decisions.map((decision) => ({
+            revisionId: decision.revisionId,
+            state: decision.state,
+            actorDisplay: decision.actorDisplay,
+          }))}
           hasApprovedRevision={hasApprovedRevision}
           onAnnouncement={(message) => setLiveMessage(message)}
           onClose={() => setExportOpen(false)}
@@ -857,6 +858,7 @@ export function CasefileWorkspace({
             version: entry.version,
             state: entry.state,
             stateLabel: entry.stateLabel,
+            approvedAt: entry.approvedAt,
           }))}
         />
       ) : null}
