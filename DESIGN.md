@@ -38,7 +38,7 @@ Progress is never collapsed into one uncontrolled status string. The UI derives 
 1. **Integrity state:** capturing, uploading, verifying, verified, verification failed, or interrupted.
 2. **Transcript job state:** queued, running, partial result, completed, failed, or cancelled.
 3. **Current revision state:** draft, pending approval, or none.
-4. **Active approved pointer:** the revision currently approved for export, or none.
+4. **Active approved pointer:** the currently approved revision (and default export target), or none.
 5. **Assignment state:** active, completed, or removed, per reviewer/approver activation.
 
 Historical revision terminal states are `superseded`, `withdrawn`, and `changes_requested`; `approved` stays on an approved revision even after a reopen, and the recording's `approvedRevisionId` decides whether it is the active approved record.
@@ -170,12 +170,13 @@ The Superscriber wordmark is one Newsreader line: `Super` remains sentence case 
 | `/` | First-run setup when no user exists; steady-state login otherwise | Public |
 | `/workspace` | Role-aware work inbox | Every authenticated role |
 | `/ingest` | Focused upload or supported browser-record flow | Uploader and admin |
-| `/recordings/[recordingId]` | Current casefile or an authorized historical approved snapshot | Principals with an access grant |
+| `/recordings/[recordingId]` | Current casefile or an authorized historical revision snapshot | Principals with an access grant |
 | `/administration?section=accounts` | Local account directory and creation | Admin |
 | `/administration?section=assignments` | Active assignments and assignment history | Admin |
-| `/administration?section=policy` | Read-only active policy profile and permission matrix | Admin |
+| `/administration?section=policy` | Active policy profile (admin-editable) and permission matrix | Admin |
+| `/administration?section=discipline` | Governed ledger counts and the typed-phrase ledger reset | Admin |
 
-Casefile URLs accept `revision=<revisionId>` for an authorized historical approved snapshot and `actionMode=<adminActionSessionId>` to activate a validated admin action mode. Neither grants access by itself; the server validates both against the signed-in user, recording, assignment history, and action session.
+Casefile URLs accept `revision=<revisionId>` for an authorized historical revision snapshot and `actionMode=<adminActionSessionId>` to activate a validated admin action mode. Neither grants access by itself; the server validates both against the signed-in user, recording, assignment history, and action session.
 
 Primary navigation is exact: uploader gets Work and Ingest; reviewer and approver get Work; admin gets Work, Ingest, and Administration. An admin action mode never changes the navigation or account identity.
 
@@ -218,9 +219,9 @@ Every transcript-capable casefile begins directly below the app shell:
 
 A recording owner with uploader-only access receives a status casefile: ingest progress, safe metadata, and recovery guidance, with no transcript, media, decisions, or audit content.
 
-### Approved export
+### Transcript export
 
-- Approved export stays anchored to the approved casefile action bar, not a separate reporting screen
+- Export stays anchored to the casefile action bar, not a separate reporting screen
 - The export surface is always visible to export-authorized principals (admins additionally see it under plain oversight); before any approval exists it carries an honest empty state and a generic `Export transcript` label
 - The chooser is a portal-rendered viewport modal (bounded bottom sheet on compact tablet) grouped into Document (`DOCX`, `TXT`, `MD`), Captions (`SRT`, `VTT`), and Structured data (`CSV`, `TSV`, `JSON`), with a revision picker defaulting to the approved revision (demo-governance bring-back: any-revision export under the unchanged export authority)
 - Each successful download records actor, effective role, revision, format, and UTC time before bytes are returned
