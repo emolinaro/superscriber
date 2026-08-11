@@ -1599,6 +1599,7 @@ function mockProvisioningServer(options: {
   downloadTierId?: string;
   catalogAfterDownload?: typeof MODEL_CATALOG;
   delayedInitialStatus?: Promise<Response>;
+  statusDelayMs?: number;
 }) {
   let statusCalls = 0;
   let catalogCalls = 0;
@@ -1654,7 +1655,15 @@ function mockProvisioningServer(options: {
       const statusIndex = statusCalls - (options.delayedInitialStatus ? 1 : 0);
       const fixture = options.statuses[Math.min(statusIndex, options.statuses.length - 1)];
       statusCalls += 1;
-      return mockJsonResponse(provisioningBody(fixture));
+      const response = mockJsonResponse(provisioningBody(fixture));
+      if (!options.statusDelayMs) {
+        return response;
+      }
+      return new Promise<Response>((resolve) => {
+        setTimeout(() => {
+          void response.then(resolve);
+        }, options.statusDelayMs);
+      });
     }
     if (url === "/api/ingest/sessions" && init?.method === "POST") {
       return mockJsonResponse({ ok: true, status: buildStatus() });
@@ -1788,6 +1797,43 @@ describe("model tier provisioning (model-tier-provisioning)", () => {
         }),
       ),
     );
+
+    await waitFor(() => expect(screen.getByRole("option", { name: "tiny" })).toBeEnabled(), {
+      timeout: 3_000,
+    });
+  });
+
+  it("keeps polling when each status response exceeds the poll cadence", async () => {
+    const user = userEvent.setup();
+    mockProvisioningServer({
+      catalog: UNPROVISIONED_TINY_CATALOG,
+      statusDelayMs: 900,
+      statuses: [
+        { tiny: { state: "idle", bytesReceived: 0, bytesTotal: 78_203_619, error: null } },
+        {
+          tiny: {
+            state: "downloading",
+            bytesReceived: 39_101_810,
+            bytesTotal: 78_203_619,
+            error: null,
+          },
+        },
+        {
+          tiny: {
+            state: "completed",
+            bytesReceived: 78_203_619,
+            bytesTotal: 78_203_619,
+            error: null,
+          },
+        },
+      ],
+    });
+    renderFlow("admin");
+
+    await user.click(screen.getByText("Advanced settings"));
+    const select = await screen.findByRole("combobox", { name: "Transcription model" });
+    await waitFor(() => expect(select).toBeEnabled());
+    await user.click(await screen.findByRole("button", { name: "Download tiny (74.6 MB)" }));
 
     await waitFor(() => expect(screen.getByRole("option", { name: "tiny" })).toBeEnabled(), {
       timeout: 3_000,

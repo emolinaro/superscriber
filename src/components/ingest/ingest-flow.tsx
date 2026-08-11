@@ -126,6 +126,7 @@ export function IngestFlow({
   } | null>(null);
   const boundaryRef = useRef(-1);
   const observedInFlightRef = useRef<Set<string>>(new Set());
+  const provisioningRequestAbortRef = useRef<AbortController | null>(null);
   const provisioningRequestGenerationRef = useRef(0);
   const transcriptModelTouchedRef = useRef(false);
 
@@ -136,11 +137,17 @@ export function IngestFlow({
 
   const refreshProvisioning = useCallback(async () => {
     const requestGeneration = ++provisioningRequestGenerationRef.current;
+    provisioningRequestAbortRef.current?.abort();
     if (!canProvisionModels) {
       return;
     }
+    const controller = new AbortController();
+    provisioningRequestAbortRef.current = controller;
     try {
-      const response = await fetch("/api/models/provisioning", { cache: "no-store" });
+      const response = await fetch("/api/models/provisioning", {
+        cache: "no-store",
+        signal: controller.signal,
+      });
       if (!response.ok) {
         return;
       }
@@ -154,6 +161,10 @@ export function IngestFlow({
       setProvisioning(next);
     } catch {
       // Status refreshes are best-effort; the next poll retries.
+    } finally {
+      if (provisioningRequestAbortRef.current === controller) {
+        provisioningRequestAbortRef.current = null;
+      }
     }
   }, [canProvisionModels]);
 
@@ -192,10 +203,23 @@ export function IngestFlow({
     if (!activeDownloadTierId) {
       return;
     }
-    const timer = window.setInterval(() => {
-      void refreshProvisioning();
-    }, MODEL_DOWNLOAD_POLL_MS);
-    return () => window.clearInterval(timer);
+    let cancelled = false;
+    let timer: number | undefined;
+    const scheduleRefresh = () => {
+      timer = window.setTimeout(async () => {
+        await refreshProvisioning();
+        if (!cancelled) {
+          scheduleRefresh();
+        }
+      }, MODEL_DOWNLOAD_POLL_MS);
+    };
+    scheduleRefresh();
+    return () => {
+      cancelled = true;
+      if (timer !== undefined) {
+        window.clearTimeout(timer);
+      }
+    };
   }, [activeDownloadTierId, refreshProvisioning]);
 
   // When an install this session OBSERVED in flight finishes, re-pull the
