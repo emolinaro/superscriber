@@ -6,7 +6,11 @@ vi.mock("@/server/auth/reset-mailer", () => ({
 
 import { sendPasswordResetEmail } from "@/server/auth/reset-mailer";
 import { PASSWORD_RESET_COPY } from "@/lib/password-reset";
-import { completePasswordReset, requestPasswordReset } from "@/server/auth/password-reset";
+import {
+  completePasswordReset,
+  requestConfirmationCopy,
+  requestPasswordReset,
+} from "@/server/auth/password-reset";
 import {
   resetRedeemByIpLimiter,
   resetRequestByEmailLimiter,
@@ -202,6 +206,42 @@ describe("requestPasswordReset", () => {
     expect(tokens[0]).toMatchObject({ used_at: null, invalidated_at: null });
     expect(securityEventRows(bundle.sqlite).map((e) => e.type)).toContain(
       "password.reset.mail_failed",
+    );
+  });
+});
+
+describe("requestConfirmationCopy", () => {
+  it("states that nothing was sent when the mail seam is unset or none", () => {
+    vi.stubEnv("SUPERSCRIBER_RESET_MAIL_MODE", "");
+    expect(requestConfirmationCopy()).toBe(
+      "This instance does not send email. Your administrator can reset your " +
+        "password for you from Administration > Accounts.",
+    );
+    vi.stubEnv("SUPERSCRIBER_RESET_MAIL_MODE", "none");
+    expect(requestConfirmationCopy()).toBe(
+      PASSWORD_RESET_COPY.REQUEST_CONFIRMATION_NO_MAIL,
+    );
+  });
+
+  it("keeps the anti-enumeration confirmation when the seam is configured", () => {
+    for (const [key, value] of Object.entries(SMTP_ENV)) vi.stubEnv(key, value);
+    expect(requestConfirmationCopy()).toBe(PASSWORD_RESET_COPY.REQUEST_CONFIRMATION);
+  });
+
+  it("states that nothing was sent for an invalid mode or missing smtp settings", () => {
+    // A misconfigured seam also delivers nothing; readiness surfaces the
+    // operator error, the requester still gets the honest operator-assisted copy.
+    vi.stubEnv("SUPERSCRIBER_RESET_MAIL_MODE", "pigeon");
+    expect(requestConfirmationCopy()).toBe(
+      PASSWORD_RESET_COPY.REQUEST_CONFIRMATION_NO_MAIL,
+    );
+    vi.stubEnv("SUPERSCRIBER_RESET_MAIL_MODE", "smtp");
+    vi.stubEnv("SUPERSCRIBER_RESET_MAIL_SMTP_HOST", "");
+    vi.stubEnv("SUPERSCRIBER_RESET_MAIL_SMTP_PORT", "");
+    vi.stubEnv("SUPERSCRIBER_RESET_MAIL_FROM_ADDRESS", "");
+    vi.stubEnv("SUPERSCRIBER_RESET_MAIL_PASSWORD_FILE", "");
+    expect(requestConfirmationCopy()).toBe(
+      PASSWORD_RESET_COPY.REQUEST_CONFIRMATION_NO_MAIL,
     );
   });
 });

@@ -22,8 +22,8 @@ const REVIEWER = {
 };
 const REVIEWER_HASH = hashSync(REVIEWER.password, 12);
 
-const GENERIC_CONFIRMATION =
-  "If an account matches that email, a password reset has been started. If nothing arrives, contact your administrator.";
+const NO_MAIL_CONFIRMATION =
+  "This instance does not send email. Your administrator can reset your password for you from Administration > Accounts.";
 const GENERIC_FAILURE =
   "That reset link is no longer valid. Ask your administrator for a new one or request another reset.";
 
@@ -89,7 +89,7 @@ test.describe.serial("password reset (mail unconfigured)", () => {
       await page.goto("/reset-request");
       await page.getByLabel(/email/i).fill(email);
       await page.getByRole("button", { name: /reset password/i }).click();
-      await expect(page.getByText(GENERIC_CONFIRMATION)).toBeVisible();
+      await expect(page.getByText(NO_MAIL_CONFIRMATION)).toBeVisible();
     }
 
     expect(tokenRows(REVIEWER.email)).toHaveLength(0);
@@ -268,6 +268,6 @@ test.describe.serial("password reset (mail unconfigured)", () => {
     await page.goto("/reset-request");
     await page.getByLabel(/email/i).fill(REVIEWER.email);
     await page.getByRole("button", { name: /reset password/i }).click();
-    await expect(page.getByText(GENERIC_CONFIRMATION)).toBeVisible();
+    await expect(page.getByText(NO_MAIL_CONFIRMATION)).toBeVisible();
   });
 });
