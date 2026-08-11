@@ -1,9 +1,10 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { Recording, TranscriptSegment } from "@/domain/models";
 import { formatSegmentWindow } from "@/lib/format";
 import { InlineNotice } from "@/components/ui/inline-notice";
+import { WaveScrubber } from "@/components/casefile/wave-scrubber";
 
 type MediaTransportProps = {
   mediaKind: Recording["mediaKind"];
@@ -14,6 +15,11 @@ type MediaTransportProps = {
   seekRequestMs: number | null;
   onSeekHandled: () => void;
   onActiveSegmentChange: (segmentId: string | null) => void;
+  /**
+   * Segment rail: seek to this segment and surface it inline in the
+   * transcript list (opens its review affordance when the caller can edit).
+   */
+  onLocateSegment?: (segment: TranscriptSegment) => void;
 };
 
 const PLAYBACK_RATES = [0.75, 1, 1.25, 1.5, 2] as const;
@@ -27,9 +33,37 @@ export function MediaTransport({
   seekRequestMs,
   onSeekHandled,
   onActiveSegmentChange,
+  onLocateSegment,
 }: MediaTransportProps) {
   const mediaRef = useRef<HTMLAudioElement | HTMLVideoElement | null>(null);
+  const [mediaEl, setMediaEl] = useState<HTMLAudioElement | HTMLVideoElement | null>(null);
+  // Wave scrubber (demo-waveform-player): decoded-wave progress bar replaces
+  // the stock audio controls once decoding succeeds; when the runtime cannot
+  // decode, the transport keeps the native controls as the fallback.
+  const [nativeControls, setNativeControls] = useState(false);
+  const [playing, setPlaying] = useState(false);
   const [rate, setRate] = useState("1");
+
+  const handleWaveReady = useCallback(() => setNativeControls(false), []);
+  const handleWaveUnavailable = useCallback(() => setNativeControls(true), []);
+
+  // The Play/Pause state follows the media element itself so rail-chip seeks
+  // and marker clicks (which autoplay) also flip the toggle label.
+  useEffect(() => {
+    if (!mediaEl) {
+      return;
+    }
+    const syncPlaying = () => setPlaying(!mediaEl.paused && !mediaEl.ended);
+    syncPlaying();
+    mediaEl.addEventListener("play", syncPlaying);
+    mediaEl.addEventListener("pause", syncPlaying);
+    mediaEl.addEventListener("ended", syncPlaying);
+    return () => {
+      mediaEl.removeEventListener("play", syncPlaying);
+      mediaEl.removeEventListener("pause", syncPlaying);
+      mediaEl.removeEventListener("ended", syncPlaying);
+    };
+  }, [mediaEl]);
 
   useEffect(() => {
     if (!mediaRef.current || seekRequestMs === null) {
@@ -48,6 +82,16 @@ export function MediaTransport({
 
   function attachMedia(node: HTMLAudioElement | HTMLVideoElement | null) {
     mediaRef.current = node;
+    setMediaEl(node);
+  }
+
+  function seekToSegment(segment: TranscriptSegment) {
+    if (mediaRef.current) {
+      mediaRef.current.currentTime = segment.startMs / 1000;
+      mediaRef.current.play().catch(() => undefined);
+    }
+    syncActiveSegment(segment.startMs / 1000);
+    onLocateSegment?.(segment);
   }
 
   if (!mediaUrl) {
@@ -68,9 +112,21 @@ export function MediaTransport({
     const currentMs = currentTimeSeconds * 1000;
     const match =
       segments.find(
-        (segment) => currentMs >= segment.startMs && currentMs <= segment.endMs,
+        (segment) => currentMs >= segment.startMs && currentMs < segment.endMs,
       ) ?? null;
     onActiveSegmentChange(match?.id ?? null);
+  }
+
+  function togglePlayback() {
+    const media = mediaRef.current;
+    if (!media) {
+      return;
+    }
+    if (media.paused || media.ended) {
+      media.play().catch(() => undefined);
+    } else {
+      media.pause();
+    }
   }
 
   function jumpBack() {
@@ -92,6 +148,17 @@ export function MediaTransport({
   return (
     <section className="media-transport" aria-label="Recording playback" role="group">
       <div className="media-transport__controls">
+        {mediaKind === "audio" && mediaUrl ? (
+          <WaveScrubber
+            activeSegmentId={activeSegmentId}
+            media={mediaEl}
+            mediaUrl={mediaUrl}
+            onReady={handleWaveReady}
+            onSeekToSegment={seekToSegment}
+            onUnavailable={handleWaveUnavailable}
+            segments={segments}
+          />
+        ) : null}
         {mediaKind === "video" ? (
           <video
             controls
@@ -101,14 +168,48 @@ export function MediaTransport({
           />
         ) : (
           <audio
-            controls
+            controls={nativeControls || undefined}
             onTimeUpdate={(event) => syncActiveSegment(event.currentTarget.currentTime)}
+            preload="metadata"
             ref={attachMedia}
             src={mediaUrl}
           />
         )}
       </div>
+      {segments.length > 0 ? (
+        <ol aria-label="Transcript segments" className="media-transport__rail">
+          {segments.map((segment, index) => {
+            const active = segment.id === activeSegmentId;
+            const windowLabel = formatSegmentWindow(segment.startMs, segment.endMs);
+            return (
+              <li key={segment.id}>
+                <button
+                  aria-current={active ? "true" : undefined}
+                  aria-label={`Segment ${index + 1}, ${windowLabel}, ${segment.speakerLabel}. Seek and review.`}
+                  className="media-transport__rail-chip"
+                  data-active={active || undefined}
+                  onClick={() => seekToSegment(segment)}
+                  type="button"
+                >
+                  <span className="media-transport__rail-chip-index">{index + 1}</span>
+                  <span className="media-transport__rail-chip-window">{windowLabel}</span>
+                  <span className="media-transport__rail-chip-speaker">{segment.speakerLabel}</span>
+                </button>
+              </li>
+            );
+          })}
+        </ol>
+      ) : null}
       <div className="media-transport__actions">
+        <button
+          aria-pressed={playing}
+          className="button button-primary"
+          data-testid="transport-play-toggle"
+          onClick={togglePlayback}
+          type="button"
+        >
+          {playing ? "Pause" : "Play"}
+        </button>
         <button className="button button-secondary" onClick={jumpBack} type="button">
           Jump back 10 seconds
         </button>

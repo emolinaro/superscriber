@@ -273,6 +273,9 @@ export function CasefileWorkspace({
   );
   const [governanceOpen, setGovernanceOpen] = useState(false);
   const [seekRequestMs, setSeekRequestMs] = useState<number | null>(null);
+  const [reviewFocus, setReviewFocus] = useState<{ segmentId: string; nonce: number } | null>(
+    null,
+  );
   const [liveMessage, setLiveMessage] = useState("");
   const focusKeyRef = useRef<string | null>(null);
   const scrollPositionRef = useRef<{ x: number; y: number } | null>(null);
@@ -717,6 +720,15 @@ export function CasefileWorkspace({
                 mediaKind={casefile.media.kind}
                 mediaUrl={casefile.media.url}
                 onActiveSegmentChange={setActiveSegmentId}
+                onLocateSegment={(segment) => {
+                  // Player rail/marker seek already happened in the
+                  // transport; here the transcript list surfaces the segment
+                  // inline and focuses its review affordance.
+                  setReviewFocus((prev) => ({
+                    segmentId: segment.id,
+                    nonce: (prev?.nonce ?? 0) + 1,
+                  }));
+                }}
                 onSeekHandled={() => setSeekRequestMs(null)}
                 seekRequestMs={seekRequestMs}
                 segments={segments}
@@ -733,6 +745,7 @@ export function CasefileWorkspace({
                 segments={segments}
                 summary={summary}
                 diffHighlight={casefile.diffHighlight}
+                reviewFocus={reviewFocus}
               />
             </>
           ) : (

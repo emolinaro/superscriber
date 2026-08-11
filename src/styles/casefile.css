@@ -123,6 +123,102 @@ html {
   width: 100%;
 }
 
+/* Decoded-wave scrubber (demo wave player bring-back): the drawn wave doubles
+   as the progress indicator - played bars take the sage accent, the playhead
+   rides in rust, and clickable segment markers sit in a clickable overlay so
+   pointer seeks and section jumps share one surface. The translucent sages
+   stay legible on both appearance tokens (bone light, dark bone). */
+.media-transport__wave {
+  position: relative;
+  display: grid;
+  gap: var(--space-2);
+}
+
+.media-transport__wave-stage {
+  position: relative;
+  z-index: 0;
+  overflow: hidden;
+  padding: var(--space-2);
+  border: 1px solid var(--color-line);
+  border-radius: var(--radius-control);
+  background: var(--color-bone);
+  cursor: pointer;
+  min-height: calc(84px + var(--space-4));
+}
+
+.media-transport__wave-stage:focus-visible {
+  outline: 2px solid var(--color-focus);
+  outline-offset: 2px;
+}
+
+.media-transport__wave[data-ready="true"] .media-transport__wave-stage {
+  background: var(--color-paper);
+}
+
+.media-transport__wave-overlay {
+  position: absolute;
+  z-index: 1;
+  top: calc(var(--space-2) + 1px);
+  left: calc(var(--space-2) + 1px);
+  right: calc(var(--space-2) + 1px);
+  height: 84px;
+  border-radius: var(--radius-control);
+  pointer-events: none;
+}
+
+.media-transport__wave-band {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  background: rgba(42, 118, 94, 0.16);
+  border-inline: 1px solid rgba(42, 118, 94, 0.35);
+  pointer-events: none;
+}
+
+.media-transport__wave-marker {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 32px;
+  margin-left: -16px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  cursor: pointer;
+  pointer-events: auto;
+}
+
+.media-transport__wave-marker::after {
+  content: "";
+  position: absolute;
+  top: 0;
+  left: 50%;
+  width: 2px;
+  height: 12px;
+  margin-left: -1px;
+  background: var(--color-teal-700);
+  border-radius: 1px;
+  transition: height var(--motion-fast) ease;
+}
+
+.media-transport__wave-marker:hover::after,
+.media-transport__wave-marker:focus-visible::after {
+  height: 20px;
+}
+
+.media-transport__wave-marker[data-active]::after {
+  background: var(--color-rust-600);
+  height: 18px;
+}
+
+.media-transport__wave-timecode {
+  display: flex;
+  justify-content: space-between;
+  font-family: var(--font-mono);
+  font-size: var(--type-12);
+  color: var(--color-muted);
+}
+
 .media-transport__actions {
   display: flex;
   flex-wrap: wrap;
@@ -137,6 +233,59 @@ html {
 
 .media-transport__segment-label {
   font-weight: 600;
+}
+
+/* Segment rail inside the player (demo wave player bring-back): every segment
+   is visible and clickable at the transport; a chip seeks playback and
+   surfaces the segment inline in the transcript list. Plain typographic
+   chips per the hardened visual contract. */
+.media-transport__rail {
+  display: flex;
+  gap: var(--space-2);
+  margin: 0;
+  padding: var(--space-1) var(--space-1);
+  list-style: none;
+  overflow-x: auto;
+  scrollbar-width: thin;
+}
+
+.media-transport__rail-chip {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 0 var(--space-2);
+  align-items: baseline;
+  min-width: 11rem;
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--color-line);
+  border-radius: var(--radius-control);
+  background: var(--color-paper);
+  color: var(--color-ink);
+  text-align: left;
+  font-size: var(--type-14);
+}
+
+.media-transport__rail-chip:hover {
+  border-color: var(--color-teal-700);
+}
+
+.media-transport__rail-chip[data-active] {
+  border-color: rgba(42, 118, 94, 0.45);
+  background: rgba(232, 246, 239, 0.8);
+  box-shadow: inset 3px 0 0 rgba(42, 118, 94, 0.85);
+}
+
+.media-transport__rail-chip-index {
+  font-weight: 700;
+  color: var(--color-teal-700);
+}
+
+.media-transport__rail-chip-speaker,
+.media-transport__rail-chip-window {
+  color: var(--color-muted);
+}
+
+.media-transport__rail-chip-speaker {
+  grid-column: 2;
 }
 
 .transcript-document {
@@ -545,11 +694,19 @@ html {
     padding: var(--space-2) var(--space-3);
   }
 
+  .casefile-main[data-revision="true"] .media-transport__rail {
+    gap: var(--space-1);
+    padding: var(--space-1) 0;
+  }
+
+  .casefile-main[data-revision="true"] .media-transport__wave-stage {
+    padding: var(--space-1);
+  }
+
   .casefile-main[data-revision="true"] .media-transport {
     padding: var(--space-3);
     gap: var(--space-2);
   }
-
   .casefile-page:has(> .casefile-layout > .casefile-main[data-revision="true"]) .case-header__body {
     padding: var(--space-3);
   }

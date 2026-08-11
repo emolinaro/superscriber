@@ -125,6 +125,17 @@
     top: 112px;
   }
 
+  /* Sticky case-header (top: 64px) and sticky transport (top: 112px) are
+     calibrated for the single-row desktop chrome. At phone widths the
+     header card is several rows tall, so a parked transport slides under
+     the header card (z-index 6 beats 5) and the wave player vanishes
+     behind it. Phone is a status/playback surface (review waits for
+     tablet/desktop), so both blocks just flow in document order. */
+  .case-header,
+  .media-transport {
+    position: static;
+  }
+
   .transcript-segment {
     scroll-margin-top: 148px;
   }
