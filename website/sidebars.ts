@@ -24,6 +24,7 @@ const sidebars: SidebarsConfig = {
         'operators/auth-outage',
         'operators/auth-rollback',
         'operators/break-glass',
+        'operators/admin-recovery',
         'operators/oidc-acceptance-2026-08',
         'operators/ingest-watch',
       ],
