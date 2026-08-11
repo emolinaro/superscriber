@@ -351,6 +351,7 @@ async function runDownload(tierId: string, deps: ProvisioningDeps) {
       );
     }
 
+    console.info(`Model download completed for tier '${tierId}' in ${targetDir}.`);
     updateRegistry(tierId, {
       state: "completed",
       finishedAt: (deps.now ?? (() => new Date()))().toISOString(),
@@ -417,6 +418,9 @@ export function startTierDownload(
   }
 
   const startedAt = (deps.now ?? (() => new Date()))().toISOString();
+  console.info(
+    `Model download started for tier '${tierId}' into ${root} (fixture seam: ${fixtureDirForTier(tierId) ? "on" : "off"}).`,
+  );
   const status: TierDownloadStatus = {
     tierId,
     state: "downloading",

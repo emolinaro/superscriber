@@ -126,8 +126,7 @@ export function IngestFlow({
     message: string;
   } | null>(null);
   const boundaryRef = useRef(-1);
-  const provisioningPrimedRef = useRef(false);
-  const completedDownloadsRef = useRef<Set<string>>(new Set());
+  const observedInFlightRef = useRef<Set<string>>(new Set());
 
   // demo-model-tier-picker: the catalog loads lazily on FIRST expansion of
   // Advanced settings (not on mount) - no network chatter for ignored UI,
@@ -147,17 +146,6 @@ export function IngestFlow({
         tiers: Array<{ tierId: string; download: TierDownloadView }>;
       };
       const next = Object.fromEntries(body.tiers.map((tier) => [tier.tierId, tier.download]));
-      // The first load reconciles tiers that are already provisioned (hand-
-      // installed or from an earlier session) without re-fetching the
-      // catalog; only NEWLY completed installs trigger the refresh below.
-      if (!provisioningPrimedRef.current) {
-        provisioningPrimedRef.current = true;
-        for (const [tierId, view] of Object.entries(next)) {
-          if (view.state === "completed") {
-            completedDownloadsRef.current.add(tierId);
-          }
-        }
-      }
       setProvisioning(next);
     } catch {
       // Status refreshes are best-effort; the next poll retries.
@@ -208,16 +196,22 @@ export function IngestFlow({
     return () => window.clearInterval(timer);
   }, [activeDownloadTierId, refreshProvisioning]);
 
-  // When an install finishes, re-pull the catalog: host truth has changed, so
-  // the tier flips selectable (and the best-available default is recomputed
-  // server-side) without a page reload.
+  // When an install this session OBSERVED in flight finishes, re-pull the
+  // catalog: host truth has changed, so the tier flips selectable (and the
+  // best-available default is recomputed server-side) without a page reload.
+  // Tracking the downloading -> completed transition (instead of the raw
+  // "completed" state) keeps tiers that were already provisioned when the
+  // page loaded - and stale registry states reconciled against missing
+  // artifacts - from triggering redundant or missing fetches.
   useEffect(() => {
     if (!provisioning) {
       return;
     }
     for (const [tierId, view] of Object.entries(provisioning)) {
-      if (view.state === "completed" && !completedDownloadsRef.current.has(tierId)) {
-        completedDownloadsRef.current.add(tierId);
+      if (view.state === "downloading") {
+        observedInFlightRef.current.add(tierId);
+      } else if (view.state === "completed" && observedInFlightRef.current.has(tierId)) {
+        observedInFlightRef.current.delete(tierId);
         void fetchModelCatalog();
       }
     }
