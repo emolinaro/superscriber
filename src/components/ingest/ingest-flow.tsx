@@ -6,6 +6,7 @@ import type { RecordingSource, UserRole } from "@/domain/models";
 import { ErrorSummary, type ErrorSummaryItem } from "@/components/ui/error-summary";
 import { usePhoneSafetyMode } from "@/components/ui/phone-safety";
 import { CaptureAudio, isBrowserRecordingSupported } from "./capture-audio";
+import { ModelTierDownloadAction, type TierDownloadView } from "./model-tier-download";
 import {
   CHUNK_SIZE,
   clearPendingIngest,
@@ -29,6 +30,11 @@ const STABLE_UPLOAD_INTERRUPTION_RECOVERY =
 const STORED_UPLOAD_CHECK_MESSAGE = "Superscriber is checking the stored upload.";
 const STORED_UPLOAD_CHECK_DETAIL =
   "Superscriber is checking the stored upload. Choose the same file again or reload this page so it can confirm whether verification already started.";
+
+// model-tier-provisioning: while a tier install runs the picker polls the
+// admin-provisioning surface at this cadence; the server serializes downloads
+// so at most one tier is ever in flight.
+const MODEL_DOWNLOAD_POLL_MS = 800;
 
 type FlowState =
   | "idle"
@@ -76,8 +82,7 @@ export function IngestFlow({
   const [language, setLanguage] = useState("");
   // demo-model-tier-picker: the catalog is server-checked against actual
   // model artifacts on this host; unprovisioned tiers are disabled and say
-  // so explicitly. Default = best-quality provisioned tier (or the worker's
-  // configured default when provisioned).
+  // so explicitly. Default = best-quality provisioned tier.
   const [modelCatalog, setModelCatalog] = useState<{
     tiers: Array<{
       id: string;
@@ -85,11 +90,19 @@ export function IngestFlow({
       qualityNote: string;
       available: boolean;
       default: boolean;
+      downloadSizeBytes: number;
     }>;
     configuredModel: string;
     defaultModel: string | null;
   } | null>(null);
   const [transcriptModel, setTranscriptModel] = useState("");
+  // model-tier-provisioning: only admins outside phone-safety mode see (and
+  // poll) the install surface; the server re-checks the gate on every start.
+  const canProvisionModels = principalRole === "admin" && !phoneSafety;
+  const [provisioning, setProvisioning] = useState<Record<string, TierDownloadView> | null>(
+    null,
+  );
+  const [downloadStartErrors, setDownloadStartErrors] = useState<Record<string, string>>({});
   // The picker accepts a batch; uploadFile stays the primary file so the
   // single-file path is byte-identical to before.
   const [uploadFiles, setUploadFiles] = useState<File[]>([]);
@@ -112,32 +125,157 @@ export function IngestFlow({
     message: string;
   } | null>(null);
   const boundaryRef = useRef(-1);
+  const observedInFlightRef = useRef<Set<string>>(new Set());
+  const provisioningRequestAbortRef = useRef<AbortController | null>(null);
+  const provisioningRequestGenerationRef = useRef(0);
+  const transcriptModelTouchedRef = useRef(false);
 
   // demo-model-tier-picker: the catalog loads lazily on FIRST expansion of
   // Advanced settings (not on mount) - no network chatter for ignored UI,
   // and test doubles interacting with the upload lane keep their call order.
   const modelCatalogRequestedRef = useRef(false);
+
+  const refreshProvisioning = useCallback(async () => {
+    const requestGeneration = ++provisioningRequestGenerationRef.current;
+    provisioningRequestAbortRef.current?.abort();
+    if (!canProvisionModels) {
+      return;
+    }
+    const controller = new AbortController();
+    provisioningRequestAbortRef.current = controller;
+    try {
+      const response = await fetch("/api/models/provisioning", {
+        cache: "no-store",
+        signal: controller.signal,
+      });
+      if (!response.ok) {
+        return;
+      }
+      const body = (await response.json()) as {
+        tiers: Array<{ tierId: string; download: TierDownloadView }>;
+      };
+      if (requestGeneration !== provisioningRequestGenerationRef.current) {
+        return;
+      }
+      const next = Object.fromEntries(body.tiers.map((tier) => [tier.tierId, tier.download]));
+      setProvisioning(next);
+    } catch {
+      // Status refreshes are best-effort; the next poll retries.
+    } finally {
+      if (provisioningRequestAbortRef.current === controller) {
+        provisioningRequestAbortRef.current = null;
+      }
+    }
+  }, [canProvisionModels]);
+
+  const fetchModelCatalog = useCallback(async () => {
+    try {
+      const response = await fetch("/api/models/catalog", { cache: "no-store" });
+      const catalog = response.ok ? await response.json() : null;
+      if (!catalog) {
+        return;
+      }
+      setModelCatalog(catalog);
+      setTranscriptModel((current) => {
+        return transcriptModelTouchedRef.current ? current : catalog.defaultModel ?? "";
+      });
+      void refreshProvisioning();
+    } catch {
+      // The picker stays disabled without a catalog; an honest empty state.
+    }
+  }, [refreshProvisioning]);
+
   const loadModelCatalog = useCallback(() => {
     if (modelCatalogRequestedRef.current) {
       return;
     }
     modelCatalogRequestedRef.current = true;
-    void fetch("/api/models/catalog", { cache: "no-store" })
-      .then(async (response) => (response.ok ? await response.json() : null))
-      .then((catalog) => {
-        if (!catalog) {
-          return;
+    void fetchModelCatalog();
+  }, [fetchModelCatalog]);
+
+  const activeDownloadTierId = provisioning
+    ? (Object.entries(provisioning).find(([, view]) => view.state === "downloading")?.[0] ??
+      null)
+    : null;
+
+  // Poll the install surface while a download runs.
+  useEffect(() => {
+    if (!activeDownloadTierId) {
+      return;
+    }
+    let cancelled = false;
+    let timer: number | undefined;
+    const scheduleRefresh = () => {
+      timer = window.setTimeout(async () => {
+        await refreshProvisioning();
+        if (!cancelled) {
+          scheduleRefresh();
         }
-        setModelCatalog(catalog);
-        setTranscriptModel((current) => {
-          const currentTier = catalog.tiers.find(
-            (tier: { id: string; available: boolean }) => tier.id === current,
-          );
-          return currentTier?.available ? current : catalog.defaultModel ?? "";
-        });
-      })
-      .catch(() => undefined);
-  }, []);
+      }, MODEL_DOWNLOAD_POLL_MS);
+    };
+    scheduleRefresh();
+    return () => {
+      cancelled = true;
+      if (timer !== undefined) {
+        window.clearTimeout(timer);
+      }
+    };
+  }, [activeDownloadTierId, refreshProvisioning]);
+
+  // When an install this session OBSERVED in flight finishes, re-pull the
+  // catalog: host truth has changed, so the tier flips selectable (and the
+  // best-available default is recomputed server-side) without a page reload.
+  // Tracking the downloading -> completed transition (instead of the raw
+  // "completed" state) keeps tiers that were already provisioned when the
+  // page loaded - and stale registry states reconciled against missing
+  // artifacts - from triggering redundant or missing fetches.
+  useEffect(() => {
+    if (!provisioning) {
+      return;
+    }
+    for (const [tierId, view] of Object.entries(provisioning)) {
+      if (view.state === "downloading") {
+        observedInFlightRef.current.add(tierId);
+      } else if (view.state === "completed" && observedInFlightRef.current.has(tierId)) {
+        observedInFlightRef.current.delete(tierId);
+        void fetchModelCatalog();
+      }
+    }
+  }, [provisioning, fetchModelCatalog]);
+
+  async function startModelDownload(tierId: string) {
+    setDownloadStartErrors((current) => {
+      const next = { ...current };
+      delete next[tierId];
+      return next;
+    });
+    try {
+      const response = await fetch("/api/models/provisioning", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ tierId }),
+      });
+      const parsed = (await response.json().catch(() => null)) as {
+        message?: string;
+        error?: string;
+        status?: TierDownloadView;
+      } | null;
+      if (!response.ok) {
+        throw new Error(parsed?.message || parsed?.error || "The download could not be started.");
+      }
+      if (parsed?.status) {
+        const status = parsed.status;
+        setProvisioning((current) => ({ ...(current ?? {}), [tierId]: status }));
+      }
+      await refreshProvisioning();
+    } catch (error) {
+      setDownloadStartErrors((current) => ({
+        ...current,
+        [tierId]:
+          error instanceof Error ? error.message : "The download could not be started.",
+      }));
+    }
+  }
 
   useEffect(() => {
     setRecordingSupported(isBrowserRecordingSupported());
@@ -727,7 +865,10 @@ export function IngestFlow({
                 aria-describedby="recording-model-note"
                 disabled={!modelCatalog}
                 id="recording-model"
-                onChange={(event) => setTranscriptModel(event.target.value)}
+                onChange={(event) => {
+                  transcriptModelTouchedRef.current = true;
+                  setTranscriptModel(event.target.value);
+                }}
                 value={transcriptModel}
               >
                 {!modelCatalog ? <option value="">Checking available models...</option> : null}
@@ -754,6 +895,16 @@ export function IngestFlow({
                     <li key={tier.id}>
                       <strong>{tier.id}</strong>: {tier.qualityNote} · {tier.speedNote}
                       {tier.available ? "" : " - not provisioned here"}
+                      {!tier.available && canProvisionModels ? (
+                        <ModelTierDownloadAction
+                          tierId={tier.id}
+                          sizeBytes={tier.downloadSizeBytes}
+                          view={provisioning?.[tier.id] ?? null}
+                          startError={downloadStartErrors[tier.id] ?? null}
+                          busy={activeDownloadTierId !== null}
+                          onStart={() => void startModelDownload(tier.id)}
+                        />
+                      ) : null}
                     </li>
                   ))}
                 </ul>

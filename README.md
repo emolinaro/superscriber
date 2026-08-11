@@ -98,7 +98,7 @@ uv pip install -r worker/requirements.txt
 4. Optional but recommended: prefetch the local speech model while network access is available:
 
 ```bash
-SUPERSCRIBER_TRANSCRIBE_ALLOW_RUNTIME_DOWNLOAD=1 npm run worker:prefetch
+npm run worker:prefetch
 ```
 
 5. In one terminal, start the app:
@@ -117,7 +117,7 @@ SUPERSCRIBER_APP_BASE_URL=http://127.0.0.1:3000 npm run worker:python
 Local worker notes:
 
 - The worker defaults to `SUPERSCRIBER_ENGINE_MODE=internal`, `SUPERSCRIBER_APP_BASE_URL=http://127.0.0.1:3000`, and model storage under `./models`.
-- Runtime model downloads are disabled by default. If you skip the prefetch step, set `SUPERSCRIBER_TRANSCRIBE_ALLOW_RUNTIME_DOWNLOAD=1` before starting the worker.
+- A local, non-container worker permits a missing configured model to download at runtime by default. For a strictly offline worker, prefetch first, then set `SUPERSCRIBER_TRANSCRIBE_OFFLINE=1` and `SUPERSCRIBER_TRANSCRIBE_ALLOW_RUNTIME_DOWNLOAD=0`.
 - If you only want the browser workflow without the real speech stack, use `SUPERSCRIBER_ENGINE_MODE=mock` for the app instead of running the Python worker.
 
 ## Container Runtime
@@ -131,7 +131,10 @@ docker build -t superscriber .
 Run it with a mounted data volume:
 
 ```bash
-docker run --rm -p 3000:3000 -v "$(pwd)/data:/app/data" superscriber
+docker run --rm -p 3000:3000 \
+  -v "$(pwd)/data:/app/data" \
+  -v superscriber-models:/app/models \
+  superscriber
 ```
 
 The container starts the Next.js server and the internal Python worker together. By default it uses:
@@ -140,7 +143,7 @@ The container starts the Next.js server and the internal Python worker together.
 - SQLite at `/app/data/superscriber.db`
 - media files in `/app/data/media`
 - upload temp files in `/app/data/uploads`
-- a baked offline transcription model at `/app/models`
+- a baked offline transcription model plus persistent in-app model installs in the `superscriber-models` volume at `/app/models`
 - `SUPERSCRIBER_TRANSCRIBE_OFFLINE=1`
 - `SUPERSCRIBER_TRANSCRIBE_ALLOW_RUNTIME_DOWNLOAD=0`
 
@@ -210,7 +213,9 @@ For the internal worker, the main model/runtime controls are:
 - `SUPERSCRIBER_TRANSCRIBE_ALLOW_RUNTIME_DOWNLOAD`
 - `SUPERSCRIBER_TRANSCRIBE_ALLOW_STUB_FALLBACK`
 
-`SUPERSCRIBER_TRANSCRIBE_MODEL` names the configured worker default. The ingest model catalog checks `SUPERSCRIBER_TRANSCRIBE_MODEL_DIR` on every request and treats a tier as provisioned only when `<model-dir>/<tier>/model.bin` and `<model-dir>/<tier>/config.json` both exist. When you override the model directory, give the app and worker the same value. Advanced settings disables every unprovisioned tier; it initially selects the configured model when that tier is provisioned, or the best-quality provisioned tier otherwise.
+`SUPERSCRIBER_TRANSCRIBE_MODEL` names the configured worker default. The ingest model catalog checks `SUPERSCRIBER_TRANSCRIBE_MODEL_DIR` on every request and treats a tier as provisioned only when `<model-dir>/<tier>/model.bin` and `<model-dir>/<tier>/config.json` both exist. The standard local commands default to `models/`, while the supplied container sets `/app/models`; when you override the directory, give the app and worker the same value. Advanced settings disables every unprovisioned tier and always preselects the highest-quality provisioned tier, even when the configured model is itself provisioned.
+
+Unprovisioned tiers can be installed straight from the picker: admins outside phone-safety mode get a one-click Download action per tier with the exact size on the button and live byte progress. The server fetches the faster-whisper artifact set (`model.bin`, `config.json`, `tokenizer.json`, and the tier's vocabulary file) from pinned huggingface.co repository and commit URLs into the configured model directory. It stages the complete tier before revealing it, removes partial files after a failure, and needs no worker restart; the tier becomes selectable as soon as the install completes. A free-space preflight rejects the start with HTTP 507 before any download, and only one tier can download at a time, with concurrent starts rejected by HTTP 409. Failures keep the server error on screen next to a retry. `POST /api/models/provisioning` is admin-only; `GET /api/models/provisioning` reports per-tier state to any signed-in account. The only outbound network surface this adds is the pinned huggingface.co artifact URLs.
 
 Prefetch another supported tier into the shared model directory by setting it for the prefetch command, for example:
 
@@ -252,6 +257,8 @@ npm run e2e:container
 ```
 
 The container-backed E2E runner deliberately builds a lightweight test image with model prefetch disabled, then starts the worker in explicit stub-fallback mode. That keeps the browser suite deterministic while still exercising the real Docker entrypoint, Next.js server, SQLite volume, upload pipeline, internal queue, and Python worker contract in one image.
+
+The model-provisioning browser specs use the test-only `SUPERSCRIBER_MODEL_DOWNLOAD_FIXTURE_DIR` seam. When `<dir>/<tier>/` contains a tier's complete pinned file set, that request copies the fixture from disk; removing the fixture restores the real pinned huggingface.co transport on the next request. Set the variable on both the app and Playwright processes for a host-local lane. The container runner configures it automatically. Never set it in production.
 
 Before starting, the runner probes `/api/health` on the app port (`SUPERSCRIBER_E2E_PORT`, default 3105) and refuses to proceed if anything already answers: a foreign server on that port - for example a leftover `npm run dev` - silently vacates the whole suite, because the health probe, browser, and DB helpers would all talk to it instead of the container. Stop the other server or set `SUPERSCRIBER_E2E_PORT` to a free port. The runner also refuses to start when the fake-OIDC sidecar port (`SUPERSCRIBER_E2E_OIDC_PORT`, default 4105) is already occupied; the container suite runs in `dual` auth mode against that sidecar. With `SUPERSCRIBER_E2E_RESET_MAIL=smtp`, the runner likewise refuses to start when the fake-SMTP control port (`SUPERSCRIBER_E2E_SMTP_CONTROL_PORT`, default 4206) is already occupied. Each run gets a fresh data dir under `.tmp/e2e-data.XXXXXX` that the runner removes on exit (a caller-supplied `SUPERSCRIBER_E2E_DATA_DIR` is preserved). Suite helpers that touch the database (`assignmentRows`, `auditRows`, `expireUploadSession`, `expireActionMode`) execute inside the running container via `docker exec`, because host-side access to the bind-mounted database is blocked by file ownership on Linux runners and cannot see the app's WAL commits through macOS VM file sharing.
 
