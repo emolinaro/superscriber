@@ -18,6 +18,7 @@ type FakeAppOptions = {
   finalizeWarning?: string;
   firstChunkGate?: Gate;
   firstSessionGate?: Gate;
+  forceSessionRestart?: boolean;
   loseFirstChunkResponse?: boolean;
   loseFirstFinalizeResponse?: boolean;
   loseFirstSessionResponse?: boolean;
@@ -30,6 +31,7 @@ type FakeSession = {
   finalized: boolean;
   id: string;
   idempotencyKey: string;
+  warning: string | null;
 };
 
 type FakeApp = {
@@ -103,11 +105,14 @@ async function startFakeApp(options: FakeAppOptions = {}) {
       integrityState: session.finalized ? "verifying" : "pending",
       bytesReceived: session.bytesReceived,
       bytesExpected,
+      warning: session.warning,
       nextAction: session.finalized
         ? "none"
-        : session.bytesReceived === bytesExpected
-          ? "finalize"
-          : "resume",
+        : options.forceSessionRestart
+          ? "restart"
+          : session.bytesReceived === bytesExpected
+            ? "finalize"
+            : "resume",
     };
   }
 
@@ -148,6 +153,7 @@ async function startFakeApp(options: FakeAppOptions = {}) {
             finalized: false,
             id: `session-${state.sessions.length + 1}`,
             idempotencyKey,
+            warning: null,
           };
           state.sessions.push(session);
         }
@@ -210,6 +216,7 @@ async function startFakeApp(options: FakeAppOptions = {}) {
           return;
         }
         session.finalized = true;
+        session.warning = options.finalizeWarning ?? null;
         if (!state.finalized.includes(finalizeMatch[1])) {
           state.finalized.push(finalizeMatch[1]);
         }
@@ -543,6 +550,40 @@ test("resumes committed chunks after their response is lost", async () => {
   await waitForExit(watcher.child);
 }, 12_000);
 
+test("never finalizes transient file bytes after a lost chunk response", async () => {
+  const firstSessionGate = createGate();
+  const app = await startFakeApp({ firstSessionGate, loseFirstChunkResponse: true });
+  const directory = await makeWatchDirectory();
+  const watcher = startWatcher(directory, app.baseUrl);
+  await waitUntilWatching(watcher);
+  const original = Buffer.alloc(CHUNK_BYTES + 29, 0x31);
+  const transient = Buffer.alloc(original.length, 0x42);
+  const path = join(directory, "changing-back.wav");
+
+  await writeFile(path, original);
+  await firstSessionGate.entered;
+  await writeFile(path, transient);
+  firstSessionGate.release();
+  await waitFor(
+    () => app.chunks.length > 0 || watcher.output().includes("FAILED changing-back.wav"),
+    `transient upload detection\n${watcher.output()}`,
+    5_000,
+  );
+  await writeFile(path, original);
+  await waitFor(
+    () =>
+      app.finalized.length > 0 ||
+      watcher.output().includes("a prior upload of these bytes changed in flight"),
+    `transient upload refusal\n${watcher.output()}`,
+    8_000,
+  );
+
+  expect(app.sessions).toHaveLength(1);
+  expect(app.finalized).toEqual([]);
+  watcher.child.kill("SIGTERM");
+  await waitForExit(watcher.child);
+}, 14_000);
+
 test("reports a finalize warning without retrying durable bytes", async () => {
   const warning = "Backend dispatch unavailable.";
   const app = await startFakeApp({ finalizeWarning: warning });
@@ -563,6 +604,57 @@ test("reports a finalize warning without retrying durable bytes", async () => {
   watcher.child.kill("SIGTERM");
   await waitForExit(watcher.child);
 }, 10_000);
+
+test("reports a persisted finalize warning after its response is lost", async () => {
+  const warning = "Backend dispatch unavailable after durable storage.";
+  const app = await startFakeApp({
+    finalizeWarning: warning,
+    loseFirstFinalizeResponse: true,
+  });
+  const directory = await makeWatchDirectory();
+  const watcher = startWatcher(directory, app.baseUrl);
+  await waitUntilWatching(watcher);
+
+  await writeFile(join(directory, "warning-loss.wav"), "durable before response loss");
+  await waitFor(
+    () => watcher.output().includes(`WARNING warning-loss.wav: ${warning}`),
+    `persisted finalize warning\n${watcher.output()}`,
+    7_000,
+  );
+
+  expect(app.sessions).toHaveLength(1);
+  expect(app.finalized).toEqual(["session-1"]);
+  watcher.child.kill("SIGTERM");
+  await waitForExit(watcher.child);
+}, 11_000);
+
+test("does not rehash a blocked fingerprint until the file changes", async () => {
+  const app = await startFakeApp({ forceSessionRestart: true });
+  const directory = await makeWatchDirectory();
+  const watcher = startWatcher(directory, app.baseUrl);
+  await waitUntilWatching(watcher);
+  const path = join(directory, "restart.wav");
+  const failure = "requires a restart";
+
+  await writeFile(path, "first blocked version");
+  await waitFor(
+    () => watcher.output().includes(failure),
+    `first blocked fingerprint\n${watcher.output()}`,
+    5_000,
+  );
+  await new Promise((resolve) => setTimeout(resolve, 3_000));
+  expect(watcher.output().split(failure).length - 1).toBe(1);
+
+  await writeFile(path, "changed blocked version");
+  await waitFor(
+    () => watcher.output().split(failure).length - 1 === 2,
+    `changed blocked fingerprint\n${watcher.output()}`,
+    5_000,
+  );
+  expect(app.sessions).toHaveLength(2);
+  watcher.child.kill("SIGTERM");
+  await waitForExit(watcher.child);
+}, 13_000);
 
 test("falls back to polling when native watch setup fails", async () => {
   const signInGate = createGate();

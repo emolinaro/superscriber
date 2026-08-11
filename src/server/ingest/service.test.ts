@@ -396,6 +396,18 @@ describe("resumable ingest service", () => {
     expect(finalized.integrityState).toBe("verified");
     expect(finalized.warning).toBe("Upload stored, but backend dispatch failed: Engine unavailable.");
 
+    withState((state) => {
+      const ingest = state.ingestionSessions.find((entry) => entry.id === session.sessionId);
+      if (!ingest) {
+        throw new Error("Expected ingest session.");
+      }
+      ingest.lastError = "Engine unavailable.";
+      ingest.verificationSummary = "Engine unavailable.";
+    });
+    expect(getResumableUploadSession(session.sessionId, uploaderPrincipal).warning).toBe(
+      "Upload stored, but backend dispatch failed: Engine unavailable.",
+    );
+
     const state = readState();
     const recording = state.recordings.find((entry) => entry.id === session.recordingId);
     expect(recording?.mediaPath).toBeTruthy();

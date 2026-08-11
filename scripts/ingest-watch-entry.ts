@@ -55,6 +55,7 @@ type UploadSessionStatus = {
   warning?: string | null;
 };
 const candidates = new Map<string, Candidate>();
+const blockedPaths = new Map<string, string>();
 const completedPaths = new Map<string, string>();
 const done = new Set<string>();
 const sessionsByDigest = new Map<string, string>();
@@ -253,7 +254,7 @@ async function reconcileFinalizeFailure(sessionId: string, digest: string, name:
   try {
     const status = await loadSessionStatus(sessionId);
     if (status && isDurablyFinalized(status)) {
-      return noteFinalized(digest, name);
+      return noteFinalized(digest, name, status.warning);
     }
   } catch (reconciliationError) {
     throw new Error(
@@ -284,7 +285,7 @@ async function getOrCreateSession(
   if (knownSessionId) {
     const status = await loadSessionStatus(knownSessionId);
     if (status) {
-      return status;
+      return { resumed: true, status };
     }
     sessionsByDigest.delete(digest);
   }
@@ -299,7 +300,10 @@ async function getOrCreateSession(
   });
   const status = await readSessionStatus(response, "session");
   sessionsByDigest.set(digest, status.sessionId);
-  return status;
+  return {
+    resumed: status.bytesReceived > 0 || status.nextAction === "finalize",
+    status,
+  };
 }
 
 async function ingestFile(path: string, expectedFingerprint: string) {
@@ -327,12 +331,13 @@ async function ingestFile(path: string, expectedFingerprint: string) {
       return true;
     }
     if (unresumableDigests.has(digest)) {
+      blockedPaths.set(name, expectedFingerprint);
       throw new Error("a prior upload of these bytes changed in flight; restart the watcher before retrying");
     }
 
     const title = name.replace(/\.[^.]*$/, "") || name;
     log(`ingesting ${name} (${initialStats.size} bytes, sha256 ${digest.slice(0, 12)})`);
-    const status = await getOrCreateSession(digest, {
+    const session = await getOrCreateSession(digest, {
       title,
       languageHint: process.env.SUPERSCRIBER_INGEST_WATCH_LANGUAGE?.trim() || "english",
       source: "upload",
@@ -341,10 +346,24 @@ async function ingestFile(path: string, expectedFingerprint: string) {
       fileSize: initialStats.size,
       transcriptModel: process.env.SUPERSCRIBER_TRANSCRIBE_MODEL?.trim() || null,
     });
+    const { status } = session;
+    if (session.resumed) {
+      const resumedDigest = await hashFile(handle, buffer, initialStats.size);
+      if (
+        fileFingerprint(await handle.stat()) !== expectedFingerprint ||
+        resumedDigest !== digest
+      ) {
+        unresumableDigests.add(digest);
+        blockedPaths.set(name, expectedFingerprint);
+        throw new Error("file changed before upload resume; restart the watcher before retrying");
+      }
+    }
     if (isDurablyFinalized(status)) {
-      return noteFinalized(digest, name);
+      return noteFinalized(digest, name, status.warning);
     }
     if (status.nextAction === "restart") {
+      unresumableDigests.add(digest);
+      blockedPaths.set(name, expectedFingerprint);
       throw new Error(`session ${status.sessionId} requires a restart`);
     }
     if (status.nextAction === "none") {
@@ -357,6 +376,11 @@ async function ingestFile(path: string, expectedFingerprint: string) {
     let offset = status.bytesReceived;
     while (offset < initialStats.size) {
       const chunk = await readChunk(handle, buffer, offset, initialStats.size);
+      if (fileFingerprint(await handle.stat()) !== expectedFingerprint) {
+        unresumableDigests.add(digest);
+        blockedPaths.set(name, expectedFingerprint);
+        throw new Error("file changed during upload; restart the watcher before retrying");
+      }
       const chunkResponse = await request(`/api/ingest/sessions/${status.sessionId}/chunk`, {
         method: "PUT",
         headers: {
@@ -382,6 +406,7 @@ async function ingestFile(path: string, expectedFingerprint: string) {
       uploadedDigest !== digest
     ) {
       unresumableDigests.add(digest);
+      blockedPaths.set(name, expectedFingerprint);
       throw new Error("file changed during upload; retrying after it settles");
     }
     return finalizeSession(status.sessionId, digest, name);
@@ -396,6 +421,7 @@ async function processCandidate(name: string) {
     const stats = statSync(full);
     if (!stats.isFile()) {
       candidates.delete(name);
+      blockedPaths.delete(name);
       return;
     }
     if (!mimeTypeFor(name)) {
@@ -408,6 +434,11 @@ async function processCandidate(name: string) {
     }
 
     const fingerprint = fileFingerprint(stats);
+    if (blockedPaths.get(name) === fingerprint) {
+      candidates.delete(name);
+      return;
+    }
+    blockedPaths.delete(name);
     if (completedPaths.get(name) === fingerprint) {
       candidates.delete(name);
       return;
@@ -451,6 +482,11 @@ async function sweep() {
   for (const name of completedPaths.keys()) {
     if (!residentNames.has(name)) {
       completedPaths.delete(name);
+    }
+  }
+  for (const name of blockedPaths.keys()) {
+    if (!residentNames.has(name)) {
+      blockedPaths.delete(name);
     }
   }
   for (const name of refused) {
