@@ -80,6 +80,13 @@ async function exerciseLiveProgress(page: Page, title: string) {
     await expect(
       ledgerRow.getByRole("progressbar", { name: "Transcription progress" }),
     ).toHaveAttribute("aria-valuenow", "60", { timeout: 20_000 });
+    const ledgerCue = ledgerRow.getByText("Segment 5 · 0:36 of 1:00");
+    const ledgerCueBox = await ledgerCue.boundingBox();
+    const ledgerCueLineHeight = await ledgerCue.evaluate((element) =>
+      Number.parseFloat(window.getComputedStyle(element).lineHeight),
+    );
+    expect(ledgerCueBox).not.toBeNull();
+    expect(ledgerCueBox!.height).toBeLessThanOrEqual(ledgerCueLineHeight * 2.5);
 
     await completeSimulatedTranscriptJob(job.jobId);
 

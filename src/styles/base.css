@@ -435,3 +435,8 @@ textarea[aria-invalid="true"] {
 .tp-progress--compact .tp-progress__track {
   height: 6px;
 }
+
+.tp-progress--compact .tp-progress__heading {
+  display: grid;
+  gap: 0;
+}
