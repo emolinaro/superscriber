@@ -31,8 +31,8 @@ async function exerciseLiveProgress(page: Page, title: string) {
     await bootstrapAndLogin(page, adminUser);
     await uploadFixture(page, { title });
 
-    // The status-only casefile surfaces the live bar immediately (warming cue
-    // or 0%).
+    // The status-only casefile surfaces the live bar immediately as a warming
+    // pulse - the percent stays null until the first engine sample lands.
     const bar = page.getByRole("progressbar", { name: "Transcription progress" });
     await expect(bar).toBeVisible();
 

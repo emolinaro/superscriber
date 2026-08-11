@@ -143,7 +143,7 @@ function createTranscriptJob(recording: Recording, adapterId: string): Transcrip
     completedAt: null,
     lastHeartbeatAt: null,
     etaSeconds: 90,
-    progressPercent: 0,
+    progressPercent: null,
     transcribedUntilMs: null,
     audioDurationMs: null,
     segmentsSeen: null,

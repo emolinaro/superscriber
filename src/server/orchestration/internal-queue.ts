@@ -244,10 +244,10 @@ export function claimAvailableTranscriptJob(params: {
             started_at = COALESCE(started_at, @claimedAt),
             last_heartbeat_at = @claimedAt,
             eta_seconds = COALESCE(eta_seconds, 90),
-            progress_percent = CASE
-              WHEN progress_percent IS NULL OR progress_percent < 5 THEN 5
-              ELSE progress_percent
-            END,
+            progress_percent = NULL,
+            transcribed_until_ms = NULL,
+            audio_duration_ms = NULL,
+            segments_seen = NULL,
             last_error = NULL
           WHERE id = @jobId
             AND (
@@ -348,7 +348,8 @@ export function heartbeatTranscriptJob(params: {
   etaSeconds?: number | null;
   diarizationStatus?: TranscriptJob["diarizationStatus"];
   /** Real engine samples. When both ms fields have landed, the stored
-     percent is DERIVED from them (never the staged stall number). */
+     percent is DERIVED from them (a bare heartbeat without engine data keeps
+     percent null until the first sample lands). */
   transcribedUntilMs?: number | null;
   audioDurationMs?: number | null;
   segmentsSeen?: number | null;
@@ -484,8 +485,13 @@ export function failTranscriptJob(params: {
     refs.job.updatedAt = timestamp;
     refs.job.lastHeartbeatAt = timestamp;
     refs.job.completedAt = exhausted ? timestamp : null;
-    refs.job.progressPercent = exhausted ? refs.job.progressPercent : 0;
+    refs.job.progressPercent = exhausted ? refs.job.progressPercent : null;
     refs.job.etaSeconds = exhausted ? null : 90;
+    if (!exhausted) {
+      refs.job.transcribedUntilMs = null;
+      refs.job.audioDurationMs = null;
+      refs.job.segmentsSeen = null;
+    }
     refs.job.lastError = params.detail;
     refs.job.diarizationStatus = exhausted ? refs.job.diarizationStatus : "pending";
 

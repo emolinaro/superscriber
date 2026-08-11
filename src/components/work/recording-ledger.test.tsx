@@ -215,6 +215,33 @@ describe("RecordingLedger", () => {
     expect(mockRefresh).not.toHaveBeenCalled();
   });
 
+  it("shows the queued label while a sample-free job waits for its first engine beat", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(
+        jsonResponse({
+          jobs: [
+            {
+              recordingId: "rec-live",
+              state: "queued",
+              progressPercent: null,
+              transcribedUntilMs: null,
+              audioDurationMs: null,
+              segmentsSeen: null,
+              updatedAt: "2026-08-01T12:03:01.000Z",
+            },
+          ],
+        }),
+      ),
+    );
+
+    render(<RecordingLedger role="reviewer" rows={[transcribingRow]} />);
+
+    expect(await screen.findByText("Queued for transcription")).toBeVisible();
+    expect(screen.queryByRole("progressbar")).not.toBeInTheDocument();
+    expect(mockRefresh).not.toHaveBeenCalled();
+  });
+
   it("refreshes the governed row once when a tracked job leaves the in-flight states", async () => {
     const fetchMock = vi
       .fn()

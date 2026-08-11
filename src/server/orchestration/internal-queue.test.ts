@@ -67,7 +67,7 @@ function queueVerifiedRecording(state: AppState, title: string) {
   recording.verificationSummary = session.verificationSummary;
   recording.transcriptJobState = "queued";
   job.state = "queued";
-  job.progressPercent = 0;
+  job.progressPercent = null;
   job.etaSeconds = 90;
 
   return { recording, session, job };
@@ -84,7 +84,13 @@ describe("internal transcript queue", () => {
 
       claimAvailableTranscriptJob({ workerId: "worker-a", bundle });
 
-      // Staged base first, then three real samples.
+      // A claim starts sample-free: a beat without engine data or an explicit
+      // percent keeps the bar in the liveness-pulse state.
+      const warming = heartbeatTranscriptJob({ jobId: job.id, workerId: "worker-a", bundle });
+      expect(warming.progressPercent).toBeNull();
+      expect(warming.segmentsSeen).toBeNull();
+
+      // Explicit base first, then three real samples.
       const base = heartbeatTranscriptJob({
         jobId: job.id,
         workerId: "worker-a",
@@ -211,6 +217,10 @@ describe("internal transcript queue", () => {
       job.startedAt = staleIso;
       job.updatedAt = staleIso;
       job.lastHeartbeatAt = staleIso;
+      job.progressPercent = 62;
+      job.transcribedUntilMs = 37_200;
+      job.audioDurationMs = 60_000;
+      job.segmentsSeen = 9;
       recording.transcriptJobState = "running";
       recording.updatedAt = staleIso;
       writeState(state, bundle.db);
@@ -229,6 +239,19 @@ describe("internal transcript queue", () => {
       const refreshedJob = refreshed.transcriptJobs.find((entry) => entry.id === job.id);
       expect(refreshedJob?.claimedByWorkerId).toBe("worker-new");
       expect(refreshedJob?.state).toBe("running");
+      // Stale reclaim clears the dead attempt's engine samples so the new
+      // attempt's first beat cannot re-derive the old percent.
+      expect(refreshedJob?.progressPercent).toBeNull();
+      expect(refreshedJob?.transcribedUntilMs).toBeNull();
+      expect(refreshedJob?.audioDurationMs).toBeNull();
+      expect(refreshedJob?.segmentsSeen).toBeNull();
+
+      const firstBeat = heartbeatTranscriptJob({
+        jobId: job.id,
+        workerId: "worker-new",
+        bundle,
+      });
+      expect(firstBeat.progressPercent).toBeNull();
     } finally {
       bundle.sqlite.close();
     }
@@ -278,6 +301,49 @@ describe("internal transcript queue", () => {
 
       expect(claim).not.toBeNull();
       expect(usedImmediate).toBe(true);
+    } finally {
+      bundle.sqlite.close();
+    }
+  });
+
+  it("clears the failed attempt's engine samples when requeueing for retry", () => {
+    const bundle = openAppDatabase(":memory:");
+
+    try {
+      const state = createBaseState();
+      const { job } = queueVerifiedRecording(state, "Retry clears samples recording");
+      writeState(state, bundle.db);
+
+      claimAvailableTranscriptJob({ workerId: "worker-a", bundle });
+      const running = heartbeatTranscriptJob({
+        jobId: job.id,
+        workerId: "worker-a",
+        transcribedUntilMs: 30_000,
+        audioDurationMs: 60_000,
+        segmentsSeen: 7,
+        bundle,
+      });
+      expect(running.progressPercent).toBe(50);
+
+      const requeued = failTranscriptJob({
+        jobId: job.id,
+        workerId: "worker-a",
+        detail: "Engine crashed mid-run.",
+        retryable: true,
+        bundle,
+      });
+      expect(requeued.state).toBe("queued");
+      expect(requeued.progressPercent).toBeNull();
+      expect(requeued.transcribedUntilMs).toBeNull();
+      expect(requeued.audioDurationMs).toBeNull();
+      expect(requeued.segmentsSeen).toBeNull();
+
+      const reclaim = claimAvailableTranscriptJob({ workerId: "worker-b", bundle });
+      expect(reclaim?.jobId).toBe(job.id);
+
+      const firstBeat = heartbeatTranscriptJob({ jobId: job.id, workerId: "worker-b", bundle });
+      expect(firstBeat.progressPercent).toBeNull();
+      expect(firstBeat.segmentsSeen).toBeNull();
     } finally {
       bundle.sqlite.close();
     }
