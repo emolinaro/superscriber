@@ -134,6 +134,9 @@ class Transcriber:
         except Exception as exc:
             raise SpeechStackUnavailable("faster-whisper is not installed.") from exc
 
+        self._model = None
+        self._model_path = None
+        self._model_name = None
         try:
             model = WhisperModel(
                 str(model_path),
