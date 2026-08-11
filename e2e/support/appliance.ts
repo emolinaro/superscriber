@@ -628,7 +628,7 @@ export async function setUploadFile(
   await page.locator("#upload-file").setInputFiles(file);
 }
 
-export async function uploadFixture(page: Page, input: { title: string }): Promise<string> {
+export async function uploadFixture(page: Page, input: { title: string; durationMs?: number }): Promise<string> {
   sharedRecordingTitle = input.title;
   await page.goto("/ingest");
   await page.waitForLoadState("networkidle");
@@ -640,7 +640,7 @@ export async function uploadFixture(page: Page, input: { title: string }): Promi
   await setUploadFile(page, {
     name: "fixture.wav",
     mimeType: "audio/wav",
-    buffer: buildSilentWavBuffer(),
+    buffer: buildSilentWavBuffer(input.durationMs ? { durationMs: input.durationMs } : undefined),
   });
   await expect(page.locator("#recording-title")).toHaveValue(input.title);
   await expect(page.locator("#recording-language")).toHaveValue("english");

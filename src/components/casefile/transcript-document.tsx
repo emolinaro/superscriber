@@ -19,6 +19,13 @@ type TranscriptDocumentProps = {
   onSeek: (startMs: number) => void;
   onUpdateSpeaker: (segmentId: string, value: string) => void;
   onUpdateText: (segmentId: string, value: string) => void;
+  /**
+   * Player rail/marker asked to surface one segment inline: scroll it into
+   * view inside the nearest scrollport and focus its inline review
+   * affordance (the segment's editor when editable, otherwise its timestamp)
+   * without mutating any transcript data.
+   */
+  reviewFocus?: { segmentId: string; nonce: number } | null;
 };
 
 export function TranscriptDocument({
@@ -33,6 +40,7 @@ export function TranscriptDocument({
   onUpdateText,
   safetyStripped = false,
   diffHighlight = null,
+  reviewFocus = null,
 }: TranscriptDocumentProps) {
   const readOnly = !editable || phoneSafetyMode;
   // Guarded presentation (narrow/coarse surface) silently swaps the segment
@@ -62,6 +70,39 @@ export function TranscriptDocument({
       behavior: reducedMotion ? "auto" : "smooth",
     });
   }, [activeSegmentId]);
+
+  // Rail/marker-initiated jump: bring the segment into view inside the
+  // nearest scrollport (same single-scrollport model as playback follow),
+  // then focus its inline review affordance.
+  useEffect(() => {
+    if (!reviewFocus) {
+      return;
+    }
+    const container = segmentsRef.current;
+    if (!container) {
+      return;
+    }
+    const row = container.querySelector<HTMLElement>(
+      `[data-segment-id="${CSS.escape(reviewFocus.segmentId)}"]`,
+    );
+    if (!row) {
+      return;
+    }
+
+    const reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    row.scrollIntoView({
+      block: "nearest",
+      behavior: reducedMotion ? "auto" : "smooth",
+    });
+
+    // Priority order matters: querySelector would otherwise return the first
+    // match in tree order (the timestamp precedes the editors in the row).
+    const affordance =
+      row.querySelector<HTMLElement>("[data-editor-key^='text:']") ??
+      row.querySelector<HTMLElement>("[data-editor-key^='speaker:']") ??
+      row.querySelector<HTMLElement>(".transcript-segment__timestamp");
+    affordance?.focus();
+  }, [reviewFocus]);
 
   return (
     <section aria-label="Transcript document" className="transcript-document" data-testid="transcript-start">

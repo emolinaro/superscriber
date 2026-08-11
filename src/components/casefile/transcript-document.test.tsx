@@ -228,4 +228,30 @@ describe("TranscriptDocument", () => {
     const second = screen.getByRole("article", { name: /Transcript segment 2,/ });
     expect(second.querySelector(".transcript-segment__diff-flag")).toBeNull();
   });
+
+  it("scrolls and focuses the located segment's review affordance on review focus", () => {
+    reducedMotion = true;
+    render(
+      <TranscriptDocument
+        activeSegmentId={null}
+        editable
+        onSeek={vi.fn()}
+        onUpdateSpeaker={vi.fn()}
+        onUpdateText={vi.fn()}
+        phoneSafetyMode={false}
+        reviewFocus={{ segmentId: "seg-2", nonce: 1 }}
+        segments={baseSegments}
+        summary="Ready for review."
+        onSummaryChange={vi.fn()}
+      />,
+    );
+
+    expect(scrollIntoViewMock).toHaveBeenCalledWith({
+      block: "nearest",
+      behavior: "auto",
+    });
+    expect(
+      screen.getByRole("textbox", { name: "Transcript for segment 2, 00:10-00:20" }),
+    ).toHaveFocus();
+  });
 });
