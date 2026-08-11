@@ -4,6 +4,7 @@ import { createServer, type IncomingMessage, type Server, type ServerResponse } 
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, expect, test } from "vitest";
+import { BoundedFetch, resolveIngestWatchBaseUrl } from "./ingest-watch-http";
 
 const CHUNK_BYTES = 1024 * 1024;
 const children = new Set<ChildProcessWithoutNullStreams>();
@@ -16,13 +17,15 @@ type FakeAppOptions = {
   expireFirstCookieOnChunks?: boolean;
   firstChunkGate?: Gate;
   firstSessionGate?: Gate;
-  port?: number;
+  loseFirstFinalizeResponse?: boolean;
 };
 
 type FakeApp = {
   baseUrl: string;
   chunks: Array<{ bytes: Buffer; cookie: string; sessionId: string; start: number }>;
   finalized: string[];
+  inspectedSessions: string[];
+  passwords: string[];
   sessions: Array<{ body: Record<string, unknown>; id: string }>;
   signIns: number;
 };
@@ -67,10 +70,13 @@ async function startFakeApp(options: FakeAppOptions = {}) {
     baseUrl: "",
     chunks: [],
     finalized: [],
+    inspectedSessions: [],
+    passwords: [],
     sessions: [],
     signIns: 0,
   };
   let firstChunkGated = false;
+  let finalizeResponseLost = false;
 
   const server = createServer((request, response) => {
     void (async () => {
@@ -82,8 +88,9 @@ async function startFakeApp(options: FakeAppOptions = {}) {
         return;
       }
       if (request.method === "POST" && url.pathname === "/api/auth/callback/credentials") {
-        await readBody(request);
+        const credentials = new URLSearchParams((await readBody(request)).toString("utf8"));
         state.signIns += 1;
+        state.passwords.push(credentials.get("password") ?? "");
         sendJson(response, 200, { url: "/workspace" }, {
           "set-cookie": `authjs.session-token=token-${state.signIns}; Path=/; HttpOnly`,
         });
@@ -126,7 +133,29 @@ async function startFakeApp(options: FakeAppOptions = {}) {
       if (request.method === "POST" && finalizeMatch) {
         await readBody(request);
         state.finalized.push(finalizeMatch[1]);
+        if (options.loseFirstFinalizeResponse && !finalizeResponseLost) {
+          finalizeResponseLost = true;
+          response.destroy();
+          return;
+        }
         sendJson(response, 200, { ok: true });
+        return;
+      }
+
+      const statusMatch = url.pathname.match(/^\/api\/ingest\/sessions\/([^/]+)$/);
+      if (request.method === "GET" && statusMatch) {
+        const sessionId = statusMatch[1];
+        const finalized = state.finalized.includes(sessionId);
+        state.inspectedSessions.push(sessionId);
+        sendJson(response, 200, {
+          ok: true,
+          status: {
+            sessionId,
+            state: finalized ? "verified" : "receiving",
+            integrityState: finalized ? "verifying" : "pending",
+            nextAction: finalized ? "none" : "finalize",
+          },
+        });
         return;
       }
 
@@ -138,7 +167,7 @@ async function startFakeApp(options: FakeAppOptions = {}) {
   servers.add(server);
   await new Promise<void>((resolve, reject) => {
     server.once("error", reject);
-    server.listen(options.port ?? 0, resolve);
+    server.listen(0, resolve);
   });
   const address = server.address();
   if (!address || typeof address === "string") {
@@ -154,12 +183,12 @@ async function makeWatchDirectory() {
   return directory;
 }
 
-function startWatcher(directory: string, baseUrl?: string) {
+function startWatcher(directory: string, baseUrl?: string, password = "long-enough-test-password") {
   const env: NodeJS.ProcessEnv = {
     ...process.env,
     SUPERSCRIBER_INGEST_WATCH_DIR: directory,
     SUPERSCRIBER_INGEST_WATCH_EMAIL: "watcher@example.test",
-    SUPERSCRIBER_INGEST_WATCH_PASSWORD: "long-enough-test-password",
+    SUPERSCRIBER_INGEST_WATCH_PASSWORD: password,
   };
   if (baseUrl) {
     env.SUPERSCRIBER_APP_BASE_URL = baseUrl;
@@ -228,18 +257,29 @@ afterEach(async () => {
   temporaryDirectories.clear();
 });
 
-test("uses the local app port when the base URL is omitted", async () => {
-  const app = await startFakeApp({ port: 3000 });
-  const directory = await makeWatchDirectory();
-  const watcher = startWatcher(directory);
+test("resolves the default app URL without claiming its port", () => {
+  expect(resolveIngestWatchBaseUrl(undefined)).toBe("http://localhost:3000");
+  expect(resolveIngestWatchBaseUrl("http://example.test/")).toBe("http://example.test");
+});
 
-  await waitUntilWatching(watcher);
+test("times out a request that never returns a response", async () => {
+  const server = createServer(() => {});
+  servers.add(server);
+  await new Promise<void>((resolve, reject) => {
+    server.once("error", reject);
+    server.listen(0, resolve);
+  });
+  const address = server.address();
+  if (!address || typeof address === "string") {
+    throw new Error("Stalled test server did not bind a TCP port.");
+  }
 
-  expect(app.signIns).toBe(1);
-  expect(watcher.output()).toContain("via http://localhost:3000");
-  watcher.child.kill("SIGTERM");
-  await waitForExit(watcher.child);
-}, 8_000);
+  const boundedFetch = new BoundedFetch(50);
+
+  await expect(boundedFetch.request(`http://localhost:${address.port}`)).rejects.toThrow(
+    "request timed out after 50 ms",
+  );
+});
 
 test("isolates an unreadable file and continues the same sweep", async () => {
   const app = await startFakeApp();
@@ -283,6 +323,19 @@ test("renews expired auth and uploads video in bounded chunks", async () => {
   watcher.child.kill("SIGTERM");
   await waitForExit(watcher.child);
 }, 10_000);
+
+test("preserves password whitespace when signing in", async () => {
+  const app = await startFakeApp();
+  const directory = await makeWatchDirectory();
+  const password = "  long-enough-test-password  ";
+  const watcher = startWatcher(directory, app.baseUrl, password);
+
+  await waitUntilWatching(watcher);
+
+  expect(app.passwords).toEqual([password]);
+  watcher.child.kill("SIGTERM");
+  await waitForExit(watcher.child);
+}, 8_000);
 
 test("serializes sweep triggers and remembers completed path fingerprints", async () => {
   const firstChunkGate = createGate();
@@ -341,7 +394,27 @@ test("does not finalize bytes from a file modified after hashing", async () => {
   await waitForExit(watcher.child);
 }, 11_000);
 
-test("waits for active ingest and exits after termination", async () => {
+test("reconciles a lost finalize response without creating another session", async () => {
+  const app = await startFakeApp({ loseFirstFinalizeResponse: true });
+  const directory = await makeWatchDirectory();
+  const watcher = startWatcher(directory, app.baseUrl);
+  await waitUntilWatching(watcher);
+
+  await writeFile(join(directory, "finalize-loss.wav"), "finalize exactly once");
+  await waitFor(
+    () => watcher.output().includes("queued finalize-loss.wav"),
+    `finalize reconciliation\n${watcher.output()}`,
+    7_000,
+  );
+
+  expect(app.sessions).toHaveLength(1);
+  expect(app.finalized).toEqual(["session-1"]);
+  expect(app.inspectedSessions).toEqual(["session-1"]);
+  watcher.child.kill("SIGTERM");
+  await waitForExit(watcher.child);
+}, 11_000);
+
+test("aborts a stalled ingest request during termination", async () => {
   const firstChunkGate = createGate();
   const app = await startFakeApp({ firstChunkGate });
   const directory = await makeWatchDirectory();
@@ -351,11 +424,10 @@ test("waits for active ingest and exits after termination", async () => {
   await writeFile(join(directory, "shutdown.wav"), "finish before shutdown");
   await firstChunkGate.entered;
   watcher.child.kill("SIGTERM");
-  await new Promise((resolve) => setTimeout(resolve, 200));
-  expect(watcher.child.exitCode).toBeNull();
-  expect(watcher.child.signalCode).toBeNull();
-
-  firstChunkGate.release();
-  await waitForExit(watcher.child);
-  expect(app.finalized).toEqual(["session-1"]);
+  try {
+    await waitForExit(watcher.child);
+  } finally {
+    firstChunkGate.release();
+  }
+  expect(app.finalized).toEqual([]);
 }, 9_000);

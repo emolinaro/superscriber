@@ -16,11 +16,12 @@ import { createHash } from "node:crypto";
 import { mkdirSync, readdirSync, statSync, watch, type FSWatcher, type Stats } from "node:fs";
 import { open, type FileHandle } from "node:fs/promises";
 import { basename, extname, join, resolve } from "node:path";
+import { BoundedFetch, resolveIngestWatchBaseUrl } from "./ingest-watch-http";
 
 const WATCH_DIR = process.env.SUPERSCRIBER_INGEST_WATCH_DIR?.trim() || "";
-const BASE_URL = (process.env.SUPERSCRIBER_APP_BASE_URL ?? "http://localhost:3000").replace(/\/$/, "");
+const BASE_URL = resolveIngestWatchBaseUrl(process.env.SUPERSCRIBER_APP_BASE_URL);
 const EMAIL = process.env.SUPERSCRIBER_INGEST_WATCH_EMAIL?.trim() || "ingest-service@demo.local";
-const PASSWORD = process.env.SUPERSCRIBER_INGEST_WATCH_PASSWORD?.trim() || "";
+const PASSWORD = process.env.SUPERSCRIBER_INGEST_WATCH_PASSWORD ?? "";
 
 const MIME_TYPES = new Map([
   [".wav", "audio/wav"],
@@ -44,18 +45,24 @@ const POLL_MS = 750;
 const AUTH_RETRY_MS = 5_000;
 
 type Candidate = { changedAt: number; fingerprint: string };
+type UploadSessionStatus = {
+  integrityState: string;
+  nextAction: "resume" | "restart" | "finalize" | "none";
+  state: string;
+};
 const candidates = new Map<string, Candidate>();
 const completedPaths = new Map<string, string>();
 const done = new Set<string>();
+const pendingFinalizations = new Map<string, string>();
 const refused = new Set<string>();
 const retryWakeups = new Set<() => void>();
+const http = new BoundedFetch();
 let cookie = "";
 let stopping = false;
 let watcher: FSWatcher | null = null;
 let pollTimer: NodeJS.Timeout | null = null;
 let sweepRequested = false;
 let activeSweep: Promise<void> | null = null;
-let authAttemptController: AbortController | null = null;
 let shutdownPromise: Promise<void> | null = null;
 
 function log(line: string, ...rest: unknown[]) {
@@ -98,16 +105,14 @@ async function waitForAuthRetry() {
 
 async function signIn() {
   while (!stopping) {
-    const controller = new AbortController();
-    authAttemptController = controller;
     try {
-      const csrfResponse = await fetch(`${BASE_URL}/api/auth/csrf`, { signal: controller.signal });
+      const csrfResponse = await http.request(`${BASE_URL}/api/auth/csrf`);
       if (!csrfResponse.ok) {
         throw new Error(`csrf HTTP ${csrfResponse.status}`);
       }
       const csrfCookie = (csrfResponse.headers.get("set-cookie") ?? "").split(";")[0];
       const { csrfToken } = (await csrfResponse.json()) as { csrfToken: string };
-      const signed = await fetch(`${BASE_URL}/api/auth/callback/credentials`, {
+      const signed = await http.request(`${BASE_URL}/api/auth/callback/credentials`, {
         method: "POST",
         headers: {
           "content-type": "application/x-www-form-urlencoded",
@@ -119,7 +124,6 @@ async function signIn() {
           password: PASSWORD,
           json: "true",
         }),
-        signal: controller.signal,
       });
       const setCookie = signed.headers.get("set-cookie") ?? "";
       const sessionCookie = setCookie
@@ -137,10 +141,6 @@ async function signIn() {
         break;
       }
       log("app not reachable yet; retrying in 5s", errorMessage(error));
-    } finally {
-      if (authAttemptController === controller) {
-        authAttemptController = null;
-      }
     }
     if (!(await waitForAuthRetry())) {
       break;
@@ -152,13 +152,16 @@ async function signIn() {
 function fetchWithCookie(path: string, init: RequestInit) {
   const headers = new Headers(init.headers);
   headers.set("cookie", cookie);
-  return fetch(`${BASE_URL}${path}`, {
+  return http.request(`${BASE_URL}${path}`, {
     ...init,
     headers,
   });
 }
 
 async function request(path: string, init: RequestInit) {
+  if (stopping) {
+    throw new Error("watcher shutting down");
+  }
   if (!cookie) {
     await signIn();
   }
@@ -191,6 +194,93 @@ async function hashFile(handle: FileHandle, buffer: Buffer, size: number) {
   return hash.digest("hex");
 }
 
+function isDurablyFinalized(status: UploadSessionStatus) {
+  return (
+    status.nextAction === "none" &&
+    (status.integrityState === "verified" || status.integrityState === "verifying" || status.state === "verified")
+  );
+}
+
+async function loadSessionStatus(sessionId: string) {
+  const response = await request(`/api/ingest/sessions/${sessionId}`, {
+    method: "GET",
+    cache: "no-store",
+  });
+  if (response.status === 404) {
+    return null;
+  }
+  const payload = (await response.json().catch(() => ({}))) as {
+    error?: string;
+    message?: string;
+    status?: UploadSessionStatus;
+  };
+  if (!response.ok) {
+    throw new Error(payload.error ?? payload.message ?? `session status HTTP ${response.status}`);
+  }
+  if (!payload.status) {
+    throw new Error("session status response did not include a status");
+  }
+  return payload.status;
+}
+
+function noteFinalized(digest: string, name: string) {
+  pendingFinalizations.delete(digest);
+  done.add(digest);
+  log(`queued ${name} for governed transcription`);
+  return true;
+}
+
+async function reconcileFinalizeFailure(sessionId: string, digest: string, name: string, failure: unknown) {
+  try {
+    const status = await loadSessionStatus(sessionId);
+    if (status && isDurablyFinalized(status)) {
+      return noteFinalized(digest, name);
+    }
+    if (!status || status.nextAction === "restart") {
+      pendingFinalizations.delete(digest);
+    }
+  } catch (reconciliationError) {
+    throw new Error(
+      `${errorMessage(failure)}; finalize reconciliation failed: ${errorMessage(reconciliationError)}`,
+    );
+  }
+  throw failure;
+}
+
+async function finalizeSession(sessionId: string, digest: string, name: string) {
+  pendingFinalizations.set(digest, sessionId);
+  try {
+    const response = await request(`/api/ingest/sessions/${sessionId}/finalize`, {
+      method: "POST",
+    });
+    if (!response.ok) {
+      throw new Error(`finalize HTTP ${response.status}`);
+    }
+    return noteFinalized(digest, name);
+  } catch (error) {
+    return reconcileFinalizeFailure(sessionId, digest, name, error);
+  }
+}
+
+async function resumePendingFinalize(digest: string, name: string) {
+  const sessionId = pendingFinalizations.get(digest);
+  if (!sessionId) {
+    return false;
+  }
+  const status = await loadSessionStatus(sessionId);
+  if (status && isDurablyFinalized(status)) {
+    return noteFinalized(digest, name);
+  }
+  if (!status || status.nextAction === "restart") {
+    pendingFinalizations.delete(digest);
+    return false;
+  }
+  if (status.nextAction === "finalize") {
+    return finalizeSession(sessionId, digest, name);
+  }
+  throw new Error(`session ${sessionId} cannot be finalized while its next action is ${status.nextAction}`);
+}
+
 async function ingestFile(path: string, expectedFingerprint: string) {
   const name = basename(path);
   const handle = await open(path, "r");
@@ -213,6 +303,9 @@ async function ingestFile(path: string, expectedFingerprint: string) {
     }
     if (done.has(digest)) {
       log(`skip ${name}: duplicate content already ingested this run`);
+      return true;
+    }
+    if (await resumePendingFinalize(digest, name)) {
       return true;
     }
 
@@ -268,16 +361,7 @@ async function ingestFile(path: string, expectedFingerprint: string) {
     ) {
       throw new Error("file changed during upload; retrying after it settles");
     }
-    const finalizeResponse = await request(`/api/ingest/sessions/${sessionId}/finalize`, {
-      method: "POST",
-    });
-    if (!finalizeResponse.ok) {
-      throw new Error(`finalize HTTP ${finalizeResponse.status}`);
-    }
-
-    done.add(digest);
-    log(`queued ${name} for governed transcription`);
-    return true;
+    return finalizeSession(sessionId, digest, name);
   } finally {
     await handle.close();
   }
@@ -401,7 +485,7 @@ function shutdown() {
     }
     watcher?.close();
     watcher = null;
-    authAttemptController?.abort();
+    http.abortAll();
     for (const wake of retryWakeups) {
       wake();
     }
@@ -414,6 +498,11 @@ function shutdown() {
 async function main() {
   if (!WATCH_DIR) {
     log("SUPERSCRIBER_INGEST_WATCH_DIR is not set; exiting.");
+    return;
+  }
+  if (!PASSWORD) {
+    log("SUPERSCRIBER_INGEST_WATCH_PASSWORD is not set; exiting.");
+    process.exitCode = 1;
     return;
   }
   mkdirSync(WATCH_DIR, { recursive: true });
@@ -435,7 +524,15 @@ async function main() {
     return;
   }
 
-  watcher = watch(WATCH_DIR, { persistent: true }, scheduleSweep);
+  const fileWatcher = watch(WATCH_DIR, { persistent: true }, scheduleSweep);
+  fileWatcher.on("error", (error) => {
+    log("watch error; continuing with polling", errorMessage(error));
+    fileWatcher.close();
+    if (watcher === fileWatcher) {
+      watcher = null;
+    }
+  });
+  watcher = fileWatcher;
   log(`watching ${resolve(WATCH_DIR)} as ${EMAIL} via ${BASE_URL}`);
   scheduleSweep();
   schedulePoll();

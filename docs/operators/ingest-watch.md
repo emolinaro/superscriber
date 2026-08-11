@@ -42,10 +42,14 @@ profile, or provision the identity under OIDC and upload manually).
   run; identical content arriving under any name is logged once and skipped.
 - Unsupported extensions are refused loudly once per file name; the lane
   never dies on a bad file - per-file failures are logged and isolated.
+- `.webm` is treated as `audio/webm` only. Video WebM is unsupported and must
+  be converted to a supported video container before entering the drop folder.
 - Files are hashed and uploaded through a bounded 1 MiB buffer. A file that
   changes during either pass is left unfinalized and retried after it settles.
 - An expired app session is renewed once at the request boundary before the
   current session, chunk, or finalize operation is failed and retried later.
+- HTTP requests time out after 30 seconds, and active requests are cancelled
+  during process shutdown so one stalled connection cannot block the lane.
 - The watcher **follows symlinks** (`statSync` on directory entries), so
   anyone with write access to the drop folder can land any file the watch
   process can read as an ingest - keep the drop folder's permissions as
