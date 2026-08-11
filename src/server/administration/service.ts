@@ -606,6 +606,16 @@ export function recoverRevisionVersion(
   if (!recordingRow) {
     throw new CasefileCommandError("NOT_FOUND", "No recording with that id exists.");
   }
+  if (recordingRow.pendingRevisionId) {
+    // Captain decision 2026-08-10: recovery while a submission is pending
+    // would null the pending pointer while leaving the pending revision row
+    // in `pending_approval` forever - no withdraw/approve/request-changes
+    // target resolves it. Reject instead of orphaning the lineage.
+    throw new CasefileCommandError(
+      "STATE_CHANGED",
+      "A submission is pending; resolve it before recovering an older revision.",
+    );
+  }
 
   const sourceRow = db
     .select()

@@ -782,6 +782,62 @@ describe("revision recovery (demo-governance-bringback)", () => {
       bundle.sqlite.close();
     }
   });
+
+  it("reject while a submission is pending instead of orphaning the pending row (captain decision 2026-08-10)", async () => {
+    const bundle = openAppDatabase(":memory:");
+    try {
+      insertWorkspace(bundle);
+      const admin = await createPrincipal(bundle.db, {
+        displayName: "Ada Admin",
+        email: "ada@example.com",
+        role: "admin",
+      });
+
+      insertRecording(bundle, {
+        recordingId: "rec-pending",
+        title: "Pending casefile",
+        uploadedByUserId: admin.userId,
+        currentRevisionId: "rev-v1",
+        updatedAt: FIXED_NOW,
+      });
+      bundle.db.insert(revisions).values({
+        id: "rev-v2-pending",
+        recordingId: "rec-pending",
+        version: 2,
+        state: "pending_approval",
+        basedOnRevisionId: "rev-v1",
+        createdByRole: "reviewer",
+        createdByUserId: null,
+        createdAt: FIXED_NOW,
+        submittedByUserId: admin.userId,
+        submittedAt: FIXED_NOW,
+        approvedAt: null,
+        summary: "Pending submission",
+        segmentsJson: JSON.stringify(baseSegments),
+      }).run();
+      bundle.db
+        .update(recordings)
+        .set({ pendingRevisionId: "rev-v2-pending" })
+        .where(eq(recordings.id, "rec-pending"))
+        .run();
+
+      const revisionsBefore = bundle.db.select().from(revisions).all().length;
+      expect(() =>
+        recoverRevisionVersion(
+          { recordingId: "rec-pending", sourceRevisionId: "rev-v1", actorUserId: admin.userId },
+          bundle.db,
+        ),
+      ).toThrowError(expect.objectContaining({ code: "STATE_CHANGED" }));
+
+      // Nothing mutated: the pending row is untouched, no active swap happened.
+      expect(bundle.db.select().from(revisions).all()).toHaveLength(revisionsBefore);
+      const after = bundle.db.select().from(recordings).where(eq(recordings.id, "rec-pending")).get()!;
+      expect(after.currentRevisionId).toBe("rev-v1");
+      expect(after.pendingRevisionId).toBe("rev-v2-pending");
+    } finally {
+      bundle.sqlite.close();
+    }
+  });
 });
 
 describe("recording deletion (demo-governance-bringback)", () => {
