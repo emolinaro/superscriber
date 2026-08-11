@@ -3,10 +3,13 @@
 import { cleanup, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-const { mockRefresh } = vi.hoisted(() => ({ mockRefresh: vi.fn() }));
+const { mockRefresh, mockRouter } = vi.hoisted(() => {
+  const mockRefresh = vi.fn();
+  return { mockRefresh, mockRouter: { refresh: mockRefresh } };
+});
 
 vi.mock("next/navigation", () => ({
-  useRouter: () => ({ refresh: mockRefresh }),
+  useRouter: () => mockRouter,
 }));
 
 import type { WorkInboxRow } from "@/server/work-inbox/service";
@@ -213,6 +216,55 @@ describe("RecordingLedger", () => {
       { cache: "no-store" },
     );
     expect(mockRefresh).not.toHaveBeenCalled();
+  });
+
+  it("polls every transcribing row in batches capped at fifty recordings", async () => {
+    const rows = Array.from({ length: 51 }, (_, index) => {
+      const suffix = String(index).padStart(3, "0");
+      return {
+        ...transcribingRow,
+        recordingId: `rec-live-${suffix}`,
+        title: `Live dictation ${suffix}`,
+      };
+    });
+    const fetchMock = vi.fn(async (input: string | URL | Request) => {
+      const requestUrl =
+        typeof input === "string" ? input : input instanceof Request ? input.url : input.toString();
+      const ids = new URL(requestUrl, window.location.origin).searchParams
+        .get("ids")!
+        .split(",");
+      return jsonResponse({
+        jobs: ids.map((recordingId, index) => ({
+          recordingId,
+          state: "running",
+          progressPercent: index + 1,
+          transcribedUntilMs: (index + 1) * 1_000,
+          audioDurationMs: 60_000,
+          segmentsSeen: index + 1,
+          updatedAt: "2026-08-01T12:03:05.000Z",
+        })),
+      });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(<RecordingLedger role="reviewer" rows={rows} />);
+
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
+    const requestedBatches = fetchMock.mock.calls.map(([input]) => {
+      const requestUrl =
+        typeof input === "string" ? input : input instanceof Request ? input.url : input.toString();
+      return new URL(requestUrl, window.location.origin).searchParams.get("ids")!.split(",");
+    });
+    expect(requestedBatches.map((batch) => batch.length).sort((a, b) => a - b)).toEqual([1, 50]);
+    expect(requestedBatches.flat().sort()).toEqual(rows.map((row) => row.recordingId).sort());
+
+    const finalRow = screen
+      .getByRole("rowheader", { name: /Live dictation 050/ })
+      .closest("tr");
+    expect(finalRow).not.toBeNull();
+    expect(
+      within(finalRow!).getByRole("progressbar", { name: "Transcription progress" }),
+    ).toBeVisible();
   });
 
   it("shows the queued label while a sample-free job waits for its first engine beat", async () => {

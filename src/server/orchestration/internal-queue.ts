@@ -347,9 +347,6 @@ export function heartbeatTranscriptJob(params: {
   progressPercent?: number | null;
   etaSeconds?: number | null;
   diarizationStatus?: TranscriptJob["diarizationStatus"];
-  /** Real engine samples. When both ms fields have landed, the stored
-     percent is DERIVED from them (a bare heartbeat without engine data keeps
-     percent null until the first sample lands). */
   transcribedUntilMs?: number | null;
   audioDurationMs?: number | null;
   segmentsSeen?: number | null;
@@ -376,13 +373,9 @@ export function heartbeatTranscriptJob(params: {
     refs.job.audioDurationMs = params.audioDurationMs ?? refs.job.audioDurationMs;
     refs.job.segmentsSeen = params.segmentsSeen ?? refs.job.segmentsSeen;
 
-    // Real engine progress wins: percent = floor(done/total*100), clamped a
-    // point shy of 100 until /complete lands; the supplied percent is only a
-    // fallback when no engine sample exists yet.
     const enginePercent =
       engineProgressFromMs(refs.job.transcribedUntilMs, refs.job.audioDurationMs);
-    refs.job.progressPercent =
-      enginePercent ?? params.progressPercent ?? refs.job.progressPercent;
+    refs.job.progressPercent = enginePercent ?? refs.job.progressPercent;
     refs.job.etaSeconds = params.etaSeconds ?? refs.job.etaSeconds;
     refs.job.diarizationStatus = params.diarizationStatus ?? refs.job.diarizationStatus;
     refs.job.lastError = null;

@@ -219,5 +219,62 @@ class HeartbeatLoopSimulationTest(unittest.TestCase):
         self.assertIsNone(posted[-1]["segmentsSeen"])
 
 
+class ProcessJobProgressTest(unittest.TestCase):
+    def test_short_job_posts_engine_sample_before_completion(self):
+        worker_main = load_worker_main()
+        posted = []
+
+        class ShortTranscriber:
+            def transcribe(self, job, on_progress=None):
+                self.assert_progress_callback(on_progress)
+                on_progress(4_250, 12_000, 2)
+                return "Ready", [{"id": "seg-1"}], "degraded"
+
+            @staticmethod
+            def assert_progress_callback(on_progress):
+                if on_progress is None:
+                    raise AssertionError("expected process_job to provide a progress callback")
+
+        def fake_post_json(config, path, payload):
+            posted.append((path, dict(payload)))
+            return {}
+
+        original_post = worker_main.post_json
+        worker_main.post_json = fake_post_json
+        try:
+            config = SimpleNamespace(
+                worker_id="sim-worker",
+                base_url="http://app.test",
+                secret=None,
+                heartbeat_seconds=60.0,
+                allow_stub_fallback=False,
+                device="cpu",
+            )
+            worker_main.process_job(
+                config,
+                ShortTranscriber(),
+                {"jobId": "job-short", "title": "Short recording"},
+            )
+        finally:
+            worker_main.post_json = original_post
+
+        heartbeat_posts = [
+            (index, payload)
+            for index, (path, payload) in enumerate(posted)
+            if path == "/api/internal/transcript-jobs/job-short/heartbeat"
+        ]
+        self.assertEqual(len(heartbeat_posts), 1)
+        heartbeat_index, heartbeat_payload = heartbeat_posts[0]
+        complete_index = next(
+            index
+            for index, (path, _payload) in enumerate(posted)
+            if path == "/api/internal/transcript-jobs/job-short/complete"
+        )
+        self.assertLess(heartbeat_index, complete_index)
+        self.assertEqual(heartbeat_payload["transcribedUntilMs"], 4_250)
+        self.assertEqual(heartbeat_payload["audioDurationMs"], 12_000)
+        self.assertEqual(heartbeat_payload["segmentsSeen"], 2)
+
+
 if __name__ == "__main__":
     unittest.main()

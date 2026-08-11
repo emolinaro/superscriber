@@ -16,6 +16,7 @@ export type RecordingProgressSample = {
 };
 
 const POLL_MS = 2_500;
+const MAX_RECORDINGS_PER_REQUEST = 50;
 const IN_FLIGHT = new Set(["queued", "running", "partial_result"]);
 
 // Light polling over the batch progress endpoint for the work list. Newest
@@ -37,15 +38,27 @@ export function useRecordingProgress(recordingIds: string[]) {
 
     async function poll() {
       try {
-        const response = await fetch(`/api/recordings/progress?ids=${encodeURIComponent(idsKey)}`, {
-          cache: "no-store",
-        });
-        if (!response.ok || cancelled) {
+        const ids = idsKey.split(",");
+        const batches: string[][] = [];
+        for (let index = 0; index < ids.length; index += MAX_RECORDINGS_PER_REQUEST) {
+          batches.push(ids.slice(index, index + MAX_RECORDINGS_PER_REQUEST));
+        }
+        const responses = await Promise.all(
+          batches.map((batch) =>
+            fetch(`/api/recordings/progress?ids=${encodeURIComponent(batch.join(","))}`, {
+              cache: "no-store",
+            }),
+          ),
+        );
+        if (cancelled || responses.some((response) => !response.ok)) {
           return;
         }
-        const body = (await response.json()) as { jobs: RecordingProgressSample[] };
+        const bodies = (await Promise.all(
+          responses.map((response) => response.json()),
+        )) as Array<{ jobs: RecordingProgressSample[] }>;
+        const jobs = bodies.flatMap((body) => body.jobs);
         const next: Record<string, RecordingProgressSample> = {};
-        for (const job of body.jobs) {
+        for (const job of jobs) {
           next[job.recordingId] = job;
         }
         if (cancelled) {
@@ -54,7 +67,7 @@ export function useRecordingProgress(recordingIds: string[]) {
         setSamples(next);
 
         let needsRefresh = false;
-        for (const job of body.jobs) {
+        for (const job of jobs) {
           if (!IN_FLIGHT.has(job.state) && !completedNotifiedRef.current.has(job.recordingId)) {
             completedNotifiedRef.current.add(job.recordingId);
             needsRefresh = true;

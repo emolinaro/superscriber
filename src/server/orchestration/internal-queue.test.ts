@@ -84,20 +84,19 @@ describe("internal transcript queue", () => {
 
       claimAvailableTranscriptJob({ workerId: "worker-a", bundle });
 
-      // A claim starts sample-free: a beat without engine data or an explicit
-      // percent keeps the bar in the liveness-pulse state.
+      // A claim starts sample-free: a beat without engine data keeps the bar
+      // in the liveness-pulse state.
       const warming = heartbeatTranscriptJob({ jobId: job.id, workerId: "worker-a", bundle });
       expect(warming.progressPercent).toBeNull();
       expect(warming.segmentsSeen).toBeNull();
 
-      // Explicit base first, then three real samples.
       const base = heartbeatTranscriptJob({
         jobId: job.id,
         workerId: "worker-a",
         progressPercent: 15,
         bundle,
       });
-      expect(base.progressPercent).toBe(15);
+      expect(base.progressPercent).toBeNull();
 
       const first = heartbeatTranscriptJob({
         jobId: job.id,
@@ -162,7 +161,10 @@ describe("internal transcript queue", () => {
         jobId: job.id,
         workerId: "worker-a",
         state: "partial_result",
-        progressPercent: 72,
+        progressPercent: 12,
+        transcribedUntilMs: 43_200,
+        audioDurationMs: 60_000,
+        segmentsSeen: 8,
         etaSeconds: 18,
         diarizationStatus: "degraded",
         bundle,

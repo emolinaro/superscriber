@@ -304,14 +304,56 @@ async function postInternalWorkerJson(path: string, payload: Record<string, unkn
 
 export const SIMULATED_WORKER_ID = "e2e-simulated-worker";
 
-export async function claimSimulatedTranscriptJob(): Promise<{ jobId: string; recordingId: string }> {
+export class SimulatedTranscriptJobUnavailableError extends Error {}
+
+export async function claimSimulatedTranscriptJob(
+  expectedRecordingId: string,
+): Promise<{ jobId: string; recordingId: string }> {
+  const staleCutoff = new Date(Date.now() - 120_000).toISOString();
+  const candidate = queryRuntimeRows<{ jobId: string; recordingId: string }>(
+    `select j.id as jobId, j.recording_id as recordingId
+     from transcript_jobs j
+     inner join recordings r on r.id = j.recording_id
+     left join ingestion_sessions s on s.id = r.ingestion_session_id
+     where r.integrity_state = 'verified'
+       and r.media_path is not null
+       and (s.state is null or s.state = 'verified')
+       and (
+         j.state = 'queued'
+         or (
+           j.state in ('running', 'partial_result')
+           and (j.last_heartbeat_at is null or j.last_heartbeat_at < ?)
+         )
+       )
+     order by case j.state when 'queued' then 0 else 1 end, r.updated_at asc
+     limit 1`,
+    [staleCutoff],
+  )[0];
+  if (!candidate) {
+    throw new SimulatedTranscriptJobUnavailableError(
+      "worker simulation found no queued transcript job to claim",
+    );
+  }
+  if (candidate.recordingId !== expectedRecordingId) {
+    throw new Error(
+      `worker simulation would claim recording ${candidate.recordingId}; expected ${expectedRecordingId}`,
+    );
+  }
+
   const response = await postInternalWorkerJson("/api/internal/transcript-jobs/claim", {
     workerId: SIMULATED_WORKER_ID,
     staleAfterMs: 120_000,
   });
   const job = response.job as { jobId: string; recordingId: string } | null;
   if (!job) {
-    throw new Error("worker simulation found no queued transcript job to claim");
+    throw new SimulatedTranscriptJobUnavailableError(
+      "worker simulation found no queued transcript job to claim",
+    );
+  }
+  if (job.recordingId !== expectedRecordingId) {
+    throw new Error(
+      `worker simulation claimed recording ${job.recordingId}; expected ${expectedRecordingId}`,
+    );
   }
   return job;
 }

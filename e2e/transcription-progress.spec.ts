@@ -7,6 +7,7 @@ import {
   postSimulatedHeartbeat,
   pauseInternalWorker,
   resumeInternalWorker,
+  SimulatedTranscriptJobUnavailableError,
   uploadFixture,
 } from "./support/appliance";
 
@@ -29,7 +30,7 @@ async function exerciseLiveProgress(page: Page, title: string) {
   let job: { jobId: string; recordingId: string } | null = null;
   try {
     await bootstrapAndLogin(page, adminUser);
-    await uploadFixture(page, { title });
+    const recordingId = await uploadFixture(page, { title });
 
     // The status-only casefile surfaces the live bar immediately as a warming
     // pulse - the percent stays null until the first engine sample lands.
@@ -39,9 +40,12 @@ async function exerciseLiveProgress(page: Page, title: string) {
     // Claim can retry: integrity verification finishes asynchronously.
     for (let attempt = 0; attempt < 20; attempt += 1) {
       try {
-        job = await claimSimulatedTranscriptJob();
+        job = await claimSimulatedTranscriptJob(recordingId);
         break;
-      } catch {
+      } catch (error) {
+        if (!(error instanceof SimulatedTranscriptJobUnavailableError)) {
+          throw error;
+        }
         await page.waitForTimeout(500);
       }
     }
