@@ -209,7 +209,7 @@ The next-action strip appears only when at least one role-valid actionable row e
 Every transcript-capable casefile begins directly below the app shell:
 
 1. Case header card: Back to Work exit, title, derived workflow state, current revision, assignment summary or snapshot label, the governance drawer entry (`Governance >`), and the admin oversight/action-mode control.
-2. Media transport directly above the transcript: native accessible audio/video controls, current time, jump-back, playback rate, and current segment label - no decorative waveform. It is pinned on layouts where the page scrolls; on the bounded desktop shell it scrolls with the transcript.
+2. Media transport directly above the transcript: Play/Pause toggle, jump-back, playback rate, and current segment label. Audio recordings add a decoded-wave progress bar: the drawn wave is the real seek surface (click/drag plus arrow-key/Home/End seeking), with clickable per-segment markers, an active-segment band, and a timecode readout. When the runtime cannot decode audio the transport restores the native audio controls as the fallback; video always keeps native controls. A numbered segment rail below seeks the media and surfaces that segment inline in the transcript, focusing its review affordance. Active-segment attribution is half-open (startMs <= t < endMs) so marker and rail seeks land on the target segment. The transport is pinned on layouts where the page scrolls; on the bounded desktop shell it scrolls with the transcript. At the phone breakpoint the case header and transport are unpinned and flow in document order, because the multi-row phone header card would otherwise cover the parked transport and hide the wave.
 3. Transcript area: 96 px timestamp gutter with play-from buttons, 128 px speaker field, flexible text, confidence as subordinate text. Editable only in draft state; pending and approved revisions render immutable text. The active playback row combines a visual marker with `aria-current`, and playback keeps the active segment visible inside the transcript scrollport. Segments the viewed revision changed relative to its in-casefile parent revision carry an `Edited vs vN` marker.
 4. Pinned state action bar showing only state-valid commands for the current principal, including the unsaved-state indicator.
 5. Governance drawer holding policy, provenance, assignment history, revision history, decisions, and audit - opened from the case header's `Governance >` control; nothing renders on wide screens while it is closed (no standalone rail), and the open drawer sits beside the transcript.
@@ -332,7 +332,7 @@ These requirements apply to the auth, work inbox, ingest, casefile, export, and 
 - No centered-everything app layouts
 - No decorative status cards where a list, table, or drawer is the clearer pattern
 - No ornamental warning banners on routine flows
-- No decorative waveforms or fake transport status
+- No decorative waveforms or fake transport status (the casefile wave is the decoded-audio progress/seek surface itself, with a native-controls fallback - not decoration)
 - No marketing hero, metric-card grid, repeated policy panel, or six simultaneous queue cards on the work inbox
 
 ## Deliberately Out Of Scope For V1
