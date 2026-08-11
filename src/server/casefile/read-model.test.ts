@@ -612,7 +612,7 @@ describe("getCasefile", () => {
   // someone else the read model must offer BOTH audited entry points - the
   // approver mode to decide and the reviewer mode to withdraw. Today the
   // submitter-only withdrawal binding hides the reviewer entry entirely.
-  it("offers admin reviewer and approver action modes on another user's pending casefile", async () => {
+  it("offers eligible admin action modes on pending casefiles", async () => {
     const bundle = openAppDatabase(":memory:");
     insertWorkspace(bundle);
 
@@ -670,6 +670,17 @@ describe("getCasefile", () => {
       expect(
         (casefile?.adminActionModeOptions ?? []).map((option) => option.effectiveRole).sort(),
       ).toEqual(["approver", "reviewer"]);
+
+      bundle.db
+        .update(revisions)
+        .set({ submittedByUserId: null })
+        .where(eq(revisions.id, "rev-1"))
+        .run();
+
+      const legacyCasefile = getCasefile(admin, "rec-pending", {}, bundle.db);
+      expect(
+        (legacyCasefile?.adminActionModeOptions ?? []).map((option) => option.effectiveRole),
+      ).toEqual(["approver"]);
     } finally {
       bundle.sqlite.close();
     }

@@ -394,7 +394,6 @@ export function deriveCasefileCapabilities(
       approverAuthority &&
       current &&
       pending &&
-      submitterId !== null &&
       !selfApprovalVetoed &&
       policy.canApprove,
     canRequestChanges:
@@ -402,7 +401,6 @@ export function deriveCasefileCapabilities(
       approverAuthority &&
       current &&
       pending &&
-      submitterId !== null &&
       !selfApprovalVetoed &&
       policy.canApprove,
     canReopen:
