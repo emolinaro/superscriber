@@ -92,7 +92,7 @@ describe("MediaTransport", () => {
     );
   });
 
-  it("syncs the seek target before resuming follow once per lifecycle", () => {
+  it("syncs every seek target before resuming follow and ignores seeked", () => {
     const onMediaSeek = vi.fn();
     const onActiveSegmentChange = vi.fn();
     render(
@@ -117,12 +117,14 @@ describe("MediaTransport", () => {
     audio.currentTime = 10;
     fireEvent(audio, new Event("seeking"));
 
-    expect(onMediaSeek).toHaveBeenCalledTimes(2);
+    expect(onMediaSeek).toHaveBeenCalledTimes(3);
     expect(onActiveSegmentChange).toHaveBeenCalledWith("seg-1");
     expect(onActiveSegmentChange).toHaveBeenCalledWith("seg-2");
-    expect(onActiveSegmentChange.mock.invocationCallOrder[0]).toBeLessThan(
-      onMediaSeek.mock.invocationCallOrder[0],
-    );
+    for (let index = 0; index < 3; index += 1) {
+      expect(onActiveSegmentChange.mock.invocationCallOrder[index]).toBeLessThan(
+        onMediaSeek.mock.invocationCallOrder[index],
+      );
+    }
   });
 
   it("publishes the rendered transport height as player clearance", () => {

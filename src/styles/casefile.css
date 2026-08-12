@@ -135,6 +135,7 @@
    pointer seeks and section jumps share one surface. The translucent sages
    stay legible on both appearance tokens (bone light, dark bone). */
 .media-transport__wave {
+  --wave-height: 84px;
   position: relative;
   display: grid;
   gap: var(--space-2);
@@ -149,7 +150,11 @@
   border-radius: var(--radius-control);
   background: var(--color-bone);
   cursor: pointer;
-  min-height: calc(84px + var(--space-4));
+  min-height: calc(var(--wave-height) + var(--space-4) + 2px);
+}
+
+.media-transport__wave-canvas {
+  height: var(--wave-height);
 }
 
 .media-transport__wave-stage:focus-visible {
@@ -167,7 +172,7 @@
   top: calc(var(--space-2) + 1px);
   left: calc(var(--space-2) + 1px);
   right: calc(var(--space-2) + 1px);
-  height: 84px;
+  height: var(--wave-height);
   border-radius: var(--radius-control);
   pointer-events: none;
 }
@@ -837,7 +842,7 @@
 
   .casefile-main[data-revision="true"] .media-transport__wave-stage {
     padding: var(--space-1);
-    min-height: calc(84px + var(--space-2));
+    min-height: calc(var(--wave-height) + var(--space-2) + 2px);
   }
 
   .casefile-main[data-revision="true"] .media-transport__wave-overlay {

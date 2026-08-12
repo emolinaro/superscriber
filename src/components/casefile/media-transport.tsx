@@ -59,7 +59,6 @@ export function MediaTransport({
 }: MediaTransportProps) {
   const transportRef = useRef<HTMLElement | null>(null);
   const mediaRef = useRef<HTMLAudioElement | HTMLVideoElement | null>(null);
-  const seekInProgressRef = useRef(false);
   const [mediaEl, setMediaEl] = useState<HTMLAudioElement | HTMLVideoElement | null>(null);
   // Wave scrubber (demo-waveform-player): decoded-wave progress bar replaces
   // the stock audio controls once decoding succeeds; when the runtime cannot
@@ -127,7 +126,6 @@ export function MediaTransport({
     mediaEl.addEventListener("pause", syncPlaying);
     mediaEl.addEventListener("ended", syncPlaying);
     return () => {
-      seekInProgressRef.current = false;
       mediaEl.removeEventListener("play", syncPlaying);
       mediaEl.removeEventListener("pause", syncPlaying);
       mediaEl.removeEventListener("ended", syncPlaying);
@@ -212,15 +210,7 @@ export function MediaTransport({
 
   function handleSeeking(event: SyntheticEvent<HTMLMediaElement>) {
     syncActiveSegment(event.currentTarget.currentTime);
-    if (seekInProgressRef.current) {
-      return;
-    }
-    seekInProgressRef.current = true;
     onMediaSeek?.();
-  }
-
-  function handleSeeked() {
-    seekInProgressRef.current = false;
   }
 
   function togglePlayback() {
@@ -273,7 +263,6 @@ export function MediaTransport({
         {mediaKind === "video" ? (
           <video
             controls
-            onSeeked={handleSeeked}
             onSeeking={handleSeeking}
             onTimeUpdate={(event) => syncActiveSegment(event.currentTarget.currentTime)}
             ref={attachMedia}
@@ -282,7 +271,6 @@ export function MediaTransport({
         ) : (
           <audio
             controls={nativeControls || undefined}
-            onSeeked={handleSeeked}
             onSeeking={handleSeeking}
             onTimeUpdate={(event) => syncActiveSegment(event.currentTarget.currentTime)}
             preload="metadata"

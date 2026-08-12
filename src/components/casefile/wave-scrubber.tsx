@@ -98,7 +98,7 @@ export function WaveScrubber({
           container: containerRef.current,
           media,
           url: mediaUrl,
-          height: 84,
+          height: "auto",
           barWidth: 2,
           barGap: 1,
           cursorWidth: 2,
@@ -179,14 +179,19 @@ export function WaveScrubber({
         aria-label="Wave progress. Click or use arrow keys to seek."
         className="media-transport__wave-stage"
         onKeyDown={handleKeyDown}
-        ref={containerRef}
         role="slider"
         aria-valuemin={0}
         aria-valuemax={Math.round(durationSeconds)}
         aria-valuenow={Math.round(positionSeconds)}
         aria-valuetext={`${formatTimecode(positionSeconds)} of ${formatTimecode(durationSeconds)}`}
         tabIndex={ready ? 0 : undefined}
-      />
+      >
+        <div
+          aria-hidden="true"
+          className="media-transport__wave-canvas"
+          ref={containerRef}
+        />
+      </div>
       {ready && durationSeconds > 0 ? (
         <div aria-hidden={false} className="media-transport__wave-overlay">
           {activeSegment ? (
