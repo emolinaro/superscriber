@@ -14,7 +14,7 @@ Thanks for contributing. This file covers the workflow that gets a change from y
    npm run worker:check  # syntax-check the Python worker
    ```
 
-   `worker:check` uses `.venv/bin/python3` when it exists, otherwise `python3` (or `$SUPERSCRIBER_WORKER_PYTHON`); the README's local worker setup (`uv venv`, `uv pip install -r worker/requirements.txt`) gives you that environment. For browser-level verification of the change, see the full testing gate in the README (`npm run e2e`, `npm run e2e:container`).
+   `worker:check` uses `$SUPERSCRIBER_WORKER_PYTHON` when it is non-empty, then `.venv/bin/python3` when it is executable, and finally `python3`; the README's local worker setup (`uv venv`, `uv pip install -r worker/requirements.txt`) gives you that environment. For browser-level verification of the change, see the full testing gate in the README (`npm run e2e`, `npm run e2e:container`).
 3. **Create the PR through no-mistakes.** From your machine, with the change committed on your feature branch:
 
    ```bash
@@ -49,7 +49,7 @@ Sign-off is **not required**. The repo history has no `Signed-off-by` trailers; 
 
 ## Security posture
 
-Superscriber is a governed transcription appliance for sensitive media. Everything you write in issues, PRs, commits, review comments, or attached evidence is a permanent, public-ish record. Accordingly:
+Superscriber is a governed transcription appliance for sensitive media. Everything you write in issues, PRs, commits, review comments, logs, logged evidence, or other attached evidence is a permanent, public-ish record. Accordingly:
 
 - **No PHI or customer-identifying detail** - no names, identifiers, institution details, or anything traceable to a real person or deployment.
 - **No secrets** - no tokens, keys, passwords, session data, or configuration containing credentials.
