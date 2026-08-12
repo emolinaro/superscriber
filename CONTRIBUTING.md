@@ -21,7 +21,7 @@ Thanks for contributing. This file covers the workflow that gets a change from y
    no-mistakes axi run --intent "<what this change sets out to accomplish>"
    ```
 
-   This drives the no-mistakes pipeline: rebase, code review, tests, lint, docs sync, push, and the PR creation itself. If the pipeline parks at an approval gate, read its findings and respond with `no-mistakes axi respond` (for example `--action approve`, or `--action fix --findings <ids>` to hand findings to the pipeline). Loop until it reports an outcome; `checks-passed` means your PR is up and validated.
+   This drives the no-mistakes pipeline: rebase, code review, tests, docs sync, lint, push, and the PR creation itself. If the pipeline parks at an approval gate, read its findings and respond with `no-mistakes axi respond` (for example `--action approve`, or `--action fix --findings <ids>` to hand findings to the pipeline). Loop until it reports an outcome; `checks-passed` means your PR is up and validated.
 4. **Merge only on the captain's word.** A green, reviewed PR still waits for the captain's explicit go-ahead before merge. Do not merge your own or anyone else's PR without it.
 
 ### no-mistakes is the validation gate
