@@ -18,8 +18,9 @@ export type { AuthEntry };
  * Explicit first-run vs returning-user split for the auth landing page
  * (demo sign-in restyle, replayed onto the branded surface).
  *
- * Sign up = first-time persona admission (the first-admin ceremony, or the
- * admin-provisioned explanation once an envelope exists).
+ * Sign up = first-time persona admission (the first-admin ceremony, the
+ * admin-provisioned explanation, or operator recovery when no active admin
+ * remains).
  * Sign in = returning user (institutional and/or local credentials).
  *
  * Renders as an APG tab pair: two visually distinct doors, one visible pane,
