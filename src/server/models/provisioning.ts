@@ -1,17 +1,23 @@
 import {
+  closeSync,
   createReadStream,
   createWriteStream,
   existsSync,
   mkdirSync,
+  openSync,
+  readFileSync,
   renameSync,
   rmdirSync,
   rmSync,
+  statSync,
   statfsSync,
+  writeFileSync,
 } from "node:fs";
 import { stat } from "node:fs/promises";
 import { join } from "node:path";
 import { once } from "node:events";
 import { Readable } from "node:stream";
+import { randomBytes } from "node:crypto";
 
 import { isModelProvisioned, MODEL_TIER_IDS } from "./catalog";
 import {
@@ -22,7 +28,7 @@ import {
 
 // model-tier-provisioning: server-side tier installs for the ingest picker.
 // A download stages the pinned faster-whisper artifact set under
-// "<modelRoot>/.provisioning/<tier>/" and only then reveals
+// "<modelRoot>/.provisioning/<tier>-<owner>/" and only then reveals
 // "<modelRoot>/<tier>/" with a directory rename, so the catalog can never
 // observe a half-written tier. Failures delete both staging and target directories and stay on
 // the record until a retry succeeds - the picker renders them honestly.
@@ -79,6 +85,149 @@ export class ProvisioningError extends Error {
 const registry = new Map<string, TierDownloadStatus>();
 const completions = new Map<string, Promise<void>>();
 
+type ProvisioningLockOwner = {
+  pid: number;
+  tierId: string;
+  token: string;
+  createdAt: string;
+};
+
+const LOCK_FILE_NAME = ".provisioning.lock";
+const LOCK_INITIALIZATION_GRACE_MS = 5_000;
+
+function lockPath(root: string) {
+  return join(root, LOCK_FILE_NAME);
+}
+
+function readLockOwner(root: string): ProvisioningLockOwner | null {
+  try {
+    const parsed = JSON.parse(
+      readFileSync(lockPath(root), "utf8"),
+    ) as Partial<ProvisioningLockOwner>;
+    if (
+      typeof parsed.pid !== "number" ||
+      !Number.isInteger(parsed.pid) ||
+      parsed.pid <= 0 ||
+      typeof parsed.tierId !== "string" ||
+      !MODEL_TIER_IDS.includes(parsed.tierId) ||
+      typeof parsed.token !== "string" ||
+      !/^[0-9a-f]{48}$/.test(parsed.token) ||
+      typeof parsed.createdAt !== "string"
+    ) {
+      return null;
+    }
+    return parsed as ProvisioningLockOwner;
+  } catch {
+    return null;
+  }
+}
+
+function processIsAlive(pid: number) {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    return (error as NodeJS.ErrnoException).code === "EPERM";
+  }
+}
+
+function liveLockOwner(root: string) {
+  const owner = readLockOwner(root);
+  return owner && processIsAlive(owner.pid) ? owner : null;
+}
+
+function releaseProvisioningLock(root: string, owner: ProvisioningLockOwner) {
+  const current = readLockOwner(root);
+  if (current?.token === owner.token) {
+    rmSync(lockPath(root), { force: true });
+  }
+}
+
+function acquireProvisioningLock(
+  root: string,
+  tierId: string,
+): ProvisioningLockOwner {
+  const path = lockPath(root);
+  for (let attempt = 0; attempt < 5; attempt += 1) {
+    let descriptor: number | undefined;
+    let createdLock = false;
+    try {
+      descriptor = openSync(path, "wx", 0o600);
+      createdLock = true;
+      const owner: ProvisioningLockOwner = {
+        pid: process.pid,
+        tierId,
+        token: randomBytes(24).toString("hex"),
+        createdAt: new Date().toISOString(),
+      };
+      writeFileSync(descriptor, JSON.stringify(owner), "utf8");
+      closeSync(descriptor);
+      return owner;
+    } catch (error) {
+      if (descriptor !== undefined) {
+        try {
+          closeSync(descriptor);
+        } catch {}
+      }
+      if (createdLock) {
+        rmSync(path, { force: true });
+      }
+      const code = (error as NodeJS.ErrnoException).code;
+      if (code !== "EEXIST") {
+        throw new ProvisioningError(
+          500,
+          "model_root_unwritable",
+          `The model directory ${root} cannot acquire its provisioning lock: ${error instanceof Error ? error.message : String(error)}`,
+          { modelRoot: root },
+        );
+      }
+
+      const active = liveLockOwner(root);
+      if (active) {
+        throw new ProvisioningError(
+          409,
+          "download_in_progress",
+          `A model download is already in progress for tier '${active.tierId}'. Wait for it to finish before starting another.`,
+          { activeTierId: active.tierId },
+        );
+      }
+
+      const owner = readLockOwner(root);
+      if (!owner) {
+        try {
+          if (
+            Date.now() - statSync(path).mtimeMs <
+            LOCK_INITIALIZATION_GRACE_MS
+          ) {
+            throw new ProvisioningError(
+              409,
+              "download_in_progress",
+              "A model download is acquiring the provisioning lock. Wait for it to finish before starting another.",
+            );
+          }
+        } catch (statError) {
+          if (statError instanceof ProvisioningError) throw statError;
+        }
+      }
+
+      const stalePath = `${path}.stale.${process.pid}.${randomBytes(8).toString("hex")}`;
+      try {
+        renameSync(path, stalePath);
+        rmSync(stalePath, { force: true });
+      } catch (reclaimError) {
+        if ((reclaimError as NodeJS.ErrnoException).code !== "ENOENT") {
+          throw reclaimError;
+        }
+      }
+    }
+  }
+  throw new ProvisioningError(
+    409,
+    "download_in_progress",
+    "A model download is already acquiring the provisioning lock.",
+  );
+}
+
 export function resetProvisioningRegistryForTests() {
   registry.clear();
   completions.clear();
@@ -94,8 +243,8 @@ function removeDirectory(path: string) {
   }
 }
 
-function clearStaging(root: string, tierId: string) {
-  removeDirectory(join(root, ".provisioning", tierId));
+function clearStaging(root: string, stagingDir: string) {
+  removeDirectory(stagingDir);
   try {
     rmdirSync(join(root, ".provisioning"));
   } catch {}
@@ -143,7 +292,7 @@ export function listProvisioningStatus(): {
   activeTierId: string | null;
   tiers: ModelTierProvisioningView[];
 } {
-  let activeTierId: string | null = null;
+  let activeTierId: string | null = liveLockOwner(modelRoot())?.tierId ?? null;
   const tiers = MODEL_TIER_IDS.map((tierId) => {
     const available = isModelProvisioned(tierId);
     const record = registry.get(tierId);
@@ -154,7 +303,7 @@ export function listProvisioningStatus(): {
     // reconcile to one honest answer: available means completed unless a
     // download is literally in flight right now.
     const state: TierDownloadState =
-      record?.state === "downloading"
+      record?.state === "downloading" || (activeTierId === tierId && !available)
         ? "downloading"
         : available
           ? "completed"
@@ -167,7 +316,8 @@ export function listProvisioningStatus(): {
         state,
         bytesReceived: record?.bytesReceived ?? 0,
         bytesTotal: record?.bytesTotal ?? TIER_DOWNLOADS[tierId].sizeBytes,
-        error: state === "failed" ? (record?.error ?? "Download failed.") : null,
+        error:
+          state === "failed" ? (record?.error ?? "Download failed.") : null,
       },
     } satisfies ModelTierProvisioningView;
   });
@@ -226,7 +376,9 @@ function fixtureTransport(fixtureDir: string): DownloadTransport {
     const sourcePath = join(fixtureDir, file);
     const { size } = await stat(sourcePath);
     let received = 0;
-    const read = createReadStream(sourcePath, { highWaterMark: FIXTURE_COPY_CHUNK_BYTES });
+    const read = createReadStream(sourcePath, {
+      highWaterMark: FIXTURE_COPY_CHUNK_BYTES,
+    });
     try {
       await writeChunks(
         read,
@@ -252,7 +404,9 @@ async function httpTransport(
   onProgress: (progress: DownloadProgress) => void,
 ) {
   if (!url.startsWith(`${HUGGINGFACE_DOWNLOAD_BASE_URL}/`)) {
-    throw new Error(`Refusing to download model artifacts from a non-pinned URL: ${url}`);
+    throw new Error(
+      `Refusing to download model artifacts from a non-pinned URL: ${url}`,
+    );
   }
   const controller = new AbortController();
   let stalled = false;
@@ -275,7 +429,9 @@ async function httpTransport(
       signal: controller.signal,
     });
     if (!response.ok || !response.body) {
-      throw new Error(`Download of ${url} failed with HTTP ${response.status}.`);
+      throw new Error(
+        `Download of ${url} failed with HTTP ${response.status}.`,
+      );
     }
     const total = Number(response.headers.get("content-length")) || 0;
     let received = 0;
@@ -288,10 +444,14 @@ async function httpTransport(
         yield chunk;
       }
     }
-    await writeChunks(trackActivity(body as AsyncIterable<Buffer>), destination, (chunk) => {
-      received += chunk.byteLength;
-      onProgress({ bytesReceived: received, bytesTotal: total });
-    });
+    await writeChunks(
+      trackActivity(body as AsyncIterable<Buffer>),
+      destination,
+      (chunk) => {
+        received += chunk.byteLength;
+        onProgress({ bytesReceived: received, bytesTotal: total });
+      },
+    );
     if (total > 0 && received !== total) {
       throw new Error(
         `Download of ${url} was truncated (${received} of ${total} bytes received).`,
@@ -300,7 +460,9 @@ async function httpTransport(
   } catch (error) {
     body?.destroy();
     if (stalled) {
-      throw new Error(`Download of ${url} stalled for 90 seconds without receiving data.`);
+      throw new Error(
+        `Download of ${url} stalled for 90 seconds without receiving data.`,
+      );
     }
     throw error;
   } finally {
@@ -323,14 +485,22 @@ function updateRegistry(tierId: string, patch: Partial<TierDownloadStatus>) {
   registry.set(tierId, { ...current, ...patch });
 }
 
-async function runDownload(tierId: string, deps: ProvisioningDeps) {
+async function runDownload(
+  tierId: string,
+  deps: ProvisioningDeps,
+  lockOwner: ProvisioningLockOwner,
+) {
   const root = modelRoot();
-  const stagingDir = join(root, ".provisioning", tierId);
+  const stagingDir = join(
+    root,
+    ".provisioning",
+    `${tierId}-${lockOwner.pid}-${lockOwner.token}`,
+  );
   const targetDir = join(root, tierId);
   const transportFor = deps.transportFor ?? defaultTransportFor;
 
   try {
-    clearStaging(root, tierId);
+    removeDirectory(join(root, ".provisioning"));
     mkdirSync(stagingDir, { recursive: true });
 
     const urls = modelTierDownloadUrls(tierId);
@@ -347,11 +517,14 @@ async function runDownload(tierId: string, deps: ProvisioningDeps) {
       });
       const stagedSize = (await stat(join(stagingDir, file))).size;
       completedBytes += stagedSize;
-      updateRegistry(tierId, { bytesReceived: completedBytes, bytesTotal: TIER_DOWNLOADS[tierId].sizeBytes });
+      updateRegistry(tierId, {
+        bytesReceived: completedBytes,
+        bytesTotal: TIER_DOWNLOADS[tierId].sizeBytes,
+      });
     }
 
     if (isModelProvisioned(tierId)) {
-      clearStaging(root, tierId);
+      clearStaging(root, stagingDir);
       updateRegistry(tierId, {
         state: "completed",
         finishedAt: (deps.now ?? (() => new Date()))().toISOString(),
@@ -364,7 +537,7 @@ async function runDownload(tierId: string, deps: ProvisioningDeps) {
 
     rmSync(targetDir, { recursive: true, force: true });
     renameSync(stagingDir, targetDir);
-    clearStaging(root, tierId);
+    clearStaging(root, stagingDir);
 
     if (!isModelProvisioned(tierId)) {
       throw new Error(
@@ -372,7 +545,9 @@ async function runDownload(tierId: string, deps: ProvisioningDeps) {
       );
     }
 
-    console.info(`Model download completed for tier '${tierId}' in ${targetDir}.`);
+    console.info(
+      `Model download completed for tier '${tierId}' in ${targetDir}.`,
+    );
     updateRegistry(tierId, {
       state: "completed",
       finishedAt: (deps.now ?? (() => new Date()))().toISOString(),
@@ -385,11 +560,13 @@ async function runDownload(tierId: string, deps: ProvisioningDeps) {
       error: message,
       finishedAt: (deps.now ?? (() => new Date()))().toISOString(),
     });
-    clearStaging(root, tierId);
+    clearStaging(root, stagingDir);
     if (!isModelProvisioned(tierId)) {
       removeDirectory(targetDir);
     }
     console.error(`Model download for tier '${tierId}' failed: ${message}`);
+  } finally {
+    releaseProvisioningLock(root, lockOwner);
   }
 }
 
@@ -434,39 +611,56 @@ export function startTierDownload(
       { modelRoot: root },
     );
   }
-  const probe = deps.probeDiskSpace ?? defaultDiskSpaceProbe;
-  const requiredBytes = Math.ceil(TIER_DOWNLOADS[tierId].sizeBytes * DISK_SPACE_HEADROOM);
-  const { freeBytes } = probe(root);
-  if (freeBytes < requiredBytes) {
+  const lockOwner = acquireProvisioningLock(root, tierId);
+  if (isModelProvisioned(tierId)) {
+    releaseProvisioningLock(root, lockOwner);
     throw new ProvisioningError(
-      507,
-      "insufficient_disk_space",
-      `Not enough free disk space to install the '${tierId}' model: the download needs about ${Math.ceil(requiredBytes / (1024 * 1024))} MiB but only ${Math.floor(freeBytes / (1024 * 1024))} MiB are free under ${root}.`,
-      { requiredBytes, freeBytes, modelRoot: root },
+      409,
+      "tier_already_provisioned",
+      `Transcription model tier '${tierId}' is already provisioned on this host.`,
     );
   }
+  const probe = deps.probeDiskSpace ?? defaultDiskSpaceProbe;
+  try {
+    const requiredBytes = Math.ceil(
+      TIER_DOWNLOADS[tierId].sizeBytes * DISK_SPACE_HEADROOM,
+    );
+    const { freeBytes } = probe(root);
+    if (freeBytes < requiredBytes) {
+      throw new ProvisioningError(
+        507,
+        "insufficient_disk_space",
+        `Not enough free disk space to install the '${tierId}' model: the download needs about ${Math.ceil(requiredBytes / (1024 * 1024))} MiB but only ${Math.floor(freeBytes / (1024 * 1024))} MiB are free under ${root}.`,
+        { requiredBytes, freeBytes, modelRoot: root },
+      );
+    }
 
-  const startedAt = (deps.now ?? (() => new Date()))().toISOString();
-  console.info(
-    `Model download started for tier '${tierId}' into ${root} (fixture seam: ${fixtureDirForTier(tierId) ? "on" : "off"}).`,
-  );
-  const status: TierDownloadStatus = {
-    tierId,
-    state: "downloading",
-    bytesReceived: 0,
-    bytesTotal: TIER_DOWNLOADS[tierId].sizeBytes,
-    error: null,
-    startedAt,
-    finishedAt: null,
-  };
-  registry.set(tierId, status);
+    const startedAt = (deps.now ?? (() => new Date()))().toISOString();
+    console.info(
+      `Model download started for tier '${tierId}' into ${root} (fixture seam: ${fixtureDirForTier(tierId) ? "on" : "off"}).`,
+    );
+    const status: TierDownloadStatus = {
+      tierId,
+      state: "downloading",
+      bytesReceived: 0,
+      bytesTotal: TIER_DOWNLOADS[tierId].sizeBytes,
+      error: null,
+      startedAt,
+      finishedAt: null,
+    };
+    registry.set(tierId, status);
 
-  const completion = runDownload(tierId, deps).catch((error) => {
-    // runDownload handles its own failure accounting; this guard only keeps
-    // the background task from surfacing as an unhandled rejection.
-    console.error(`Model download for tier '${tierId}' failed unexpectedly:`, error);
-  });
-  completions.set(tierId, completion);
+    const completion = runDownload(tierId, deps, lockOwner).catch((error) => {
+      console.error(
+        `Model download for tier '${tierId}' failed unexpectedly:`,
+        error,
+      );
+    });
+    completions.set(tierId, completion);
 
-  return status;
+    return status;
+  } catch (error) {
+    releaseProvisioningLock(root, lockOwner);
+    throw error;
+  }
 }

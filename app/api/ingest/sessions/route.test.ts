@@ -12,6 +12,7 @@ vi.mock("next/cache", () => ({
 }));
 
 import { getActivePrincipal } from "@/server/session";
+import { TIER_DOWNLOADS } from "@/server/models/tier-downloads";
 import type { Principal } from "@/domain/models";
 
 let uploaderPrincipal: Principal;
@@ -23,7 +24,9 @@ function callPost(body: unknown, idempotencyKey?: string) {
         method: "POST",
         headers: {
           "content-type": "application/json",
-          ...(idempotencyKey ? { "x-superscriber-idempotency-key": idempotencyKey } : {}),
+          ...(idempotencyKey
+            ? { "x-superscriber-idempotency-key": idempotencyKey }
+            : {}),
         },
         body: JSON.stringify(body),
       }),
@@ -49,7 +52,8 @@ describe("ingest session route (demo-model-tier-picker)", () => {
 
     // Dynamic imports pair with the resetModules() in afterEach so the db
     // client module state matches the fresh env for this test.
-    const { createLocalUser, toPrincipal } = await import("@/server/auth/service");
+    const { createLocalUser, toPrincipal } =
+      await import("@/server/auth/service");
     uploaderPrincipal = toPrincipal(
       await createLocalUser({
         displayName: "Uploader",
@@ -75,8 +79,12 @@ describe("ingest session route (demo-model-tier-picker)", () => {
   function provision(tierId: string) {
     const dir = join(modelRoot, tierId);
     mkdirSync(dir, { recursive: true });
-    writeFileSync(join(dir, "model.bin"), "bin");
-    writeFileSync(join(dir, "config.json"), "{}");
+    for (const file of TIER_DOWNLOADS[tierId].files) {
+      writeFileSync(
+        join(dir, file),
+        file === "config.json" ? "{}" : "artifact",
+      );
+    }
   }
 
   const VALID_BODY = {
@@ -91,7 +99,10 @@ describe("ingest session route (demo-model-tier-picker)", () => {
   it("refuses a tier with no provisioned artifacts on this host", async () => {
     vi.mocked(getActivePrincipal).mockResolvedValue(uploaderPrincipal);
 
-    const response = await callPost({ ...VALID_BODY, transcriptModel: "large-v3" });
+    const response = await callPost({
+      ...VALID_BODY,
+      transcriptModel: "large-v3",
+    });
     expect(response.status).toBe(400);
     const body = (await response.json()) as {
       error?: string;
@@ -104,14 +115,19 @@ describe("ingest session route (demo-model-tier-picker)", () => {
 
     const { readState } = await import("@/server/store");
     expect(
-      readState().recordings.some((entry) => entry.title === "Tiered interview"),
+      readState().recordings.some(
+        (entry) => entry.title === "Tiered interview",
+      ),
     ).toBe(false);
   });
 
   it("refuses a tier name outside the catalog entirely", async () => {
     vi.mocked(getActivePrincipal).mockResolvedValue(uploaderPrincipal);
 
-    const response = await callPost({ ...VALID_BODY, transcriptModel: "gpt-4-audio" });
+    const response = await callPost({
+      ...VALID_BODY,
+      transcriptModel: "gpt-4-audio",
+    });
     expect(response.status).toBe(400);
   });
 
@@ -121,7 +137,9 @@ describe("ingest session route (demo-model-tier-picker)", () => {
 
     const response = await callPost({ ...VALID_BODY, transcriptModel: "tiny" });
     expect(response.status).toBe(200);
-    const created = (await response.json()) as { status: { recordingId: string } };
+    const created = (await response.json()) as {
+      status: { recordingId: string };
+    };
 
     const { readState } = await import("@/server/store");
     const recording = readState().recordings.find(
@@ -129,9 +147,14 @@ describe("ingest session route (demo-model-tier-picker)", () => {
     );
     expect(recording?.transcriptModel).toBe("tiny");
 
-    const defaultResponse = await callPost({ ...VALID_BODY, title: "Plain interview" });
+    const defaultResponse = await callPost({
+      ...VALID_BODY,
+      title: "Plain interview",
+    });
     expect(defaultResponse.status).toBe(200);
-    const createdDefault = (await defaultResponse.json()) as { status: { recordingId: string } };
+    const createdDefault = (await defaultResponse.json()) as {
+      status: { recordingId: string };
+    };
     const recordingDefault = readState().recordings.find(
       (entry) => entry.id === createdDefault.status.recordingId,
     );
@@ -146,13 +169,19 @@ describe("ingest session route (demo-model-tier-picker)", () => {
     const secondResponse = await callPost(VALID_BODY, idempotencyKey);
     expect(firstResponse.status).toBe(200);
     expect(secondResponse.status).toBe(200);
-    const first = (await firstResponse.json()) as { status: { sessionId: string } };
-    const second = (await secondResponse.json()) as { status: { sessionId: string } };
+    const first = (await firstResponse.json()) as {
+      status: { sessionId: string };
+    };
+    const second = (await secondResponse.json()) as {
+      status: { sessionId: string };
+    };
 
     expect(second.status.sessionId).toBe(first.status.sessionId);
     const { readState } = await import("@/server/store");
     expect(
-      readState().recordings.filter((entry) => entry.title === VALID_BODY.title),
+      readState().recordings.filter(
+        (entry) => entry.title === VALID_BODY.title,
+      ),
     ).toHaveLength(1);
   });
 });

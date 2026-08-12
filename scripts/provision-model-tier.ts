@@ -8,6 +8,7 @@
 //
 // Usage:
 //   npx tsx scripts/provision-model-tier.ts --list
+//   npx tsx scripts/provision-model-tier.ts --verify small
 //   SUPERSCRIBER_TRANSCRIBE_MODEL_DIR=<dir> npx tsx scripts/provision-model-tier.ts --tier small
 
 import {
@@ -26,15 +27,20 @@ const POLL_INTERVAL_MS = 1000;
 
 function usage(): never {
   console.error(
-    "Usage: provision-model-tier.ts --list | --tier <tier-id>\n" +
+    "Usage: provision-model-tier.ts --list | --verify <tier-id> | --tier <tier-id>\n" +
       `Known tiers: ${MODEL_TIER_IDS.join(", ")}`,
   );
   process.exit(64);
 }
 
-function parseArgs(argv: string[]): { list: boolean; tierId: string | null } {
+function parseArgs(argv: string[]): {
+  list: boolean;
+  tierId: string | null;
+  verifyTierId: string | null;
+} {
   let list = false;
   let tierId: string | null = null;
+  let verifyTierId: string | null = null;
   for (let index = 0; index < argv.length; index += 1) {
     const arg = argv[index];
     if (arg === "--list") {
@@ -42,11 +48,14 @@ function parseArgs(argv: string[]): { list: boolean; tierId: string | null } {
     } else if (arg === "--tier") {
       tierId = argv[index + 1] ?? null;
       index += 1;
+    } else if (arg === "--verify") {
+      verifyTierId = argv[index + 1] ?? null;
+      index += 1;
     } else {
       usage();
     }
   }
-  return { list, tierId };
+  return { list, tierId, verifyTierId };
 }
 
 function sleep(ms: number) {
@@ -58,7 +67,8 @@ function printCatalog() {
   for (const tier of catalog.tiers) {
     const sizeMiB = Math.round(tier.downloadSizeBytes / (1024 * 1024));
     const state = tier.available ? "provisioned" : "not installed";
-    const marker = tier.id === catalog.configuredModel ? " (catalog default)" : "";
+    const marker =
+      tier.id === catalog.configuredModel ? " (catalog default)" : "";
     console.log(
       `${tier.id.padEnd(18)} ${String(sizeMiB).padStart(6)} MiB  ${state}${marker}`,
     );
@@ -66,7 +76,9 @@ function printCatalog() {
 }
 
 function tierView(tierId: string) {
-  const view = listProvisioningStatus().tiers.find((tier) => tier.tierId === tierId);
+  const view = listProvisioningStatus().tiers.find(
+    (tier) => tier.tierId === tierId,
+  );
   if (!view) {
     throw new Error(`Provisioning status for tier '${tierId}' disappeared.`);
   }
@@ -98,9 +110,8 @@ async function startDownload(tierId: string) {
         );
         if (activeTierId) {
           await waitForTierDownload(activeTierId);
-        } else {
-          await sleep(POLL_INTERVAL_MS);
         }
+        await sleep(POLL_INTERVAL_MS);
         continue;
       }
       throw error;
@@ -150,7 +161,9 @@ async function provision(tierId: string): Promise<number> {
 
     const percent =
       view.download.bytesTotal > 0
-        ? Math.floor((view.download.bytesReceived / view.download.bytesTotal) * 100)
+        ? Math.floor(
+            (view.download.bytesReceived / view.download.bytesTotal) * 100,
+          )
         : 0;
     if (percent >= lastLoggedPercent + 10) {
       lastLoggedPercent = percent;
@@ -161,9 +174,29 @@ async function provision(tierId: string): Promise<number> {
 }
 
 async function main() {
-  const { list, tierId } = parseArgs(process.argv.slice(2));
+  const { list, tierId, verifyTierId } = parseArgs(process.argv.slice(2));
   if (list) {
     printCatalog();
+    return;
+  }
+  if (verifyTierId) {
+    if (!MODEL_TIER_IDS.includes(verifyTierId)) {
+      console.error(
+        `Unknown model tier '${verifyTierId}'. Known tiers: ${MODEL_TIER_IDS.join(", ")}`,
+      );
+      process.exitCode = 64;
+      return;
+    }
+    if (!isModelProvisioned(verifyTierId)) {
+      console.error(
+        `Model tier '${verifyTierId}' is not provisioned in ${process.env.SUPERSCRIBER_TRANSCRIBE_MODEL_DIR ?? "the configured model directory"}.`,
+      );
+      process.exitCode = 1;
+      return;
+    }
+    console.log(
+      `Model tier '${verifyTierId}' is provisioned and available offline.`,
+    );
     return;
   }
   if (!tierId) {

@@ -8,6 +8,7 @@ vi.mock("@/server/session", () => ({
 }));
 
 import { getActivePrincipal } from "@/server/session";
+import { TIER_DOWNLOADS } from "@/server/models/tier-downloads";
 
 const UPLOADER = {
   userId: "user-uploader",
@@ -44,8 +45,12 @@ describe("model catalog route (demo-model-tier-picker)", () => {
   function provision(tierId: string) {
     const dir = join(modelRoot, tierId);
     mkdirSync(dir, { recursive: true });
-    writeFileSync(join(dir, "model.bin"), "bin");
-    writeFileSync(join(dir, "config.json"), "{}");
+    for (const file of TIER_DOWNLOADS[tierId].files) {
+      writeFileSync(
+        join(dir, file),
+        file === "config.json" ? "{}" : "artifact",
+      );
+    }
   }
 
   it("rejects anonymous callers", async () => {

@@ -3,7 +3,12 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 
-import { isModelProvisioned, listModelCatalog, MODEL_TIER_IDS } from "./catalog";
+import {
+  isModelProvisioned,
+  listModelCatalog,
+  MODEL_TIER_IDS,
+} from "./catalog";
+import { TIER_DOWNLOADS } from "./tier-downloads";
 
 // demo-model-tier-picker: availability is server-checked against artifacts;
 // nothing may render selectable that the host cannot run.
@@ -25,16 +30,22 @@ describe("model catalog (demo-model-tier-picker)", () => {
   });
 
   function snapshotEnv() {
-    savedEnv.SUPERSCRIBER_TRANSCRIBE_MODEL_DIR = process.env.SUPERSCRIBER_TRANSCRIBE_MODEL_DIR;
-    savedEnv.SUPERSCRIBER_TRANSCRIBE_MODEL = process.env.SUPERSCRIBER_TRANSCRIBE_MODEL;
+    savedEnv.SUPERSCRIBER_TRANSCRIBE_MODEL_DIR =
+      process.env.SUPERSCRIBER_TRANSCRIBE_MODEL_DIR;
+    savedEnv.SUPERSCRIBER_TRANSCRIBE_MODEL =
+      process.env.SUPERSCRIBER_TRANSCRIBE_MODEL;
   }
 
   function provision(root: string, ...tiers: string[]) {
     for (const tier of tiers) {
       const dir = join(root, tier);
       mkdirSync(dir, { recursive: true });
-      writeFileSync(join(dir, "model.bin"), "bin");
-      writeFileSync(join(dir, "config.json"), "{}");
+      for (const file of TIER_DOWNLOADS[tier].files) {
+        writeFileSync(
+          join(dir, file),
+          file === "config.json" ? "{}" : "artifact",
+        );
+      }
     }
   }
 
@@ -51,6 +62,18 @@ describe("model catalog (demo-model-tier-picker)", () => {
     expect(catalog.tiers.every((tier) => !tier.default)).toBe(true);
   });
 
+  it("keeps a tier unavailable when any pinned artifact is missing", () => {
+    snapshotEnv();
+    const root = mkdtempSync(join(tmpdir(), "model-catalog-partial-"));
+    const dir = join(root, "small");
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, "model.bin"), "bin");
+    writeFileSync(join(dir, "config.json"), "{}");
+    process.env.SUPERSCRIBER_TRANSCRIBE_MODEL_DIR = root;
+
+    expect(isModelProvisioned("small")).toBe(false);
+  });
+
   it("marks provisioned tiers available and defaults to best provisioned quality", () => {
     snapshotEnv();
     const root = mkdtempSync(join(tmpdir(), "model-catalog-full-"));
@@ -64,7 +87,9 @@ describe("model catalog (demo-model-tier-picker)", () => {
     expect(isModelProvisioned("large-v3")).toBe(false);
     expect(isModelProvisioned("not-a-model")).toBe(false);
     expect(catalog.defaultModel).toBe("large-v3-turbo");
-    const byId = Object.fromEntries(catalog.tiers.map((tier) => [tier.id, tier]));
+    const byId = Object.fromEntries(
+      catalog.tiers.map((tier) => [tier.id, tier]),
+    );
     expect(byId["large-v3-turbo"].default).toBe(true);
     expect(byId["small"].default).toBe(false);
     expect(byId["large-v3"].available).toBe(false);
@@ -96,7 +121,9 @@ describe("model catalog (demo-model-tier-picker)", () => {
       configuredModel: "small",
       defaultModel: "large-v3",
     });
-    const byId = Object.fromEntries(catalog.tiers.map((tier) => [tier.id, tier]));
+    const byId = Object.fromEntries(
+      catalog.tiers.map((tier) => [tier.id, tier]),
+    );
     expect(byId["large-v3"].default).toBe(true);
     expect(byId["small"].default).toBe(false);
   });
@@ -108,7 +135,9 @@ describe("model catalog (demo-model-tier-picker)", () => {
     delete process.env.SUPERSCRIBER_TRANSCRIBE_MODEL;
 
     const catalog = listModelCatalog();
-    const byId = Object.fromEntries(catalog.tiers.map((tier) => [tier.id, tier]));
+    const byId = Object.fromEntries(
+      catalog.tiers.map((tier) => [tier.id, tier]),
+    );
     for (const tier of catalog.tiers) {
       expect(Number.isFinite(tier.downloadSizeBytes)).toBe(true);
       expect(tier.downloadSizeBytes).toBeGreaterThan(0);

@@ -51,8 +51,9 @@ scripts/bootstrap-local.sh
 
 The bootstrap is idempotent and safe to re-run. It:
 
-1. Verifies Node (>= the version pinned by the repo Dockerfile), npm, and
-   Python >= 3.10, failing loudly with an install hint when anything is missing
+1. Requires exactly Node 24.18.1, the `NODE_BASE_IMAGE` version pinned at
+   `Dockerfile:4`, plus npm and Python >= 3.10 with venv/ensurepip support,
+   failing loudly with an install hint when anything is missing
 2. Runs `npm ci` and creates the transcription worker's Python virtual
    environment from `worker/requirements.txt`
 3. Initializes the database through the repo migration chain
@@ -62,11 +63,13 @@ The bootstrap is idempotent and safe to re-run. It:
    install flow the in-app picker uses
    (`src/server/models/provisioning.ts` via
    `scripts/provision-model-tier.ts`). Interactive runs offer the full tier
-   menu (default: the catalog default `small`); an already-provisioned cache
-   is detected and the download is skipped, so re-runs work offline
+   menu (default: the catalog default `small`); `--skip-model-download`
+   preserves an explicit or previously configured tier and verifies its cache,
+   so re-runs work offline without silently changing models
 5. Builds the standalone production bundle and launches app + worker under a
    SIGTERM-stoppable crash-restart supervisor with per-role logs and bounded
-   backoff (`scripts/instance-run.sh`)
+   backoff (`scripts/instance-run.sh`). Bootstrap waits for both app health and
+   the worker's offline-model readiness signal before reporting success
 
 Options: `--instance-root DIR` (default `~/.local/share/superscriber`),
 `--port N` (default `3000`), `--model-tier TIER`, `--skip-model-download`,

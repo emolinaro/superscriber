@@ -1,8 +1,7 @@
 // local-deploy-bootstrap: script-level coverage for the local deployment
 // bootstrap. Follows the repo convention for testing shell scripts from
 // vitest (scripts/run-e2e-appliance.test.ts): real invocations against
-// scratch roots under the os tmpdir (tests only - the product script itself
-// refuses /tmp instance roots).
+// isolated scratch roots, with temporary-root rejection exercised separately.
 
 import {
   chmodSync,
@@ -11,6 +10,8 @@ import {
   mkdtempSync,
   readFileSync,
   rmSync,
+  statSync,
+  symlinkSync,
   writeFileSync,
 } from "node:fs";
 import { spawn, spawnSync, type ChildProcess } from "node:child_process";
@@ -40,8 +41,13 @@ function freePort(): string {
 const RUN = join(REPO_ROOT, "scripts", "instance-run.sh");
 const STOP = join(REPO_ROOT, "scripts", "instance-stop.sh");
 const SCRIPTS = [BOOTSTRAP, RUN, STOP];
+const REQUIRED_NODE_VERSION = "24.18.1";
 
-function runScript(script: string, args: string[], env: Record<string, string> = {}) {
+function runScript(
+  script: string,
+  args: string[],
+  env: Record<string, string> = {},
+) {
   return spawnSync("bash", [script, ...args], {
     cwd: REPO_ROOT,
     encoding: "utf8",
@@ -50,10 +56,41 @@ function runScript(script: string, args: string[], env: Record<string, string> =
   });
 }
 
+function runScriptAsync(
+  script: string,
+  args: string[],
+  env: Record<string, string> = {},
+) {
+  const child = spawn("bash", [script, ...args], {
+    cwd: REPO_ROOT,
+    env: { ...process.env, ...env },
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  let stdout = "";
+  let stderr = "";
+  child.stdout?.on("data", (chunk) => {
+    stdout += String(chunk);
+  });
+  child.stderr?.on("data", (chunk) => {
+    stderr += String(chunk);
+  });
+  return new Promise<{ status: number | null; stdout: string; stderr: string }>(
+    (resolvePromise, rejectPromise) => {
+      child.on("error", rejectPromise);
+      child.on("close", (status) => resolvePromise({ status, stdout, stderr }));
+    },
+  );
+}
+
 describe("local deployment bootstrap scripts", () => {
   let testRoot: string | undefined;
+  const runningInstances = new Set<string>();
 
   afterEach(() => {
+    for (const instance of runningInstances) {
+      runScript(STOP, [instance]);
+    }
+    runningInstances.clear();
     if (testRoot) {
       rmSync(testRoot, { recursive: true, force: true });
       testRoot = undefined;
@@ -98,16 +135,106 @@ describe("local deployment bootstrap scripts", () => {
     expect(result.stderr).toMatch(/Install Node/);
   });
 
+  it("rejects a Node version newer than the Dockerfile pin", () => {
+    testRoot = worktreeTestRoot();
+    const result = runScript(
+      BOOTSTRAP,
+      ["--check-deps-only"],
+      stubToolchainEnv(testRoot, { nodeVersion: "24.18.2" }),
+    );
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain(
+      `requires exactly Node ${REQUIRED_NODE_VERSION}`,
+    );
+    expect(result.stderr).toContain("Dockerfile:4");
+  });
+
+  it("preflights Python venv and ensurepip capability", () => {
+    testRoot = worktreeTestRoot();
+    const env = stubToolchainEnv(testRoot, { brokenVenv: true });
+    const result = runScript(BOOTSTRAP, ["--check-deps-only"], env);
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain("python3-venv");
+    expect(result.stderr).toContain("ensurepip");
+  });
+
   it("rejects an instance root under /tmp", () => {
     testRoot = mkdtempSync(join(tmpdir(), "superscriber-bootstrap-test-"));
     const result = runScript(
       BOOTSTRAP,
-      ["--instance-root", join(testRoot, "nope"), "--port", freePort(), "--skip-model-download", "--skip-worker-deps"],
+      [
+        "--instance-root",
+        join(testRoot, "nope"),
+        "--port",
+        freePort(),
+        "--skip-model-download",
+        "--skip-worker-deps",
+      ],
       // Hand the script a world where npm ci is satisfied instantly: stub npm.
-      stubNpmEnv(testRoot),
+      stubToolchainEnv(testRoot),
     );
     expect(result.status).toBe(1);
     expect(result.stderr).toContain("never the system temp dir");
+  });
+
+  it("rejects the exact configured temp root before writing instance state", () => {
+    testRoot = worktreeTestRoot();
+    const result = runScript(
+      BOOTSTRAP,
+      [
+        "--instance-root",
+        testRoot,
+        "--port",
+        freePort(),
+        "--skip-model-download",
+        "--skip-worker-deps",
+      ],
+      { ...stubToolchainEnv(testRoot), TMPDIR: testRoot },
+    );
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain("never the system temp dir");
+    expect(existsSync(join(testRoot, "app.env"))).toBe(false);
+  });
+
+  it("rejects the filesystem root before writing instance state", () => {
+    testRoot = worktreeTestRoot();
+    const result = runScript(
+      BOOTSTRAP,
+      [
+        "--instance-root",
+        "/",
+        "--port",
+        freePort(),
+        "--skip-model-download",
+        "--skip-worker-deps",
+      ],
+      stubToolchainEnv(testRoot),
+    );
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain("not the filesystem root");
+  });
+
+  it("rejects a durable-looking symlink into the configured temp root", () => {
+    testRoot = worktreeTestRoot();
+    const tempRoot = join(testRoot, "temporary-storage");
+    const durableLink = join(testRoot, "durable-looking");
+    mkdirSync(tempRoot);
+    symlinkSync(tempRoot, durableLink);
+    const result = runScript(
+      BOOTSTRAP,
+      [
+        "--instance-root",
+        join(durableLink, "instance"),
+        "--port",
+        freePort(),
+        "--skip-model-download",
+        "--skip-worker-deps",
+      ],
+      { ...stubToolchainEnv(testRoot), TMPDIR: tempRoot },
+    );
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain("never the system temp dir");
+    expect(existsSync(join(tempRoot, "instance"))).toBe(false);
   });
 
   it("instance-run refuses a foreign process on the instance port", async () => {
@@ -133,19 +260,73 @@ describe("local deployment bootstrap scripts", () => {
         }
       });
       holder.on("error", rejectPromise);
-      setTimeout(() => rejectPromise(new Error("port holder never bound")), 10_000);
+      setTimeout(
+        () => rejectPromise(new Error("port holder never bound")),
+        10_000,
+      );
     });
     expect(port).toMatch(/^\d+$/);
     writeFileSync(join(instance, "app.env"), `PORT=${port}\n`);
 
     try {
-      const result = runScript(RUN, [instance]);
+      const result = runScript(RUN, [instance], withoutLsofPath(testRoot));
       expect(result.status).toBe(1);
-      expect(result.stderr + result.stdout).toContain("occupied by a foreign process");
+      expect(result.stderr + result.stdout).toContain(
+        "occupied by a foreign process",
+      );
     } finally {
       holder.kill("SIGTERM");
     }
   });
+
+  it("instance-stop never signals a recycled foreign pid", async () => {
+    testRoot = worktreeTestRoot();
+    const instance = join(testRoot, "instance");
+    mkdirSync(join(instance, "pids"), { recursive: true });
+    const holder = spawn("node", ["-e", "setTimeout(()=>{},30000)"], {
+      stdio: "ignore",
+    });
+    await waitForCondition(() => holder.pid !== undefined);
+    writeFileSync(join(instance, "pids", "supervisor.pid"), `${holder.pid}\n`);
+
+    const result = runScript(STOP, [instance]);
+    expect(result.status).toBe(0);
+    expect(holder.pid && process.kill(holder.pid, 0)).toBe(true);
+    holder.kill("SIGTERM");
+  });
+
+  it(
+    "atomically admits one supervisor across concurrent starts",
+    { timeout: 20_000 },
+    async () => {
+      testRoot = worktreeTestRoot();
+      const instance = join(testRoot, "instance");
+      const port = freePort();
+      const appServer = join(testRoot, "server.js");
+      const workerPython = join(testRoot, "worker-python");
+      writeFileSync(appServer, "setTimeout(()=>{},30000)\n");
+      writeFileSync(workerPython, "#!/bin/sh\nexec sleep 30\n");
+      chmodSync(workerPython, 0o700);
+      prepareRunnableInstance(instance, port, appServer, workerPython);
+      runningInstances.add(instance);
+
+      const results = await Promise.all(
+        Array.from({ length: 6 }, () => runScriptAsync(RUN, [instance])),
+      );
+      for (const result of results) {
+        expect(result.status, result.stderr + result.stdout).toBe(0);
+      }
+      expect(
+        results.filter((result) => result.stdout.includes("started supervisor"))
+          .length,
+      ).toBe(1);
+      expect(
+        results.filter((result) => result.stdout.includes("already running"))
+          .length,
+      ).toBe(5);
+      expect(runScript(RUN, [instance, "--status"]).status).toBe(0);
+    },
+  );
 
   it("instance-stop is a no-op when the instance never started", () => {
     testRoot = mkdtempSync(join(tmpdir(), "superscriber-bootstrap-test-"));
@@ -156,56 +337,200 @@ describe("local deployment bootstrap scripts", () => {
     expect(result.stdout).toContain("not running");
   });
 
-  it("bootstrap writes app.env without embedding secret values", () => {
-    testRoot = mkdtempSync(join(tmpdir(), "superscriber-bootstrap-test-"));
-    const instance = join(testRoot, "instance");
-    const port = freePort();
-    const result = runScript(
-      BOOTSTRAP,
-      [
-        "--instance-root", instance,
-        "--port", port,
-        "--skip-model-download",
-        "--skip-worker-deps",
-      ],
-      // Stub npm/npx so ci, tsx, and the health probe are no-ops; the
-      // stubbed `npm run build` fails, stopping bootstrap right after it has
-      // written the instance files this test asserts on.
-      {
-        ...stubNpxEnv(testRoot),
-        SUPERSCRIBER_BOOTSTRAP_ALLOW_TMP_INSTANCE_ROOT: "1",
-      },
-    );
-    // The stubbed build fails, so bootstrap stops before launch - but the
-    // instance files it already wrote are the assertion target.
-    expect(result.status).not.toBe(0);
-    const envContent = readFileSync(join(instance, "app.env"), "utf8");
-    expect(envContent).toContain("SUPERSCRIBER_AUTH_MODE=local");
-    expect(envContent).toContain(`PORT=${port}`);
-    expect(envContent).not.toContain("AUTH_SECRET=");
-    const authSecret = readFileSync(join(instance, "secrets", "auth.secret"), "utf8");
-    const engineSecret = readFileSync(join(instance, "secrets", "engine.secret"), "utf8");
-    expect(authSecret.trim()).toMatch(/^[0-9a-f]{96}$/);
-    expect(engineSecret.trim()).toMatch(/^[0-9a-f]{64}$/);
-    expect(envContent).not.toContain(authSecret.trim());
-    expect(envContent).not.toContain(engineSecret.trim());
-    expect(existsSync(join(instance, "data"))).toBe(true);
-  });
-});
+  it(
+    "bootstrap writes app.env without embedding secret values",
+    { timeout: 20_000 },
+    () => {
+      testRoot = worktreeTestRoot();
+      const instance = join(testRoot, "instance with spaces");
+      mkdirSync(join(instance, "data"), { recursive: true });
+      mkdirSync(join(instance, "logs"), { recursive: true });
+      writeFileSync(join(instance, "data", "existing.db"), "db");
+      writeFileSync(join(instance, "logs", "existing.log"), "log");
+      chmodSync(join(instance, "data"), 0o755);
+      chmodSync(join(instance, "logs"), 0o755);
+      chmodSync(join(instance, "data", "existing.db"), 0o644);
+      chmodSync(join(instance, "logs", "existing.log"), 0o644);
+      const modelDir = join(instance, "model-cache", "medium");
+      mkdirSync(modelDir, { recursive: true });
+      writeFileSync(join(modelDir, "model.bin"), "model");
+      writeFileSync(join(modelDir, "config.json"), "{}");
+      const port = freePort();
+      const result = runScript(
+        BOOTSTRAP,
+        [
+          "--instance-root",
+          instance,
+          "--port",
+          port,
+          "--model-tier",
+          "medium",
+          "--skip-model-download",
+          "--skip-worker-deps",
+        ],
+        // Stub npm/npx so ci, tsx, and the health probe are no-ops; the
+        // stubbed `npm run build` fails, stopping bootstrap right after it has
+        // written the instance files this test asserts on.
+        {
+          ...stubNpxEnv(testRoot),
+        },
+      );
+      // The stubbed build fails, so bootstrap stops before launch - but the
+      // instance files it already wrote are the assertion target.
+      expect(result.status).not.toBe(0);
+      const envContent = readFileSync(join(instance, "app.env"), "utf8");
+      expect(envContent).toContain("SUPERSCRIBER_AUTH_MODE=local");
+      expect(envContent).toContain(`PORT=${port}`);
+      expect(envContent).toContain("SUPERSCRIBER_TRANSCRIBE_MODEL=medium");
+      expect(envContent).not.toContain("AUTH_SECRET=");
+      const authSecret = readFileSync(
+        join(instance, "secrets", "auth.secret"),
+        "utf8",
+      );
+      const engineSecret = readFileSync(
+        join(instance, "secrets", "engine.secret"),
+        "utf8",
+      );
+      expect(authSecret.trim()).toMatch(/^[0-9a-f]{96}$/);
+      expect(engineSecret.trim()).toMatch(/^[0-9a-f]{64}$/);
+      expect(envContent).not.toContain(authSecret.trim());
+      expect(envContent).not.toContain(engineSecret.trim());
+      expect(existsSync(join(instance, "data"))).toBe(true);
+      const sourced = spawnSync(
+        "bash",
+        [
+          "-c",
+          `. ${shellQuote(join(instance, "app.env"))}; printf '%s' "$SUPERSCRIBER_DB_PATH"`,
+        ],
+        { encoding: "utf8" },
+      );
+      expect(sourced.status, sourced.stderr).toBe(0);
+      expect(sourced.stdout).toBe(join(instance, "data", "superscriber.db"));
+      expect(statSync(instance).mode & 0o777).toBe(0o700);
+      expect(statSync(join(instance, "app.env")).mode & 0o777).toBe(0o600);
+      expect(statSync(join(instance, "data")).mode & 0o777).toBe(0o700);
+      expect(statSync(join(instance, "logs")).mode & 0o777).toBe(0o700);
+      expect(statSync(join(instance, "data", "existing.db")).mode & 0o777).toBe(
+        0o600,
+      );
+      expect(
+        statSync(join(instance, "logs", "existing.log")).mode & 0o777,
+      ).toBe(0o600);
+    },
+  );
 
-/** PATH with a stub npm that succeeds instantly (deps "already installed"). */
-function stubNpmEnv(testRoot: string): Record<string, string> {
-  const fakeBin = join(testRoot, "bin");
-  mkdirSync(fakeBin, { recursive: true });
-  const npm = join(fakeBin, "npm");
-  writeFileSync(npm, "#!/bin/sh\nexit 0\n");
-  chmodSync(npm, 0o755);
-  return { PATH: `${fakeBin}:${process.env.PATH ?? ""}` };
-}
+  it(
+    "preserves the previously configured tier on an offline rerun",
+    { timeout: 20_000 },
+    () => {
+      testRoot = worktreeTestRoot();
+      const instance = join(testRoot, "instance");
+      const modelDir = join(instance, "model-cache", "medium");
+      mkdirSync(modelDir, { recursive: true });
+      writeFileSync(join(modelDir, "model.bin"), "model");
+      writeFileSync(join(modelDir, "config.json"), "{}");
+      writeFileSync(
+        join(instance, "app.env"),
+        "SUPERSCRIBER_TRANSCRIBE_MODEL=medium\n",
+      );
+      const result = runScript(
+        BOOTSTRAP,
+        [
+          "--instance-root",
+          instance,
+          "--port",
+          freePort(),
+          "--skip-model-download",
+          "--skip-worker-deps",
+        ],
+        stubNpxEnv(testRoot),
+      );
+      expect(result.status).not.toBe(0);
+      expect(readFileSync(join(instance, "app.env"), "utf8")).toContain(
+        "SUPERSCRIBER_TRANSCRIBE_MODEL=medium",
+      );
+    },
+  );
+
+  it(
+    "reports a worker startup failure instead of app-only readiness",
+    { timeout: 20_000 },
+    async () => {
+      testRoot = worktreeTestRoot();
+      const instance = join(testRoot, "instance");
+      const port = freePort();
+      const appServer = join(testRoot, "server.js");
+      const workerPython = join(testRoot, "worker-python");
+      writeFileSync(
+        appServer,
+        "require('node:http').createServer((_q,r)=>{r.writeHead(200,{'content-type':'application/json'});r.end('{\"ok\":true}')}).listen(Number(process.env.PORT),'127.0.0.1')\n",
+      );
+      writeFileSync(
+        workerPython,
+        "#!/bin/sh\necho '[worker] startup failed: missing model' >&2\nexit 1\n",
+      );
+      chmodSync(workerPython, 0o700);
+      prepareRunnableInstance(instance, port, appServer, workerPython);
+      runningInstances.add(instance);
+
+      const start = runScript(RUN, [instance]);
+      expect(start.status, start.stderr + start.stdout).toBe(0);
+      await waitForCondition(() => {
+        const result = runScript(RUN, [instance, "--worker-ready"]);
+        return result.status === 2;
+      });
+      const readiness = runScript(RUN, [instance, "--worker-ready"]);
+      expect(readiness.status).toBe(2);
+    },
+  );
+
+  it(
+    "quiesces a verified live instance before build activation",
+    { timeout: 20_000 },
+    async () => {
+      testRoot = worktreeTestRoot();
+      const instance = join(testRoot, "instance");
+      const port = freePort();
+      const appServer = join(testRoot, "server.js");
+      const workerPython = join(testRoot, "worker-python");
+      writeFileSync(appServer, "setTimeout(()=>{},30000)\n");
+      writeFileSync(workerPython, "#!/bin/sh\nset -eu\nexec sleep 30\n");
+      chmodSync(workerPython, 0o700);
+      prepareRunnableInstance(instance, port, appServer, workerPython);
+      const modelDir = join(instance, "model-cache", "medium");
+      mkdirSync(modelDir, { recursive: true });
+      writeFileSync(join(modelDir, "model.bin"), "model");
+      writeFileSync(join(modelDir, "config.json"), "{}");
+      runningInstances.add(instance);
+      const start = runScript(RUN, [instance]);
+      expect(start.status, start.stderr + start.stdout).toBe(0);
+      await waitForCondition(
+        () => runScript(RUN, [instance, "--status"]).status === 0,
+      );
+
+      const bootstrap = runScript(
+        BOOTSTRAP,
+        [
+          "--instance-root",
+          instance,
+          "--port",
+          port,
+          "--model-tier",
+          "medium",
+          "--skip-model-download",
+          "--skip-worker-deps",
+        ],
+        stubNpxEnv(testRoot),
+      );
+      expect(bootstrap.status).not.toBe(0);
+      expect(runScript(RUN, [instance, "--status"]).status).not.toBe(0);
+    },
+  );
+});
 
 /** PATH with stub npm + npx (skip tsx/db work) and a failing `npm run build`. */
 function stubNpxEnv(testRoot: string) {
-  const env = stubNpmEnv(testRoot);
+  const env = stubToolchainEnv(testRoot);
   const fakeBin = join(testRoot, "bin");
   const npx = join(fakeBin, "npx");
   writeFileSync(npx, "#!/bin/sh\nexit 0\n");
@@ -217,4 +542,79 @@ function stubNpxEnv(testRoot: string) {
   );
   chmodSync(join(fakeBin, "npm"), 0o755);
   return env;
+}
+
+function worktreeTestRoot() {
+  return mkdtempSync(join(REPO_ROOT, ".bootstrap-test-"));
+}
+
+function shellQuote(value: string) {
+  return `'${value.replaceAll("'", `'\\''`)}'`;
+}
+
+function stubToolchainEnv(
+  testRoot: string,
+  options: { nodeVersion?: string; brokenVenv?: boolean } = {},
+): Record<string, string> {
+  const fakeBin = join(testRoot, "bin");
+  mkdirSync(fakeBin, { recursive: true });
+  const node = join(fakeBin, "node");
+  const npm = join(fakeBin, "npm");
+  const python = join(fakeBin, "python3");
+  writeFileSync(
+    node,
+    `#!/bin/sh\nif [ "$1" = "--version" ]; then echo v${options.nodeVersion ?? REQUIRED_NODE_VERSION}; exit 0; fi\nexec ${shellQuote(process.execPath)} "$@"\n`,
+  );
+  writeFileSync(
+    npm,
+    '#!/bin/sh\nif [ "$1" = "--version" ]; then echo 11.19.0; exit 0; fi\nif [ "$1" = "run" ]; then exit 1; fi\nexit 0\n',
+  );
+  if (options.brokenVenv) {
+    writeFileSync(
+      python,
+      `#!/bin/sh\nif [ "$1" = "--version" ]; then echo 'Python 3.13.0'; exit 0; fi\nif [ "$1" = "-c" ]; then echo '3.13'; exit 0; fi\nif [ "$1" = "-m" ] && [ "$2" = "venv" ]; then exit 1; fi\nexec ${shellQuote(process.env.PYTHON ?? "python3")} "$@"\n`,
+    );
+  }
+  chmodSync(node, 0o700);
+  chmodSync(npm, 0o700);
+  if (options.brokenVenv) chmodSync(python, 0o700);
+  return { PATH: `${fakeBin}:${process.env.PATH ?? ""}` };
+}
+
+function withoutLsofPath(testRoot: string) {
+  const env = stubToolchainEnv(testRoot);
+  return { ...env, PATH: `${join(testRoot, "bin")}:/usr/bin:/bin` };
+}
+
+function prepareRunnableInstance(
+  instance: string,
+  port: string,
+  appServer: string,
+  workerPython: string,
+) {
+  mkdirSync(join(instance, "pids"), { recursive: true });
+  mkdirSync(join(instance, "logs"), { recursive: true });
+  mkdirSync(join(instance, "secrets"), { recursive: true });
+  writeFileSync(join(instance, "secrets", "auth.secret"), "auth");
+  writeFileSync(join(instance, "secrets", "engine.secret"), "engine");
+  writeFileSync(
+    join(instance, "app.env"),
+    [
+      `PORT=${port}`,
+      "HOSTNAME=127.0.0.1",
+      `SUPERSCRIBER_APP_SERVER=${shellQuote(appServer)}`,
+      `SUPERSCRIBER_WORKER_PYTHON=${shellQuote(workerPython)}`,
+      "SUPERSCRIBER_ENGINE_MODE=internal",
+      "",
+    ].join("\n"),
+  );
+}
+
+async function waitForCondition(condition: () => boolean, timeoutMs = 10_000) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (condition()) return;
+    await new Promise((resolvePromise) => setTimeout(resolvePromise, 25));
+  }
+  throw new Error("condition did not become true before timeout");
 }
