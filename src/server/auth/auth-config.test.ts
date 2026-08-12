@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { loadAuthConfig, loadDeploymentProfile } from "@/server/auth/auth-config";
 
 const fsState = vi.hoisted(() => ({
+  failNextRoleMapRead: false,
   failNextStat: false,
   roleMapReads: 0,
 }));
@@ -16,6 +17,10 @@ vi.mock("node:fs", async (importOriginal) => {
     readFileSync: (...args: unknown[]) => {
       if (typeof args[0] === "string" && args[0].endsWith("role-map.json")) {
         fsState.roleMapReads += 1;
+        if (fsState.failNextRoleMapRead) {
+          fsState.failNextRoleMapRead = false;
+          throw new Error("transient read failure");
+        }
       }
       return Reflect.apply(actual.readFileSync, actual, args);
     },
@@ -54,6 +59,7 @@ describe("auth config", () => {
 
   beforeEach(() => {
     dir = mkdtempSync(join(tmpdir(), "superscriber-authcfg-"));
+    fsState.failNextRoleMapRead = false;
     fsState.failNextStat = false;
     fsState.roleMapReads = 0;
   });
@@ -275,6 +281,22 @@ describe("auth config", () => {
     writeFileSync(roleMapPath, JSON.stringify(rotated));
     utimesSync(roleMapPath, new Date(), new Date(Date.now() + 10_000));
 
+    expect(loadDualRoleMap(roleMapPath).groups.admin).toBe(rotated.groups.admin);
+    expect(fsState.roleMapReads).toBe(3);
+  });
+
+  it("retries a role-map mtime after a transient read failure", () => {
+    const roleMapPath = writeRoleMap(VALID_ROLE_MAP);
+    const loaded = loadDualRoleMap(roleMapPath);
+    const rotated = {
+      ...VALID_ROLE_MAP,
+      groups: { ...VALID_ROLE_MAP.groups, admin: "54444444-4444-4444-8444-444444444444" },
+    };
+    writeFileSync(roleMapPath, JSON.stringify(rotated));
+    utimesSync(roleMapPath, new Date(), new Date(Date.now() + 5_000));
+    fsState.failNextRoleMapRead = true;
+
+    expect(loadDualRoleMap(roleMapPath)).toEqual(loaded);
     expect(loadDualRoleMap(roleMapPath).groups.admin).toBe(rotated.groups.admin);
     expect(fsState.roleMapReads).toBe(3);
   });

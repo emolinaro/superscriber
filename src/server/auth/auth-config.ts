@@ -50,6 +50,8 @@ export class AuthConfigError extends Error {
   }
 }
 
+class RoleMapReadError extends AuthConfigError {}
+
 const roleMapFileSchema = z
   .object({
     version: z.number().int().positive(),
@@ -98,7 +100,7 @@ export function loadRoleMapFile(path: string): RoleMap {
   try {
     raw = readFileSync(path, "utf8");
   } catch {
-    throw new AuthConfigError(`Role map file is not readable: ${path}`);
+    throw new RoleMapReadError(`Role map file is not readable: ${path}`);
   }
 
   let parsedJson: unknown;
@@ -159,7 +161,7 @@ function loadCachedRoleMapFile(
     if (!cached || !(error instanceof AuthConfigError)) {
       throw error;
     }
-    if (mtime !== UNKNOWN_ROLE_MAP_MTIME) {
+    if (mtime !== UNKNOWN_ROLE_MAP_MTIME && !(error instanceof RoleMapReadError)) {
       roleMapCache.set(cacheKey, { ...cached, rejectedMtimeMs: mtime });
     }
     return cached.value;

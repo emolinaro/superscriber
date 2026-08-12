@@ -6,7 +6,7 @@ import {
   rmSync,
   writeFileSync,
 } from "node:fs";
-import { execFileSync, spawnSync } from "node:child_process";
+import { spawnSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -32,14 +32,6 @@ describe("e2e appliance OIDC directory", () => {
     mkdirSync(oidcDir, { recursive: true });
     writeFileSync(markerPath, "preserve");
 
-    const pythonPath = execFileSync("which", ["python3"], { encoding: "utf8" }).trim();
-    const fakePython = join(fakeBin, "python3");
-    writeFileSync(
-      fakePython,
-      `#!/bin/sh\nif [ "\${1:-}" = "-" ]; then\n  exec '${pythonPath}' "$@"\nfi\nexit 0\n`,
-    );
-    chmodSync(fakePython, 0o755);
-
     const fakeDocker = join(fakeBin, "docker");
     writeFileSync(fakeDocker, "#!/bin/sh\nexit 0\n");
     chmodSync(fakeDocker, 0o755);
@@ -50,6 +42,7 @@ describe("e2e appliance OIDC directory", () => {
       env: {
         ...process.env,
         PATH: `${fakeBin}:${process.env.PATH ?? ""}`,
+        SUPERSCRIBER_E2E_DATA_DIR: join(testRoot, "data"),
         SUPERSCRIBER_E2E_OIDC_DIR: oidcDir,
       },
     });
