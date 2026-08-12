@@ -70,7 +70,12 @@ export function findScrollParent(element: HTMLElement): HTMLElement | null {
 export function isRowInScrollView(row: HTMLElement): boolean {
   const rect = row.getBoundingClientRect();
   const parent = findScrollParent(row);
-  const top = parent ? parent.getBoundingClientRect().top : 0;
+  const scrollTarget = parent ?? document.documentElement;
+  const computedPadding = Number.parseFloat(
+    window.getComputedStyle(scrollTarget).scrollPaddingTop,
+  );
+  const scrollPaddingTop = Number.isFinite(computedPadding) ? computedPadding : 0;
+  const top = (parent ? parent.getBoundingClientRect().top : 0) + scrollPaddingTop;
   const bottom = parent ? parent.getBoundingClientRect().bottom : window.innerHeight;
   return rect.bottom > top && rect.top < bottom;
 }

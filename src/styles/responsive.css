@@ -98,6 +98,7 @@
      transport takes the single pinned slot - no overlap, no stacked-chrome
      jumpiness. Other pages keep their sticky shell bar untouched. */
   body:has(.casefile-page) .app-shell__header,
+  body:has(.casefile-page) .banner-emergency,
   .case-header {
     position: static;
   }
@@ -112,6 +113,21 @@
      scrolls land below the chrome. */
   html:has(.casefile-page) {
     scroll-padding-top: 432px;
+  }
+
+  .media-transport__rail {
+    display: none;
+  }
+
+  .media-transport__rate-field {
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
+    min-width: 0;
+  }
+
+  .media-transport__rate-field .field-label {
+    white-space: nowrap;
   }
 }
 
@@ -170,23 +186,11 @@
     display: grid;
   }
 
-  /* Phone pinned-chrome budget (player-pinned-center): the pinned transport
-     must leave the transcript readable below it. The chip rail duplicates
-     the per-row timestamp seek, so it collapses, and the action row splits
-     into two columns instead of four stacked rows. */
-  .media-transport__rail {
-    display: none;
-  }
-
   .media-transport__actions {
     grid-template-columns: 1fr 1fr;
   }
 
   .media-transport__rate-field {
-    display: flex;
-    align-items: center;
-    gap: var(--space-2);
-    min-width: 0;
     grid-column: 1 / -1;
   }
 

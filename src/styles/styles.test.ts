@@ -154,19 +154,28 @@ describe("product css contract", () => {
       /@media \(max-width: 1099px\) \{([\s\S]*?)\n\}\n/,
     );
     expect(windowScrollMedia?.[1]).toContain("body:has(.casefile-page) .app-shell__header");
+    expect(windowScrollMedia?.[1]).toContain("body:has(.casefile-page) .banner-emergency");
     const windowTransport = windowScrollMedia?.[1].match(/\.media-transport\s*\{([^}]*)\}/);
     expect(windowTransport?.[1]).toContain("position: sticky");
     expect(windowTransport?.[1]).toContain("top: 0");
     // The case header must not double-park above the pinned transport on
     // window-scrolling surfaces.
     expect(windowScrollMedia?.[1]).toMatch(/\.case-header[\s,\{][^}]*position: static/);
+    expect(windowScrollMedia?.[1]).toMatch(
+      /\.media-transport__rail\s*\{[^}]*display: none/,
+    );
+    const compactRate = windowScrollMedia?.[1].match(
+      /\.media-transport__rate-field\s*\{([^}]*)\}/,
+    );
+    expect(compactRate?.[1]).toContain("display: flex");
+    expect(compactRate?.[1]).toContain("min-width: 0");
 
     const phoneMedia = responsive.match(
       /@media \(max-width: 767px\), \(max-height: 767px\) and \(pointer: coarse\) \{([\s\S]*?)\n\}/,
     );
-    // Phone pinned-chrome budget: the chip rail collapses so the pinned
-    // transport leaves the transcript readable below it.
-    expect(phoneMedia?.[1]).toMatch(/\.media-transport__rail\s*\{[^}]*display: none/);
+    expect(phoneMedia?.[1]).toMatch(
+      /\.media-transport__actions\s*\{[^}]*grid-template-columns: 1fr 1fr/,
+    );
   });
 
   it("keeps the exact responsive, sticky, reduced-motion, and export rules", () => {

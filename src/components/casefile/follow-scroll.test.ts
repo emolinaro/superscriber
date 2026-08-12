@@ -100,6 +100,42 @@ describe("isRowInScrollView", () => {
 
     scroller.remove();
   });
+
+  it("excludes window content hidden by scroll padding", () => {
+    const row = document.createElement("div");
+    document.body.appendChild(row);
+    document.documentElement.style.scrollPaddingTop = "120px";
+
+    row.getBoundingClientRect = () => fakeRect(80, 110);
+    expect(isRowInScrollView(row)).toBe(false);
+
+    row.getBoundingClientRect = () => fakeRect(130, 180);
+    expect(isRowInScrollView(row)).toBe(true);
+
+    document.documentElement.style.removeProperty("scroll-padding-top");
+    row.remove();
+  });
+
+  it("excludes scrollport content hidden by scroll padding", () => {
+    const scroller = document.createElement("div");
+    scroller.style.overflowY = "auto";
+    scroller.style.scrollPaddingTop = "100px";
+    Object.defineProperty(scroller, "clientHeight", { value: 300 });
+    Object.defineProperty(scroller, "scrollHeight", { value: 900 });
+    scroller.getBoundingClientRect = () => fakeRect(200, 500);
+
+    const row = document.createElement("div");
+    scroller.appendChild(row);
+    document.body.appendChild(scroller);
+
+    row.getBoundingClientRect = () => fakeRect(250, 280);
+    expect(isRowInScrollView(row)).toBe(false);
+
+    row.getBoundingClientRect = () => fakeRect(310, 360);
+    expect(isRowInScrollView(row)).toBe(true);
+
+    scroller.remove();
+  });
 });
 
 describe("findScrollParent", () => {

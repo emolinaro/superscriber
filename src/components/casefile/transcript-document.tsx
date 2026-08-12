@@ -45,6 +45,15 @@ type TranscriptDocumentProps = {
   reviewFocus?: { segmentId: string; nonce: number } | null;
 };
 
+const FOLLOW_SCROLL_IGNORED_TARGETS =
+  ".media-transport__rail, input, textarea, select, [contenteditable], [role='slider']";
+
+function isFollowScrollIgnoredTarget(target: EventTarget | null): boolean {
+  return (
+    target instanceof Element && target.closest(FOLLOW_SCROLL_IGNORED_TARGETS) !== null
+  );
+}
+
 export function TranscriptDocument({
   activeSegmentId,
   editable,
@@ -81,43 +90,30 @@ export function TranscriptDocument({
   // pause themselves.
   useEffect(() => {
     const pauseFollow = (event: Event) => {
-      const target = event.target;
-      if (target instanceof Element && target.closest(".media-transport__rail")) {
-        // The rail is a horizontal segment browser inside the pinned
-        // transport; scrubbing its chips is transport interaction, not
-        // transcript scrolling.
+      if (isFollowScrollIgnoredTarget(event.target)) {
         return;
       }
       followPausedRef.current = true;
     };
     const pauseFollowForScrollKey = (event: KeyboardEvent) => {
-      const target = event.target;
-      if (
-        target instanceof Element &&
-        target.closest("input, textarea, select, [contenteditable], [role='slider']")
-      ) {
-        return;
-      }
       if (FOLLOW_SCROLL_PAUSE_KEYS.has(event.key)) {
-        followPausedRef.current = true;
+        pauseFollow(event);
       }
     };
     window.addEventListener("wheel", pauseFollow, { capture: true, passive: true });
     window.addEventListener("touchmove", pauseFollow, { capture: true, passive: true });
-    window.addEventListener("keydown", pauseFollowForScrollKey);
+    window.addEventListener("keydown", pauseFollowForScrollKey, true);
     return () => {
       window.removeEventListener("wheel", pauseFollow, true);
       window.removeEventListener("touchmove", pauseFollow, true);
-      window.removeEventListener("keydown", pauseFollowForScrollKey);
+      window.removeEventListener("keydown", pauseFollowForScrollKey, true);
     };
   }, []);
 
   // Rail/marker-initiated jump: bring the segment into view inside the
   // nearest scrollport (same single-scrollport model as playback follow),
   // then focus its inline review affordance. Declared BEFORE the playback
-  // follow effect so a locate (which also re-engages follow) ends centered:
-  // this effect's nearest-edge scroll runs first and the follow effect's
-  // centering scroll completes the landing.
+  // follow effect so a locate re-engages follow before playback advances.
   useEffect(() => {
     if (!reviewFocus) {
       return;
@@ -138,7 +134,7 @@ export function TranscriptDocument({
 
     const reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
     row.scrollIntoView({
-      block: "nearest",
+      block: "center",
       behavior: reducedMotion ? "auto" : "smooth",
     });
 
