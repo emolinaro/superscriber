@@ -22,12 +22,16 @@ The public authentication landing page footer always links back to this reposito
 - Unmanageable-instance recovery: if accounts survive but no active administrator remains, the sign-up door offers an operator-gated claim ceremony for a fresh admin, protected by a single-use on-host claim token so a network-only attacker without the host proof cannot take the instance over ([`docs/operators/admin-recovery.md`](./docs/operators/admin-recovery.md))
 - Role-aware work inbox ledgers (tabbed per role) and a transcript-first casefile for review
 - Live, engine-derived transcription progress in work ledgers and uploader status casefiles
+- Decoded-waveform media transport on the casefile: the drawn wave is the real seek surface (click, drag, and keyboard seeking) with per-segment markers, an active-segment band, and a timecode readout; native controls remain the fallback for video and undecodable audio
 - Governed casefile commands - save draft, batch speaker rename with a confirmed count summary (renaming onto an existing name merges both), submit, withdraw submission, request changes, approve, reopen - with non-admin submitters barred from approving or requesting changes on their own revisions; see the [behavioral contract](./DESIGN.md#revision-and-decision-commands)
 - Admin read-only oversight by default, plus an explicit, record-bound, audited reviewer/approver action mode across every casefile; see [admin oversight and action mode](./DESIGN.md#admin-oversight-and-action-mode)
 - Append-only assignment history, with approval completing all active assignments atomically
-- Unified resumable ingest (1 MiB chunks) for upload and browser audio recording, with host-verified faster-whisper model selection under Advanced settings
+- Unified resumable ingest (1 MiB chunks) for upload and browser audio recording, with host-verified faster-whisper model selection under Advanced settings; admins can install unprovisioned model tiers in place with a one-click Download per tier (exact size, live byte progress, no appliance restart)
+- Batch multi-file upload: drop several files into one submission and track them on a persistent transfer card with per-file byte progress and per-file results; each file rides the same resumable 1 MiB session protocol, and one bad file never stops the batch
+- Governed folder-watch ingest lane for unattended operator-managed intake from a watched directory ([`docs/operators/ingest-watch.md`](./docs/operators/ingest-watch.md))
 - Audited, policy-gated transcript export in `DOCX`, `TXT`, `MD`, `SRT`, `VTT`, `CSV`, `TSV`, and `JSON` - defaulting to the approved record, with revision-picker export of any revision under the same authority
 - Phone safety mode: status, inbox, read-only casefile, and supported ingest on phones; governed actions require a tablet or desktop
+- Light, Dark, and System appearance themes with a flash-free boot and a per-user preference persisted server-side so the choice follows the account across devices
 - SQLite-backed workflow persistence with mounted media storage
 - Internal Python worker with GPU-preferred transcription when compatible hardware is available
 - Alternate orchestration modes for `mock` and `webhook`
