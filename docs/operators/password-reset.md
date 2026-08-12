@@ -60,12 +60,13 @@ Administration > Accounts offers **Reset password** on every active account
 (tablet and desktop only; phone safety mode hides all mutation controls).
 
 1. Enter a governed reason (10-500 characters).
-2. For another account, choose delivery: out-of-band handoff (always
-   available; the link is shown exactly once with its expiry) or email (only
-   when the seam is configured; the link is never shown to the administrator).
-   Resetting the current account always uses one-time link handoff, so the
-   Email option is not offered.
-3. Issuance immediately signs the target out everywhere, cancels any reset
+2. For another account, delivery depends on reset-mail configuration. When
+   mail is configured, choose out-of-band handoff (the link is shown exactly
+   once with its expiry) or email (the link is never shown to the
+   administrator). When mail is not configured, the one-time link is shown
+   for direct handoff without a delivery choice. Resetting the current account
+   always uses one-time link handoff, so the Email option is not offered.
+3. Issuance immediately revokes every target session, cancels any reset
    already in progress, and produces one single-use 60-minute link.
 
 Boundaries:
@@ -104,8 +105,9 @@ Boundaries:
 ## Recovery playbook (no mail configured)
 
 1. User reports being locked out.
-2. Administration > Accounts > the user's row > **Reset password** with a
-   reason, delivery "Out-of-band handoff".
+2. Administration > Accounts > the user's row > **Reset password**, enter a
+   reason, and issue the reset. With mail unconfigured, one-time link handoff
+   is selected automatically.
 3. Copy the one-time link and deliver it by a channel you trust (in person,
    phone call, existing secure channel) before the 60-minute expiry.
 4. The user sets a new password; all of their previous sessions are already
