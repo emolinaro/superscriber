@@ -25,10 +25,6 @@ function previewRename(
   fromSpeaker: string,
   toSpeaker: string,
 ): { plan: SpeakerRenamePlan; error: null } | { plan: null; error: string | null } {
-  if (!fromSpeaker) {
-    return { plan: null, error: null };
-  }
-
   // The pre-commit summary mirrors the server-side batch plan exactly, so
   // counts shown here are the counts the governed command will write.
   try {

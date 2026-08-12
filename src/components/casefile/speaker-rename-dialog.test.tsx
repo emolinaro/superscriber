@@ -18,7 +18,10 @@ const segments = [
   segment("seg-4", "Speaker B"),
 ];
 
-function renderDialog(onConfirm = vi.fn().mockResolvedValue({ ok: true })) {
+function renderDialog(
+  onConfirm = vi.fn().mockResolvedValue({ ok: true }),
+  dialogSegments = segments,
+) {
   const appRoot = document.createElement("div");
   appRoot.id = "app-root";
   document.body.append(appRoot);
@@ -28,7 +31,7 @@ function renderDialog(onConfirm = vi.fn().mockResolvedValue({ ok: true })) {
       onCancel={vi.fn()}
       onConfirm={onConfirm}
       open
-      segments={segments}
+      segments={dialogSegments}
     />,
     { container: appRoot },
   );
@@ -104,6 +107,22 @@ describe("SpeakerRenameDialog", () => {
 
     await waitFor(() =>
       expect(onConfirm).toHaveBeenCalledWith({ fromSpeaker: "Speaker B", toSpeaker: "Dana" }),
+    );
+  });
+
+  it("confirms an empty legacy source through exact existence lookup", async () => {
+    const user = userEvent.setup();
+    const onConfirm = vi.fn().mockResolvedValue({ ok: true });
+    renderDialog(onConfirm, [segment("legacy-1", "")]);
+
+    await user.type(screen.getByLabelText("New speaker name"), "Dana");
+
+    expect(screen.getByTestId("speaker-rename-summary")).toHaveTextContent(
+      'Renamed "" to "Dana" across 1 segment.',
+    );
+    await user.click(screen.getByRole("button", { name: "Rename speaker" }));
+    await waitFor(() =>
+      expect(onConfirm).toHaveBeenCalledWith({ fromSpeaker: "", toSpeaker: "Dana" }),
     );
   });
 

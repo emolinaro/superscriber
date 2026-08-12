@@ -1235,6 +1235,55 @@ describe("casefile draft commands", () => {
     }
   });
 
+  it("preserves unrelated legacy labels during an exact-source rename", async () => {
+    const { bundle, reviewer } = await setupDraftFixture();
+    const overLengthLabel = "x".repeat(81);
+    const legacySegments = [
+      { ...baseSegments[0], speakerLabel: " Legacy " },
+      { ...baseSegments[1], speakerLabel: " Legacy " },
+      {
+        ...baseSegments[0],
+        id: "seg-3",
+        startMs: 9_000,
+        endMs: 12_000,
+        speakerLabel: " Other ",
+      },
+      {
+        ...baseSegments[1],
+        id: "seg-4",
+        startMs: 12_000,
+        endMs: 15_000,
+        speakerLabel: overLengthLabel,
+      },
+    ];
+
+    try {
+      bundle.db
+        .update(revisions)
+        .set({ segmentsJson: JSON.stringify(legacySegments) })
+        .where(eq(revisions.id, "rev-1"))
+        .run();
+
+      const result = renameSpeakerCommand(reviewer, {
+        recordingId: "rec-1",
+        expectedCurrentRevisionId: "rev-1",
+        fromSpeaker: " Legacy ",
+        toSpeaker: "Dana",
+      }, bundle);
+
+      expect(result.rename.renamedSegmentCount).toBe(2);
+      expect(result.rename.segmentIds).toEqual(["seg-1", "seg-2"]);
+      expect(result.revision.segments.map((segment) => segment.speakerLabel)).toEqual([
+        "Dana",
+        "Dana",
+        " Other ",
+        overLengthLabel,
+      ]);
+    } finally {
+      bundle.sqlite.close();
+    }
+  });
+
   it("supersedes the renamed draft when recovering its ancestor", async () => {
     const { bundle, reviewer, admin } = await setupDraftFixture();
 

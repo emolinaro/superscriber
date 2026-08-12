@@ -726,6 +726,7 @@ function saveDraftInTransaction(
   prior: TranscriptRevision,
   input: SaveDraftCommandInput,
   now: string,
+  options: { preserveSpeakerLabels?: boolean } = {},
 ) {
   assertCompleteSegments(prior, input.segments);
 
@@ -742,7 +743,9 @@ function saveDraftInTransaction(
     submittedAt: null,
     approvedAt: null,
     summary: normalizeSummary(input.summary),
-    segments: normalizeSpeakerLabels(input.segments),
+    segments: options.preserveSpeakerLabels
+      ? input.segments.map((segment) => ({ ...segment }))
+      : normalizeSpeakerLabels(input.segments),
   };
 
   db.update(revisions).set({ state: "superseded" }).where(eq(revisions.id, prior.id)).run();
@@ -893,7 +896,7 @@ export function renameSpeakerCommand(
         input.summary?.trim() ||
         `Renamed speaker "${rename.fromSpeaker}" to "${rename.toSpeaker}".`,
       actionModeId: input.actionModeId ?? null,
-    }, now);
+    }, now, { preserveSpeakerLabels: true });
 
     insertAuditEvent(db, {
       workspaceId: state.workspace.id,
