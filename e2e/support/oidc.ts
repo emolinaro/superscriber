@@ -107,6 +107,28 @@ export async function oidcSignIn(page: Page) {
     throw new Error(`OIDC signin initiation failed: ${JSON.stringify(body)}`);
   }
 
+  // The signin response mints next-auth's OAuth preflight cookies (state,
+  // pkce.code_verifier, nonce). Playwright mirrors response Set-Cookie values
+  // into the browser context asynchronously and silently drops individual
+  // cookies when that push fails (playwright-core server/fetch.js swallows
+  // per-cookie addCookies errors), so under host contention the browser's
+  // cookie jar can miss the state cookie even though the response carried it.
+  // The provider redirect then lands on the callback without it and Auth.js
+  // reports "State cookie was missing" (-> ?error=OAuthCallback). Install the
+  // cookies deterministically from the response headers instead of depending
+  // on that implicit propagation; an addCookies failure here fails loudly.
+  const baseUrl = process.env.PLAYWRIGHT_BASE_URL || "http://localhost:3105";
+  const preflightCookies = response
+    .headersArray()
+    .filter((h) => h.name.toLowerCase() === "set-cookie")
+    .map((h) => /^\s*([^=;]+)=([^;]*)/.exec(h.value))
+    .filter((m): m is RegExpExecArray => m !== null && m[1].startsWith("next-auth."))
+    .map((m) => ({ name: m[1], value: m[2], url: baseUrl }));
+  if (!preflightCookies.some((c) => c.name.endsWith(".state"))) {
+    throw new Error("OIDC signin response did not set the next-auth state cookie.");
+  }
+  await page.context().addCookies(preflightCookies);
+
   await page.goto(body.url);
 }
 
