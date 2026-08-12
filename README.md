@@ -40,6 +40,55 @@ It runs as a single-institution deployment with local accounts, SQLite persisten
 - Python worker runtime
 - Vitest
 
+## Local deployment
+
+One command takes a fresh machine from a clean clone to a running,
+crash-supervised local instance:
+
+```bash
+scripts/bootstrap-local.sh
+```
+
+The bootstrap is idempotent and safe to re-run. It:
+
+1. Verifies Node (>= the version pinned by the repo Dockerfile), npm, and
+   Python >= 3.10, failing loudly with an install hint when anything is missing
+2. Runs `npm ci` and creates the transcription worker's Python virtual
+   environment from `worker/requirements.txt`
+3. Initializes the database through the repo migration chain
+   (`scripts/ensure-db.ts`) into the instance's durable data directory -
+   never `/tmp`
+4. Provisions a faster-whisper model tier through the same pinned-artifact
+   install flow the in-app picker uses
+   (`src/server/models/provisioning.ts` via
+   `scripts/provision-model-tier.ts`). Interactive runs offer the full tier
+   menu (default: the catalog default `small`); an already-provisioned cache
+   is detected and the download is skipped, so re-runs work offline
+5. Builds the standalone production bundle and launches app + worker under a
+   SIGTERM-stoppable crash-restart supervisor with per-role logs and bounded
+   backoff (`scripts/instance-run.sh`)
+
+Options: `--instance-root DIR` (default `~/.local/share/superscriber`),
+`--port N` (default `3000`), `--model-tier TIER`, `--skip-model-download`,
+`--skip-worker-deps`.
+
+Instance layout (all under the instance root): `app.env` (non-secret config),
+`secrets/` (auth + engine secrets, mode `0600`, never printed), `data/`
+(SQLite database, media, uploads), `model-cache/` (model tiers), `logs/`
+(`app.log`, `worker.log`, `supervisor.log`), `pids/`.
+
+Operate the instance:
+
+```bash
+scripts/instance-stop.sh [INSTANCE_ROOT]   # SIGTERM the supervisor
+scripts/instance-run.sh [INSTANCE_ROOT]    # start again (idempotent)
+```
+
+First-run admin: open the printed URL - with no accounts yet, the sign-up
+door is the bootstrap door, so the first account created becomes the
+administrator. The door closes afterwards; admins then provision further
+accounts from **Administration > Accounts**.
+
 ## Getting Started
 
 1. Install dependencies:
