@@ -8,7 +8,10 @@ import {
   clearIntentionalSignOut,
 } from "@/lib/signed-out-marker";
 import { clearSelfResetHold } from "@/lib/self-reset-hold";
-import { shouldHoldSessionExpiredRedirect } from "@/lib/session-guard-policy";
+import {
+  shouldHoldSessionExpiredRedirect,
+  shouldRedirectInactiveSession,
+} from "@/lib/session-guard-policy";
 import type { Principal, UserRole } from "@/domain/models";
 import { AccountMenu } from "./account-menu";
 import { LogoutButton } from "@/components/auth/logout-button";
@@ -65,7 +68,7 @@ function useSessionGuard() {
         }
 
         const body = (await response.json()) as { active?: boolean };
-        if (!cancelled && body.active === false) {
+        if (shouldRedirectInactiveSession({ active: body.active, cancelled })) {
           const returnTo = encodeURIComponent(
             `${window.location.pathname}${window.location.search}`,
           );

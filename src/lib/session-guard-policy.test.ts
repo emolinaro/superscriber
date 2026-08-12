@@ -11,7 +11,10 @@ import {
   markSelfResetHold,
   SELF_RESET_HOLD_KEY,
 } from "@/lib/self-reset-hold";
-import { shouldHoldSessionExpiredRedirect } from "@/lib/session-guard-policy";
+import {
+  shouldHoldSessionExpiredRedirect,
+  shouldRedirectInactiveSession,
+} from "@/lib/session-guard-policy";
 
 afterEach(() => {
   window.sessionStorage.clear();
@@ -48,5 +51,11 @@ describe("shouldHoldSessionExpiredRedirect", () => {
     window.sessionStorage.setItem(`${SELF_RESET_HOLD_KEY}-other`, "1");
     window.sessionStorage.setItem(`${SIGNED_OUT_MARKER_KEY}-other`, "1");
     expect(shouldHoldSessionExpiredRedirect()).toBe(false);
+  });
+
+  it("rechecks the hold before redirecting an inactive session", () => {
+    expect(shouldRedirectInactiveSession({ active: false, cancelled: false })).toBe(true);
+    markSelfResetHold();
+    expect(shouldRedirectInactiveSession({ active: false, cancelled: false })).toBe(false);
   });
 });

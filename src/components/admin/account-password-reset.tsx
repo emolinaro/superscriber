@@ -1,9 +1,10 @@
 "use client";
 
-import { useEffect, useId, useState, useTransition, type FormEvent } from "react";
+import { useEffect, useId, useRef, useState, useTransition, type FormEvent } from "react";
 import { Modal } from "@/components/ui/modal";
 import {
   adminPasswordResetInputSchema,
+  PASSWORD_RESET_ADMIN_COPY,
   type AdminPasswordResetInput,
 } from "@/lib/account-password-reset";
 import type { AdminPasswordResetActionResult } from "@/server/actions/administration-actions";
@@ -48,12 +49,27 @@ export function AccountPasswordResetModal({
   const [formError, setFormError] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
   const [isPending, startTransition] = useTransition();
+  const mountedRef = useRef(true);
+  const selfResetHoldOwnedRef = useRef(false);
 
   const isSelf = account.id === currentUserId;
 
+  function releaseSelfResetHold() {
+    if (selfResetHoldOwnedRef.current) {
+      clearSelfResetHold();
+      selfResetHoldOwnedRef.current = false;
+    }
+  }
+
   // A self-reset hold never outlives this dialog: if the modal unmounts for
   // any reason, the session guard resumes guarding.
-  useEffect(() => () => clearSelfResetHold(), []);
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+      releaseSelfResetHold();
+    };
+  }, []);
 
   function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -69,13 +85,32 @@ export function AccountPasswordResetModal({
       delivery,
     });
     if (!parsed.success) {
+      releaseSelfResetHold();
       setFieldError(parsed.error.flatten().fieldErrors.reason?.[0] ?? "Check the form.");
       return;
     }
 
+    if (isSelf) {
+      markSelfResetHold();
+      selfResetHoldOwnedRef.current = true;
+    }
+
     startTransition(async () => {
-      const result = await action(parsed.data);
+      let result: AdminPasswordResetActionResult;
+      try {
+        result = await action(parsed.data);
+      } catch {
+        if (mountedRef.current) {
+          releaseSelfResetHold();
+          setFormError(PASSWORD_RESET_ADMIN_COPY.INTERNAL_ERROR);
+        }
+        return;
+      }
+      if (!mountedRef.current) {
+        return;
+      }
       if (!result.ok) {
+        releaseSelfResetHold();
         if (result.fieldErrors?.reason) {
           setFieldError(result.fieldErrors.reason);
         } else {
@@ -84,11 +119,8 @@ export function AccountPasswordResetModal({
         return;
       }
       const actorMustRelogin = result.data.actorMustRelogin;
-      if (actorMustRelogin) {
-        // Issuance revoked this account's sessions, including ours. Hold the
-        // session guard's redirect so the one-shot link stays on screen until
-        // the operator dismisses the dialog.
-        markSelfResetHold();
+      if (!actorMustRelogin) {
+        releaseSelfResetHold();
       }
       setStage({
         kind: "issued",
@@ -105,11 +137,7 @@ export function AccountPasswordResetModal({
 
   function close() {
     const mustRelogin = stage.kind === "issued" && stage.actorMustRelogin;
-    if (mustRelogin) {
-      // Dismissal is the designed sign-out point: release the hold so the
-      // session guard converges this revoked session to the sign-in door.
-      clearSelfResetHold();
-    }
+    releaseSelfResetHold();
     setStage({ kind: "form" });
     onClose();
     if (mustRelogin) {
@@ -151,10 +179,17 @@ export function AccountPasswordResetModal({
             <p>The reset link was emailed. It expires at {stage.expiresAt}.</p>
           )}
           {stage.actorMustRelogin ? (
-            <p className="body-copy" role="note">
-              Copy this link now. Closing this dialog signs you out; open the
-              link while signed out (or in a private window) to finish.
-            </p>
+            stage.resetUrl ? (
+              <p className="body-copy" role="note">
+                Copy this link now. Closing this dialog signs you out; open the
+                link while signed out (or in a private window) to finish.
+              </p>
+            ) : (
+              <p className="body-copy" role="note">
+                Closing this dialog signs you out; use the emailed link while
+                signed out (or in a private window) to finish.
+              </p>
+            )
           ) : null}
           <div className="button-row">
             <button className="button button-primary" onClick={close} type="button">

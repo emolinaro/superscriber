@@ -11,3 +11,13 @@ import { hasSelfResetHold } from "@/lib/self-reset-hold";
 export function shouldHoldSessionExpiredRedirect(): boolean {
   return hasIntentionalSignOut() || hasSelfResetHold();
 }
+
+export function shouldRedirectInactiveSession({
+  active,
+  cancelled,
+}: {
+  active?: boolean;
+  cancelled: boolean;
+}): boolean {
+  return !cancelled && active === false && !shouldHoldSessionExpiredRedirect();
+}
