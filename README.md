@@ -159,6 +159,10 @@ docker build \
 
 The default build prefetches the configured model into the image. Runtime downloads are disabled by default so the appliance can transcribe without network access after the image is built.
 
+Optional configuration:
+
+- `SUPERSCRIBER_DOCS_URL` - opt-in switch for the hosted user-guide link in the landing footer. Unset (the default) renders nothing and leaves no dead link; once the guide is published, set it (for example `SUPERSCRIBER_DOCS_URL=https://emolinaro.github.io/superscriber/`) and the guide link renders next to the source repository link.
+
 ## Available Scripts
 
 - `npm run dev` — start the local development server
