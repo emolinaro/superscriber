@@ -179,6 +179,9 @@ describe("product css contract", () => {
     expect(windowScrollMedia?.[1]).toContain(
       "scroll-padding-top: var(--player-clearance",
     );
+    expect(windowScrollMedia?.[1]).toContain(
+      "scroll-padding-bottom: var(--action-bar-clearance",
+    );
     const compactVideo = windowScrollMedia?.[1].match(
       /\.media-transport__controls video\s*\{([^}]*)\}/,
     );

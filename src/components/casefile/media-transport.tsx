@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import type { SyntheticEvent } from "react";
 import type { Recording, TranscriptSegment } from "@/domain/models";
 import { formatSegmentWindow } from "@/lib/format";
 import { InlineNotice } from "@/components/ui/inline-notice";
@@ -58,6 +59,7 @@ export function MediaTransport({
 }: MediaTransportProps) {
   const transportRef = useRef<HTMLElement | null>(null);
   const mediaRef = useRef<HTMLAudioElement | HTMLVideoElement | null>(null);
+  const seekInProgressRef = useRef(false);
   const [mediaEl, setMediaEl] = useState<HTMLAudioElement | HTMLVideoElement | null>(null);
   // Wave scrubber (demo-waveform-player): decoded-wave progress bar replaces
   // the stock audio controls once decoding succeeds; when the runtime cannot
@@ -125,6 +127,7 @@ export function MediaTransport({
     mediaEl.addEventListener("pause", syncPlaying);
     mediaEl.addEventListener("ended", syncPlaying);
     return () => {
+      seekInProgressRef.current = false;
       mediaEl.removeEventListener("play", syncPlaying);
       mediaEl.removeEventListener("pause", syncPlaying);
       mediaEl.removeEventListener("ended", syncPlaying);
@@ -207,6 +210,19 @@ export function MediaTransport({
     onActiveSegmentChange(match?.id ?? null);
   }
 
+  function handleSeeking(event: SyntheticEvent<HTMLMediaElement>) {
+    syncActiveSegment(event.currentTarget.currentTime);
+    if (seekInProgressRef.current) {
+      return;
+    }
+    seekInProgressRef.current = true;
+    onMediaSeek?.();
+  }
+
+  function handleSeeked() {
+    seekInProgressRef.current = false;
+  }
+
   function togglePlayback() {
     const media = mediaRef.current;
     if (!media) {
@@ -257,8 +273,8 @@ export function MediaTransport({
         {mediaKind === "video" ? (
           <video
             controls
-            onSeeked={onMediaSeek}
-            onSeeking={onMediaSeek}
+            onSeeked={handleSeeked}
+            onSeeking={handleSeeking}
             onTimeUpdate={(event) => syncActiveSegment(event.currentTarget.currentTime)}
             ref={attachMedia}
             src={mediaUrl}
@@ -266,8 +282,8 @@ export function MediaTransport({
         ) : (
           <audio
             controls={nativeControls || undefined}
-            onSeeked={onMediaSeek}
-            onSeeking={onMediaSeek}
+            onSeeked={handleSeeked}
+            onSeeking={handleSeeking}
             onTimeUpdate={(event) => syncActiveSegment(event.currentTarget.currentTime)}
             preload="metadata"
             ref={attachMedia}

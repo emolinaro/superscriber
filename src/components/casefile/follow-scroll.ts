@@ -71,11 +71,16 @@ export function isRowInScrollView(row: HTMLElement): boolean {
   const rect = row.getBoundingClientRect();
   const parent = findScrollParent(row);
   const scrollTarget = parent ?? document.documentElement;
-  const computedPadding = Number.parseFloat(
-    window.getComputedStyle(scrollTarget).scrollPaddingTop,
-  );
-  const scrollPaddingTop = Number.isFinite(computedPadding) ? computedPadding : 0;
+  const computedStyle = window.getComputedStyle(scrollTarget);
+  const computedPaddingTop = Number.parseFloat(computedStyle.scrollPaddingTop);
+  const computedPaddingBottom = Number.parseFloat(computedStyle.scrollPaddingBottom);
+  const scrollPaddingTop = Number.isFinite(computedPaddingTop) ? computedPaddingTop : 0;
+  const scrollPaddingBottom = Number.isFinite(computedPaddingBottom)
+    ? computedPaddingBottom
+    : 0;
   const top = (parent ? parent.getBoundingClientRect().top : 0) + scrollPaddingTop;
-  const bottom = parent ? parent.getBoundingClientRect().bottom : window.innerHeight;
+  const bottom =
+    (parent ? parent.getBoundingClientRect().bottom : window.innerHeight) -
+    scrollPaddingBottom;
   return rect.bottom > top && rect.top < bottom;
 }

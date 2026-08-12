@@ -116,6 +116,21 @@ describe("isRowInScrollView", () => {
     row.remove();
   });
 
+  it("excludes window content hidden by bottom scroll padding", () => {
+    const row = document.createElement("div");
+    document.body.appendChild(row);
+    document.documentElement.style.scrollPaddingBottom = "100px";
+
+    row.getBoundingClientRect = () => fakeRect(700, 750);
+    expect(isRowInScrollView(row)).toBe(false);
+
+    row.getBoundingClientRect = () => fakeRect(620, 680);
+    expect(isRowInScrollView(row)).toBe(true);
+
+    document.documentElement.style.removeProperty("scroll-padding-bottom");
+    row.remove();
+  });
+
   it("excludes scrollport content hidden by scroll padding", () => {
     const scroller = document.createElement("div");
     scroller.style.overflowY = "auto";
@@ -132,6 +147,27 @@ describe("isRowInScrollView", () => {
     expect(isRowInScrollView(row)).toBe(false);
 
     row.getBoundingClientRect = () => fakeRect(310, 360);
+    expect(isRowInScrollView(row)).toBe(true);
+
+    scroller.remove();
+  });
+
+  it("excludes scrollport content hidden by bottom scroll padding", () => {
+    const scroller = document.createElement("div");
+    scroller.style.overflowY = "auto";
+    scroller.style.scrollPaddingBottom = "80px";
+    Object.defineProperty(scroller, "clientHeight", { value: 300 });
+    Object.defineProperty(scroller, "scrollHeight", { value: 900 });
+    scroller.getBoundingClientRect = () => fakeRect(200, 500);
+
+    const row = document.createElement("div");
+    scroller.appendChild(row);
+    document.body.appendChild(scroller);
+
+    row.getBoundingClientRect = () => fakeRect(430, 470);
+    expect(isRowInScrollView(row)).toBe(false);
+
+    row.getBoundingClientRect = () => fakeRect(370, 410);
     expect(isRowInScrollView(row)).toBe(true);
 
     scroller.remove();

@@ -92,15 +92,16 @@ describe("MediaTransport", () => {
     );
   });
 
-  it("notifies the shared follow boundary for media seek events", () => {
+  it("syncs the seek target before resuming follow once per lifecycle", () => {
     const onMediaSeek = vi.fn();
+    const onActiveSegmentChange = vi.fn();
     render(
       <MediaTransport
-        {...{ onMediaSeek }}
+        onMediaSeek={onMediaSeek}
         activeSegmentId={null}
         mediaKind="audio"
         mediaUrl="/api/media/rec-1"
-        onActiveSegmentChange={() => undefined}
+        onActiveSegmentChange={onActiveSegmentChange}
         onSeekHandled={() => undefined}
         seekRequest={null}
         segments={baseSegments}
@@ -108,10 +109,20 @@ describe("MediaTransport", () => {
     );
 
     const audio = document.querySelector("audio")!;
+    audio.currentTime = 10;
+    fireEvent(audio, new Event("seeking"));
+    audio.currentTime = 1;
     fireEvent(audio, new Event("seeking"));
     fireEvent(audio, new Event("seeked"));
+    audio.currentTime = 10;
+    fireEvent(audio, new Event("seeking"));
 
     expect(onMediaSeek).toHaveBeenCalledTimes(2);
+    expect(onActiveSegmentChange).toHaveBeenCalledWith("seg-1");
+    expect(onActiveSegmentChange).toHaveBeenCalledWith("seg-2");
+    expect(onActiveSegmentChange.mock.invocationCallOrder[0]).toBeLessThan(
+      onMediaSeek.mock.invocationCallOrder[0],
+    );
   });
 
   it("publishes the rendered transport height as player clearance", () => {

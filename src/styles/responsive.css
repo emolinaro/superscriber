@@ -112,6 +112,7 @@
      block:center aims at the visible region below it and nearest-edge
      scrolls land below the chrome. */
   html:has(.casefile-page) {
+    scroll-padding-bottom: var(--action-bar-clearance, 88px);
     scroll-padding-top: var(--player-clearance, 432px);
   }
 
