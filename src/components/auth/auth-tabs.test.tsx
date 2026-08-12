@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 
-import { cleanup, render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { renderToString } from "react-dom/server";
 import { afterEach, describe, expect, it } from "vitest";
@@ -70,6 +70,41 @@ describe("AuthTabs", () => {
     expect(tab).toHaveAttribute("aria-controls", panel.id);
   });
 
+  it.each([
+    ["Ctrl-click", { ctrlKey: true }],
+    ["Command-click", { metaKey: true }],
+    ["Shift-click", { shiftKey: true }],
+    ["Alt-click", { altKey: true }],
+    ["middle-click", { button: 1 }],
+  ] satisfies Array<[string, MouseEventInit]>)(
+    "leaves %s to native link behavior",
+    (_label, clickInit) => {
+      renderTabs("signin");
+      let defaultPreventedByComponent: boolean | undefined;
+      const stopNavigation = (event: Event) => {
+        defaultPreventedByComponent = event.defaultPrevented;
+        event.preventDefault();
+      };
+      window.addEventListener("click", stopNavigation);
+
+      try {
+        fireEvent.click(
+          screen.getByRole("tab", { name: "Sign up" }),
+          clickInit,
+        );
+      } finally {
+        window.removeEventListener("click", stopNavigation);
+      }
+
+      expect(defaultPreventedByComponent).toBe(false);
+      expect(screen.getByRole("tab", { name: "Sign in" })).toHaveAttribute(
+        "aria-selected",
+        "true",
+      );
+      expect(screen.getByText("Returning session pane")).toBeVisible();
+    },
+  );
+
   it("arrow keys move selection and focus between tabs", async () => {
     const user = userEvent.setup();
     renderTabs("signin");
@@ -102,7 +137,7 @@ describe("AuthTabs", () => {
     expect(screen.getByText("Returning session pane")).toBeVisible();
   });
 
-  it("keeps only the selected tab in the tab order", () => {
+  it("applies roving tabindex after hydration", () => {
     renderTabs("signup");
 
     expect(screen.getByRole("tab", { name: "Sign up" })).toHaveAttribute("tabindex", "0");
@@ -161,6 +196,16 @@ describe("AuthTabs server rendering (no JavaScript)", () => {
     expect(tabs).toHaveLength(2);
     const hrefs = Array.from(tabs).map((tab) => tab.getAttribute("href"));
     expect(hrefs).toEqual([SIGN_UP_HREF, SIGN_IN_HREF]);
+  });
+
+  it("keeps both doors sequentially focusable before hydration", () => {
+    const container = renderServerMarkup("signin");
+    const tabs = container.querySelectorAll<HTMLAnchorElement>('a[role="tab"]');
+
+    expect(tabs).toHaveLength(2);
+    for (const tab of tabs) {
+      expect(tab).not.toHaveAttribute("tabindex");
+    }
   });
 
   it("renders the Sign-up door selected with its pane visible when entry=signup", () => {

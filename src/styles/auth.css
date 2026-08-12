@@ -164,6 +164,10 @@
     color var(--motion-fast) ease;
 }
 
+.auth-tabs__tab:visited {
+  color: var(--color-teal-700);
+}
+
 .auth-tabs__tab:hover {
   background: color-mix(in srgb, var(--color-paper) 90%, transparent);
 }
@@ -172,6 +176,10 @@
   background: var(--color-teal-700);
   color: var(--color-on-primary);
   box-shadow: var(--shadow-1);
+}
+
+.auth-tabs__tab[data-selected="true"]:visited {
+  color: var(--color-on-primary);
 }
 
 .auth-tabs__panel {

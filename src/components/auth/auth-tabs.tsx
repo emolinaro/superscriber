@@ -2,6 +2,7 @@
 
 import {
   useCallback,
+  useEffect,
   useId,
   useRef,
   useState,
@@ -26,8 +27,8 @@ export type { AuthEntry };
  *
  * Progressive enhancement: each door is a real link to `/?entry=signup` /
  * `/?entry=signin`, so the doors work with zero JavaScript (the server
- * renders the requested pane). Once hydrated, clicks are intercepted and
- * toggled client-side instantly, with no navigation.
+ * renders the requested pane). Once hydrated, unmodified primary clicks are
+ * intercepted and toggled client-side instantly, with no navigation.
  */
 export function AuthTabs({
   signUpPane,
@@ -43,7 +44,12 @@ export function AuthTabs({
   initialEntry?: AuthEntry;
 }) {
   const [entry, setEntry] = useState<AuthEntry>(initialEntry);
+  const [isHydrated, setIsHydrated] = useState(false);
   const baseId = useId();
+
+  useEffect(() => {
+    setIsHydrated(true);
+  }, []);
 
   // Server-side re-renders (post-form navigations like bootstrap-complete)
   // keep this component instance alive; the server-chosen entry must win
@@ -64,10 +70,19 @@ export function AuthTabs({
     { key: "signin", label: "Sign in", href: signInHref },
   ];
 
-  // Post-hydration the doors toggle instantly in place; the href is only a
-  // no-JS (and open-in-new-tab) fallback, so navigation is always cancelled.
+  // Post-hydration the doors toggle instantly in place; the href remains the
+  // no-JS and modified-activation fallback.
   const onTabClick = useCallback(
     (event: MouseEvent<HTMLAnchorElement>, key: AuthEntry) => {
+      if (
+        event.button !== 0 ||
+        event.ctrlKey ||
+        event.metaKey ||
+        event.shiftKey ||
+        event.altKey
+      ) {
+        return;
+      }
       event.preventDefault();
       setEntry(key);
     },
@@ -118,7 +133,7 @@ export function AuthTabs({
                 tabRefs.current[index] = node;
               }}
               role="tab"
-              tabIndex={selected ? 0 : -1}
+              tabIndex={isHydrated ? (selected ? 0 : -1) : undefined}
             >
               {tab.label}
             </a>
