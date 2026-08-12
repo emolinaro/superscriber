@@ -635,6 +635,24 @@ describe("CasefileWorkspace", () => {
     expect(screen.queryAllByRole("textbox")).toHaveLength(0);
   });
 
+  it("hides an open speaker rename dialog when phone safety begins", async () => {
+    const user = userEvent.setup();
+    const { renameSpeakerAction, rerenderWorkspace } = renderWorkspace();
+
+    await user.click(screen.getByRole("button", { name: "Rename speaker..." }));
+    expect(
+      screen.getByRole("dialog", { name: "Rename speaker everywhere" }),
+    ).toBeVisible();
+
+    phoneSafetyModeMock.mockReturnValue(true);
+    rerenderWorkspace({});
+
+    expect(
+      screen.queryByRole("dialog", { name: "Rename speaker everywhere" }),
+    ).not.toBeInTheDocument();
+    expect(renameSpeakerAction).not.toHaveBeenCalled();
+  });
+
   it("hides the header governance trigger in phone safety mode", () => {
     phoneSafetyModeMock.mockReturnValue(true);
     renderWorkspace();

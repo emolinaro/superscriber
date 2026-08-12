@@ -989,7 +989,7 @@ export function CasefileWorkspace({
         <SpeakerRenameDialog
           onCancel={() => setSpeakerRenameOpen(false)}
           onConfirm={handleRenameSpeaker}
-          open={speakerRenameOpen}
+          open={!phoneSafetyMode}
           segments={casefile.revision.segments ?? []}
         />
       ) : null}
