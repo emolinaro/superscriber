@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useId, useRef, type ReactNode } from "react";
+import { useEffect, useId, useLayoutEffect, useRef, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 
 const FOCUSABLE_SELECTOR = [
@@ -12,7 +12,22 @@ const FOCUSABLE_SELECTOR = [
   '[tabindex]:not([tabindex="-1"])',
 ].join(", ");
 
-const modalStack: symbol[] = [];
+const MODAL_STACK_BASE_Z_INDEX = 1000;
+const modalStack: Array<{ backdrop: HTMLDivElement; id: symbol }> = [];
+const useModalLayoutEffect = typeof window === "undefined" ? useEffect : useLayoutEffect;
+
+function syncModalStack() {
+  modalStack.forEach(({ backdrop }, index) => {
+    const isTop = index === modalStack.length - 1;
+    backdrop.style.zIndex = String(MODAL_STACK_BASE_Z_INDEX + index);
+    backdrop.toggleAttribute("inert", !isTop);
+    if (isTop) {
+      backdrop.removeAttribute("aria-hidden");
+    } else {
+      backdrop.setAttribute("aria-hidden", "true");
+    }
+  });
+}
 
 function getFocusableElements(container: HTMLElement) {
   return Array.from(container.querySelectorAll<HTMLElement>(FOCUSABLE_SELECTOR)).filter(
@@ -41,6 +56,7 @@ export function Modal({
 }) {
   const titleId = useId();
   const descriptionId = useId();
+  const backdropRef = useRef<HTMLDivElement>(null);
   const dialogRef = useRef<HTMLElement>(null);
   const stackIdRef = useRef(Symbol());
   const triggerRef = useRef<HTMLElement | null>(null);
@@ -53,7 +69,7 @@ export function Modal({
     onCloseRef.current = onClose;
   }, [onClose]);
 
-  useEffect(() => {
+  useModalLayoutEffect(() => {
     if (!open || typeof document === "undefined") {
       return;
     }
@@ -62,7 +78,11 @@ export function Modal({
     const previousOverflow = document.body.style.overflow;
     const wasInert = appRoot?.hasAttribute("inert") ?? false;
     const stackId = stackIdRef.current;
-    modalStack.push(stackId);
+    const backdrop = backdropRef.current;
+    if (!backdrop) {
+      return;
+    }
+    modalStack.push({ backdrop, id: stackId });
     triggerRef.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
 
     document.body.style.overflow = "hidden";
@@ -78,9 +98,10 @@ export function Modal({
       focusable[0] ??
       dialogRef.current;
     initialFocus?.focus();
+    syncModalStack();
 
     function handleKeyDown(event: KeyboardEvent) {
-      if (!dialogRef.current || modalStack[modalStack.length - 1] !== stackId) {
+      if (!dialogRef.current || modalStack[modalStack.length - 1]?.id !== stackId) {
         return;
       }
 
@@ -118,10 +139,11 @@ export function Modal({
 
     return () => {
       document.removeEventListener("keydown", handleKeyDown);
-      const stackIndex = modalStack.lastIndexOf(stackId);
+      const stackIndex = modalStack.findIndex((entry) => entry.id === stackId);
       if (stackIndex !== -1) {
         modalStack.splice(stackIndex, 1);
       }
+      syncModalStack();
       document.body.style.overflow = previousOverflow;
       if (appRoot && !wasInert) {
         appRoot.removeAttribute("inert");
@@ -139,10 +161,14 @@ export function Modal({
       className={backdropClassName ? `modal-backdrop ${backdropClassName}` : "modal-backdrop"}
       data-testid={backdropTestId}
       onMouseDown={(event) => {
-        if (event.target === event.currentTarget) {
+        if (
+          modalStack[modalStack.length - 1]?.id === stackIdRef.current &&
+          event.target === event.currentTarget
+        ) {
           onCloseRef.current();
         }
       }}
+      ref={backdropRef}
     >
       <section
         aria-describedby={description ? descriptionId : undefined}

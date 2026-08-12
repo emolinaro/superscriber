@@ -5,7 +5,12 @@ import type { ComponentProps } from "react";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { SessionRecoveryDialog } from "@/components/auth/session-recovery-dialog";
 import { ExportDialog } from "./export-dialog";
+
+vi.mock("next-auth/react", () => ({
+  signIn: vi.fn(),
+}));
 
 const fetchMock = vi.fn();
 const createObjectUrlMock = vi.fn(() => "blob:export");
@@ -322,6 +327,66 @@ describe("ExportDialog", () => {
     await waitFor(() => expect(onSessionRecoveryRequested).toHaveBeenCalledTimes(1));
     expect(screen.getByRole("dialog", { name: "Export approved transcript" })).toBeVisible();
     expect(onClose).not.toHaveBeenCalled();
+  });
+
+  it("stacks session recovery above export and restores export after Escape", async () => {
+    const user = userEvent.setup();
+    const appRoot = document.createElement("div");
+    appRoot.id = "app-root";
+    document.body.append(appRoot);
+    fetchMock.mockResolvedValue({ ok: false, status: 401, headers: new Headers() });
+
+    function Harness() {
+      const [recoveryOpen, setRecoveryOpen] = React.useState(false);
+
+      return (
+        <>
+          <ExportDialog
+            actionModeId="mode-1"
+            approvalDecisions={[approvedDecision]}
+            onActionModeRejected={vi.fn()}
+            onAnnouncement={vi.fn()}
+            onClose={vi.fn()}
+            onSessionRecoveryRequested={() => setRecoveryOpen(true)}
+            open
+            recordingId="rec-1"
+            revision={{ version: 3, id: "rev-3" }}
+            revisionOptions={[approvedRevisionOption]}
+            hasApprovedRevision
+          />
+          <SessionRecoveryDialog
+            onClose={() => setRecoveryOpen(false)}
+            onRecovered={() => setRecoveryOpen(false)}
+            open={recoveryOpen}
+          />
+        </>
+      );
+    }
+
+    render(<Harness />, { container: appRoot });
+    await user.click(screen.getByRole("button", { name: "DOCX" }));
+
+    const recoveryDialog = await screen.findByRole("dialog", { name: "Session expired" });
+    const exportBackdrop = screen.getByTestId("export-backdrop");
+    const recoveryBackdrop = recoveryDialog.closest(".modal-backdrop") as HTMLElement;
+
+    expect(Number(recoveryBackdrop.style.zIndex)).toBeGreaterThan(
+      Number(exportBackdrop.style.zIndex),
+    );
+    expect(exportBackdrop).toHaveAttribute("inert");
+    expect(exportBackdrop).toHaveAttribute("aria-hidden", "true");
+    expect(recoveryBackdrop).not.toHaveAttribute("inert");
+    expect(recoveryBackdrop).not.toHaveAttribute("aria-hidden");
+    expect(
+      screen.queryByRole("dialog", { name: "Export approved transcript" }),
+    ).not.toBeInTheDocument();
+
+    await user.keyboard("{Escape}");
+
+    expect(screen.queryByRole("dialog", { name: "Session expired" })).not.toBeInTheDocument();
+    expect(screen.getByRole("dialog", { name: "Export approved transcript" })).toBeVisible();
+    expect(exportBackdrop).not.toHaveAttribute("inert");
+    expect(exportBackdrop).not.toHaveAttribute("aria-hidden");
   });
 
   it("keeps the modal open on Escape while an export is pending", async () => {

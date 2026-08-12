@@ -186,10 +186,21 @@ describe("GovernanceDrawer", () => {
     render(<Host />, { container: appRoot });
 
     act(() => getState().setOpen(true));
+    const governanceDialog = screen.getByRole("dialog", { name: "Governance" });
     await user.click(screen.getByRole("button", { name: "Enter approver action mode" }));
 
-    expect(screen.getByRole("dialog", { name: "Governance" })).toBeVisible();
-    expect(screen.getByRole("dialog", { name: "Enter admin action mode" })).toBeVisible();
+    const actionModeDialog = screen.getByRole("dialog", { name: "Enter admin action mode" });
+    const governanceBackdrop = governanceDialog.closest(".modal-backdrop") as HTMLElement;
+    const actionModeBackdrop = actionModeDialog.closest(".modal-backdrop") as HTMLElement;
+
+    expect(Number(actionModeBackdrop.style.zIndex)).toBeGreaterThan(
+      Number(governanceBackdrop.style.zIndex),
+    );
+    expect(governanceBackdrop).toHaveAttribute("inert");
+    expect(governanceBackdrop).toHaveAttribute("aria-hidden", "true");
+    expect(actionModeBackdrop).not.toHaveAttribute("inert");
+    expect(actionModeBackdrop).not.toHaveAttribute("aria-hidden");
+    expect(screen.queryByRole("dialog", { name: "Governance" })).not.toBeInTheDocument();
 
     await user.keyboard("{Escape}");
 
