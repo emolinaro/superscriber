@@ -510,14 +510,25 @@ export type AdminPasswordResetActionResult =
       fieldErrors?: Record<string, string>;
     };
 
+export type AdminPasswordResetActionInput = AdminPasswordResetInput & {
+  expectedActorUserId: string;
+};
+
 export async function adminResetAccountPasswordAction(
-  input: AdminPasswordResetInput,
+  input: AdminPasswordResetActionInput,
 ): Promise<AdminPasswordResetActionResult> {
   const activeSession = await getActiveSession();
   if (!activeSession) {
     return { ok: false, code: "AUTH_EXPIRED", message: "Your session expired. Sign in again." };
   }
   const principal = activeSession.user;
+  if (input.expectedActorUserId !== principal.userId) {
+    return {
+      ok: false,
+      code: "AUTH_EXPIRED",
+      message: "Your signed-in account changed. Refresh and try again.",
+    };
+  }
 
   const parsed = adminPasswordResetInputSchema.safeParse(input);
   if (!parsed.success) {

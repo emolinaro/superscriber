@@ -1219,6 +1219,7 @@ describe("adminResetAccountPasswordAction", () => {
   it("returns AUTH_EXPIRED without a live session", async () => {
     getActiveSessionMock.mockResolvedValue(null);
     const result = await adminResetAccountPasswordAction({
+      expectedActorUserId: "admin-1",
       userId: "user-2",
       reason: "User forgot their password at the front desk.",
       delivery: "operator_handoff",
@@ -1230,6 +1231,7 @@ describe("adminResetAccountPasswordAction", () => {
 
   it("validates the reason before touching the service", async () => {
     const result = await adminResetAccountPasswordAction({
+      expectedActorUserId: "admin-1",
       userId: "user-2",
       reason: "short",
       delivery: "operator_handoff",
@@ -1237,6 +1239,23 @@ describe("adminResetAccountPasswordAction", () => {
     expect(result.ok).toBe(false);
     expect(result.ok ? null : result.code).toBe("VALIDATION_ERROR");
     expect(adminIssuePasswordResetMock).not.toHaveBeenCalled();
+  });
+
+  it("rejects a changed actor before reset issuance", async () => {
+    const result = await adminResetAccountPasswordAction({
+      expectedActorUserId: "previous-admin",
+      userId: "user-2",
+      reason: "User forgot their password at the front desk.",
+      delivery: "operator_handoff",
+    });
+
+    expect(result).toEqual({
+      ok: false,
+      code: "AUTH_EXPIRED",
+      message: "Your signed-in account changed. Refresh and try again.",
+    });
+    expect(adminIssuePasswordResetMock).not.toHaveBeenCalled();
+    expect(sendPasswordResetEmailMock).not.toHaveBeenCalled();
   });
 
   it("returns the one-time reveal URL for handoff delivery", async () => {
@@ -1254,6 +1273,7 @@ describe("adminResetAccountPasswordAction", () => {
     });
 
     const result = await adminResetAccountPasswordAction({
+      expectedActorUserId: "admin-1",
       userId: "user-2",
       reason: "User forgot their password at the front desk.",
       delivery: "operator_handoff",
@@ -1288,6 +1308,7 @@ describe("adminResetAccountPasswordAction", () => {
     });
 
     const result = await adminResetAccountPasswordAction({
+      expectedActorUserId: "admin-1",
       userId: "user-2",
       reason: "User forgot their password at the front desk.",
       delivery: "email",
@@ -1325,6 +1346,7 @@ describe("adminResetAccountPasswordAction", () => {
     });
 
     const result = await adminResetAccountPasswordAction({
+      expectedActorUserId: "admin-1",
       userId: "admin-1",
       reason: "Rotating my own password after a device loss.",
       delivery: "email",
@@ -1361,6 +1383,7 @@ describe("adminResetAccountPasswordAction", () => {
     });
 
     const result = await adminResetAccountPasswordAction({
+      expectedActorUserId: "admin-1",
       userId: "bg-1",
       reason: "Trying to rotate the emergency account outside ceremony.",
       delivery: "operator_handoff",

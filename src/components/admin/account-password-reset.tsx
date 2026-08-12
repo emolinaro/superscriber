@@ -7,7 +7,10 @@ import {
   PASSWORD_RESET_ADMIN_COPY,
   type AdminPasswordResetInput,
 } from "@/lib/account-password-reset";
-import type { AdminPasswordResetActionResult } from "@/server/actions/administration-actions";
+import type {
+  AdminPasswordResetActionInput,
+  AdminPasswordResetActionResult,
+} from "@/server/actions/administration-actions";
 import { clearSelfResetHold, markSelfResetHold } from "@/lib/self-reset-hold";
 
 type Stage =
@@ -37,7 +40,7 @@ export function AccountPasswordResetModal({
   resetMailConfigured: boolean;
   onClose: () => void;
   onIssued: () => void;
-  action: (input: AdminPasswordResetInput) => Promise<AdminPasswordResetActionResult>;
+  action: (input: AdminPasswordResetActionInput) => Promise<AdminPasswordResetActionResult>;
 }) {
   const reasonId = useId();
   const [stage, setStage] = useState<Stage>({ kind: "form" });
@@ -90,13 +93,15 @@ export function AccountPasswordResetModal({
       return;
     }
 
-    markSelfResetHold();
-    resetHoldOwnedRef.current = true;
+    if (isSelf) {
+      markSelfResetHold();
+      resetHoldOwnedRef.current = true;
+    }
 
     startTransition(async () => {
       let result: AdminPasswordResetActionResult;
       try {
-        result = await action(parsed.data);
+        result = await action({ ...parsed.data, expectedActorUserId: currentUserId });
       } catch {
         if (mountedRef.current) {
           releaseResetHold();

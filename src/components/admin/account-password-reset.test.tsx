@@ -114,6 +114,7 @@ describe("AccountPasswordResetModal", () => {
 
     expect(await screen.findByDisplayValue("https://app.test/reset/tok")).toBeInTheDocument();
     expect(action).toHaveBeenCalledWith({
+      expectedActorUserId: "user-1",
       userId: "user-1",
       reason: "Rotating my own password after a device loss.",
       delivery: "operator_handoff",
@@ -278,9 +279,10 @@ describe("AccountPasswordResetModal", () => {
     expect(screen.queryByText(/closing this dialog signs you out/i)).not.toBeInTheDocument();
   });
 
-  it("holds every valid issuance until the server reports no actor revocation", async () => {
+  it("does not hold a non-self issuance while the action is pending", async () => {
     const pending = deferred<AdminPasswordResetActionResult>();
-    renderModal({ action: () => pending.promise });
+    const action = vi.fn(() => pending.promise);
+    renderModal({ action });
 
     await userEvent.type(
       screen.getByLabelText(/reason/i),
@@ -288,7 +290,13 @@ describe("AccountPasswordResetModal", () => {
     );
     await userEvent.click(screen.getByRole("button", { name: /issue reset/i }));
 
-    expect(hasSelfResetHold()).toBe(true);
+    expect(hasSelfResetHold()).toBe(false);
+    expect(action).toHaveBeenCalledWith({
+      expectedActorUserId: "admin-1",
+      userId: "user-1",
+      reason: "User forgot their password at the front desk.",
+      delivery: "operator_handoff",
+    });
 
     await act(async () => {
       pending.resolve({
@@ -305,30 +313,6 @@ describe("AccountPasswordResetModal", () => {
     });
 
     expect(await screen.findByDisplayValue("https://app.test/reset/tok")).toBeInTheDocument();
-    expect(hasSelfResetHold()).toBe(false);
-  });
-
-  it("keeps the hold when stale UI identity differs from the server actor", async () => {
-    const pending = deferred<AdminPasswordResetActionResult>();
-    renderModal({ action: () => pending.promise });
-
-    await userEvent.type(
-      screen.getByLabelText(/reason/i),
-      "Rotating the active administrator password after a device loss.",
-    );
-    await userEvent.click(screen.getByRole("button", { name: /issue reset/i }));
-
-    expect(hasSelfResetHold()).toBe(true);
-
-    await act(async () => {
-      pending.resolve(SELF_RESET_HANDOFF_SUCCESS);
-      await pending.promise;
-    });
-
-    expect(await screen.findByDisplayValue("https://app.test/reset/tok")).toBeInTheDocument();
-    expect(hasSelfResetHold()).toBe(true);
-
-    await userEvent.click(screen.getByRole("button", { name: /done/i }));
     expect(hasSelfResetHold()).toBe(false);
   });
 

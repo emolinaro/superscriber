@@ -60,9 +60,11 @@ Administration > Accounts offers **Reset password** on every active account
 (tablet and desktop only; phone safety mode hides all mutation controls).
 
 1. Enter a governed reason (10-500 characters).
-2. Choose delivery: out-of-band handoff (always available; the link is shown
-   exactly once with its expiry) or email (only when the seam is configured;
-   the link is never shown to the administrator).
+2. For another account, choose delivery: out-of-band handoff (always
+   available; the link is shown exactly once with its expiry) or email (only
+   when the seam is configured; the link is never shown to the administrator).
+   Resetting the current account always uses one-time link handoff, so the
+   Email option is not offered.
 3. Issuance immediately signs the target out everywhere, cancels any reset
    already in progress, and produces one single-use 60-minute link.
 
@@ -77,8 +79,9 @@ Boundaries:
 - An OIDC-only account can receive a fresh local credential through this
   flow (audited, deliberate); in `authentik-primary` that credential still
   signs nobody in until the auth mode changes.
-- Resetting your own account is allowed; your session ends immediately and
-  you complete the reset with the new link.
+- Resetting your own account is allowed and always uses one-time link handoff.
+  The result dialog remains available for copying the link; closing it ends
+  the current session, and you complete the reset while signed out.
 
 ## Audit trail
 
