@@ -12,9 +12,18 @@ type MediaTransportProps = {
   mediaDenialReason?: string | null;
   segments: TranscriptSegment[];
   activeSegmentId: string | null;
-  seekRequestMs: number | null;
+  /**
+   * Transcript-initiated click on one segment. Clicking any segment other
+   * than the active one seeks to its start and plays (segment-play-toggle
+   * keeps that). Clicking the ACTIVE segment toggles instead: pause when it
+   * is playing, resume from the paused position (no re-seek) when it is not.
+   */
+  seekRequest: { segmentId: string; startMs: number; endMs: number } | null;
   onSeekHandled: () => void;
   onActiveSegmentChange: (segmentId: string | null) => void;
+  /** Mirrors the media element's playing state so the transcript document
+   * renders the active segment button as a truthful play/pause toggle. */
+  onPlayingChange?: (playing: boolean) => void;
   /**
    * Segment rail: seek to this segment and surface it inline in the
    * transcript list (opens its review affordance when the caller can edit).
@@ -24,16 +33,26 @@ type MediaTransportProps = {
 
 const PLAYBACK_RATES = [0.75, 1, 1.25, 1.5, 2] as const;
 
+function segmentAtTime(segments: TranscriptSegment[], currentTimeSeconds: number) {
+  const currentMs = currentTimeSeconds * 1000;
+  return (
+    segments.find(
+      (segment) => currentMs >= segment.startMs && currentMs < segment.endMs,
+    ) ?? null
+  );
+}
+
 export function MediaTransport({
   mediaKind,
   mediaUrl,
   mediaDenialReason = null,
   segments,
   activeSegmentId,
-  seekRequestMs,
+  seekRequest,
   onSeekHandled,
   onActiveSegmentChange,
   onLocateSegment,
+  onPlayingChange,
 }: MediaTransportProps) {
   const mediaRef = useRef<HTMLAudioElement | HTMLVideoElement | null>(null);
   const [mediaEl, setMediaEl] = useState<HTMLAudioElement | HTMLVideoElement | null>(null);
@@ -65,15 +84,39 @@ export function MediaTransport({
     };
   }, [mediaEl]);
 
+  // Keep the transcript document's active-segment toggle truthful: the
+  // exposed aria-pressed on that button tracks this same state.
   useEffect(() => {
-    if (!mediaRef.current || seekRequestMs === null) {
+    onPlayingChange?.(playing);
+  }, [onPlayingChange, playing]);
+
+  useEffect(() => {
+    const media = mediaRef.current;
+    if (!media || seekRequest === null) {
       return;
     }
 
-    mediaRef.current.currentTime = seekRequestMs / 1000;
-    mediaRef.current.play().catch(() => undefined);
+    const currentSegment = segmentAtTime(segments, media.currentTime);
+
+    if (currentSegment?.id === seekRequest.segmentId) {
+      syncActiveSegment(media.currentTime);
+      // Active-segment click: play/pause toggle (segment-play-toggle).
+      // Resume keeps the paused currentTime untouched, so no re-seek jump
+      // is audible or visible; pause is the equivalent of the transport
+      // pause button, just without scrolling up to it.
+      if (media.paused || media.ended) {
+        media.play().catch(() => undefined);
+      } else {
+        media.pause();
+      }
+    } else {
+      // Any other segment keeps the original seek-and-play contract.
+      media.currentTime = seekRequest.startMs / 1000;
+      media.play().catch(() => undefined);
+      syncActiveSegment(seekRequest.startMs / 1000);
+    }
     onSeekHandled();
-  }, [onSeekHandled, seekRequestMs]);
+  }, [onSeekHandled, seekRequest, segments]);
 
   const activeSegment = useMemo(
     () => segments.find((segment) => segment.id === activeSegmentId) ?? null,
@@ -109,11 +152,7 @@ export function MediaTransport({
     : "Current segment: none";
 
   function syncActiveSegment(currentTimeSeconds: number) {
-    const currentMs = currentTimeSeconds * 1000;
-    const match =
-      segments.find(
-        (segment) => currentMs >= segment.startMs && currentMs < segment.endMs,
-      ) ?? null;
+    const match = segmentAtTime(segments, currentTimeSeconds);
     onActiveSegmentChange(match?.id ?? null);
   }
 

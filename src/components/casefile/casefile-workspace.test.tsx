@@ -424,6 +424,45 @@ describe("CasefileWorkspace", () => {
     expect(removeSpy).toHaveBeenCalledWith("beforeunload", expect.any(Function));
   });
 
+  it("preserves the active segment across a successful save", async () => {
+    const user = userEvent.setup();
+    const nextCasefile = createCasefile({
+      revision: {
+        ...createCasefile().revision,
+        id: "rev-2",
+        version: 2,
+      },
+    });
+    const { saveAction } = renderWorkspace();
+    saveAction.mockResolvedValue({
+      ok: true,
+      data: {
+        casefile: nextCasefile,
+        nextPath: "/recordings/rec-1",
+        focusTarget: "retain",
+      },
+    });
+
+    const audio = document.querySelector("audio");
+    expect(audio).not.toBeNull();
+    audio!.currentTime = 15;
+    fireEvent.timeUpdate(audio!);
+    expect(
+      screen.getByRole("article", { name: /Transcript segment 2, 00:10-00:20/i }),
+    ).toHaveAttribute("aria-current", "true");
+
+    const editor = screen.getByRole("textbox", {
+      name: "Transcript for segment 1, 00:00-00:10",
+    });
+    await user.type(editor, " Updated");
+    await user.click(screen.getByRole("button", { name: "Save draft" }));
+
+    await waitFor(() => expect(screen.getByText("v2")).toBeVisible());
+    expect(
+      screen.getByRole("article", { name: /Transcript segment 2, 00:10-00:20/i }),
+    ).toHaveAttribute("aria-current", "true");
+  });
+
   it("keeps local changes, opens session recovery, and shows stale conflict recovery actions", async () => {
     const user = userEvent.setup();
     const { submitAction } = renderWorkspace();

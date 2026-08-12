@@ -78,6 +78,16 @@ function copySegments(casefile: CasefileViewModel) {
   return casefile.revision?.segments?.map((segment) => ({ ...segment })) ?? [];
 }
 
+function activeSegmentAfterReplacement(
+  currentSegmentId: string | null,
+  nextCasefile: CasefileViewModel,
+) {
+  const nextSegments = nextCasefile.revision?.segments ?? [];
+  return currentSegmentId && nextSegments.some((segment) => segment.id === currentSegmentId)
+    ? currentSegmentId
+    : (nextSegments[0]?.id ?? null);
+}
+
 function latestHref(casefile: CasefileViewModel, conflict?: CasefileConflictSnapshot | null) {
   const searchParams = new URLSearchParams();
   const revisionId = conflict?.currentRevisionId ?? casefile.revision?.id ?? null;
@@ -286,7 +296,15 @@ export function CasefileWorkspace({
     initialCasefile.revision?.segments?.[0]?.id ?? null,
   );
   const [governanceOpen, setGovernanceOpen] = useState(false);
-  const [seekRequestMs, setSeekRequestMs] = useState<number | null>(null);
+  const [seekRequest, setSeekRequest] = useState<{
+    segmentId: string;
+    startMs: number;
+    endMs: number;
+  } | null>(null);
+  // Playing state mirrored from the transport so the active transcript
+  // segment button can expose a truthful play/pause toggle (see
+  // TranscriptDocument aria-pressed).
+  const [activeSegmentPlaying, setActiveSegmentPlaying] = useState(false);
   const [reviewFocus, setReviewFocus] = useState<{ segmentId: string; nonce: number } | null>(
     null,
   );
@@ -321,7 +339,7 @@ export function CasefileWorkspace({
 
     setSummary(initialCasefile.revision?.summary ?? "");
     setSegments(copySegments(initialCasefile));
-    setActiveSegmentId(initialCasefile.revision?.segments?.[0]?.id ?? null);
+    setActiveSegmentId((current) => activeSegmentAfterReplacement(current, initialCasefile));
   }, [initialCasefile]);
 
   useEffect(() => {
@@ -468,7 +486,7 @@ export function CasefileWorkspace({
     setCasefile(nextCasefile);
     setSummary(nextCasefile.revision?.summary ?? "");
     setSegments(copySegments(nextCasefile));
-    setActiveSegmentId(nextCasefile.revision?.segments?.[0]?.id ?? null);
+    setActiveSegmentId((current) => activeSegmentAfterReplacement(current, nextCasefile));
     setConflict(null);
     setDirty(false);
     setLiveMessage(result.notice ?? `Case state updated to ${nextCasefile.stageLabel}.`);
@@ -753,14 +771,22 @@ export function CasefileWorkspace({
                     nonce: (prev?.nonce ?? 0) + 1,
                   }));
                 }}
-                onSeekHandled={() => setSeekRequestMs(null)}
-                seekRequestMs={seekRequestMs}
+                onSeekHandled={() => setSeekRequest(null)}
+                onPlayingChange={setActiveSegmentPlaying}
+                seekRequest={seekRequest}
                 segments={segments}
               />
               <TranscriptDocument
                 activeSegmentId={activeSegmentId}
+                activeSegmentPlaying={activeSegmentPlaying}
                 editable={editable}
-                onSeek={(startMs) => setSeekRequestMs(startMs)}
+                onSeek={(segment) =>
+                  setSeekRequest({
+                    segmentId: segment.id,
+                    startMs: segment.startMs,
+                    endMs: segment.endMs,
+                  })
+                }
                 onSummaryChange={updateSummary}
                 onUpdateSpeaker={updateSpeaker}
                 onUpdateText={updateText}
