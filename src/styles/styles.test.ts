@@ -88,6 +88,17 @@ describe("product css contract", () => {
     expect(css).not.toContain("color: #fff;");
   });
 
+  it("keeps visited auth doors at their tab colors", () => {
+    const auth = readFileSync(resolve(STYLES_DIR, "auth.css"), "utf8");
+    const visited = auth.match(/\.auth-tabs__tab:visited\s*\{([^}]*)\}/);
+    const selectedVisited = auth.match(
+      /\.auth-tabs__tab\[data-selected="true"\]:visited\s*\{([^}]*)\}/,
+    );
+
+    expect(visited?.[1]).toContain("color: var(--color-teal-700)");
+    expect(selectedVisited?.[1]).toContain("color: var(--color-on-primary)");
+  });
+
   it("leaves no literal light fills that would glare or wash out in dark mode", () => {
     // brand.css is exempt: its light block anchors the mark's light backdrop
     // deliberately, and its dark retone carries the mode adaptation.

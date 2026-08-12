@@ -145,6 +145,12 @@
 }
 
 .auth-tabs__tab {
+  /* Doors are real links (progressive enhancement); give them the same box
+     and centered label the buttons had. */
+  display: grid;
+  place-items: center;
+  box-sizing: border-box;
+  text-decoration: none;
   min-height: var(--type-44);
   padding: 0 var(--space-4);
   border: 1px solid transparent;
@@ -158,6 +164,10 @@
     color var(--motion-fast) ease;
 }
 
+.auth-tabs__tab:visited {
+  color: var(--color-teal-700);
+}
+
 .auth-tabs__tab:hover {
   background: color-mix(in srgb, var(--color-paper) 90%, transparent);
 }
@@ -166,6 +176,10 @@
   background: var(--color-teal-700);
   color: var(--color-on-primary);
   box-shadow: var(--shadow-1);
+}
+
+.auth-tabs__tab[data-selected="true"]:visited {
+  color: var(--color-on-primary);
 }
 
 .auth-tabs__panel {

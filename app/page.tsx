@@ -15,6 +15,11 @@ import {
   resolveAuthSurfaceModel,
   resolveSignUpSurface,
 } from "@/lib/auth-surface-model";
+import {
+  buildAuthEntryHref,
+  parseAuthEntryParam,
+  resolveAuthEntry,
+} from "@/lib/auth-entry";
 import { ensureAdminClaimToken } from "@/server/auth/recovery-claim";
 import { loadAuthConfig, type AuthMode } from "@/server/auth/auth-config";
 import {
@@ -116,11 +121,26 @@ export default async function LandingPage({
   // or the operator recovery claim when no administrator remains); Sign in
   // serves returning users. Like first-run, an unmanageable instance opens
   // on the Sign up door so the recovery path is the surfaced option.
+  //
+  // The doors are real links to `/?entry=signup|signin` so they work before
+  // hydration (and with JS disabled entirely); after hydration the client
+  // toggles panes instantly without navigating. Strictly validated, the
+  // param only chooses a door in the steady state: bootstrap /
+  // admin-recovery completion notices, first-run setup, and the recovery
+  // surfaces keep forcing their door exactly as before.
   const completedNotice =
     firstValue(params.notice) === "bootstrap-complete" ||
     firstValue(params.notice) === "admin-recovery-complete";
-  const initialEntry =
-    !completedNotice && signUpSurface !== "provisioned" ? "signup" : "signin";
+  const initialEntry = resolveAuthEntry({
+    requested: parseAuthEntryParam(firstValue(params.entry)),
+    completedNotice,
+    signUpSurface,
+  });
+  // Door links carry returnTo / notice / error / reason across the no-JS
+  // navigation so following a door behaves like the client-side toggle it
+  // stands in for.
+  const signUpHref = buildAuthEntryHref(params, "signup");
+  const signInHref = buildAuthEntryHref(params, "signin");
 
   // Server-rendered notices (session expired, forced re-login, bootstrap
   // complete, ...) request heading focus; the visible pane's heading is the
@@ -276,7 +296,9 @@ export default async function LandingPage({
             ) : null}
             <AuthTabs
               initialEntry={initialEntry}
+              signInHref={signInHref}
               signInPane={signInPane}
+              signUpHref={signUpHref}
               signUpPane={signUpPane}
             />
             <ul className="auth-support-list auth-card__notes field-note">
