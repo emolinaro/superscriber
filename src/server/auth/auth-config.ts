@@ -76,30 +76,28 @@ const roleMapFileSchema = z
 // after a good load keeps the last good map instead of failing the request.
 // A first-use failure still throws: a config that never loaded is a startup
 // error, not a request-time flake.
-const roleMapCache = new Map<string, { mtimeMs: number; value: RoleMap }>();
+const UNKNOWN_ROLE_MAP_MTIME = Symbol("unknown-role-map-mtime");
+type RoleMapMtime = number | typeof UNKNOWN_ROLE_MAP_MTIME;
+type RoleMapCacheEntry = {
+  mtime: RoleMapMtime;
+  rejectedMtimeMs?: number;
+  value: RoleMap;
+};
+const roleMapCache = new Map<string, RoleMapCacheEntry>();
 
-function mtimeMsForRoleMap(path: string): number | null {
+function mtimeForRoleMap(path: string): RoleMapMtime {
   try {
     return statSync(path).mtimeMs;
   } catch {
-    return null;
+    return UNKNOWN_ROLE_MAP_MTIME;
   }
 }
 
 export function loadRoleMapFile(path: string): RoleMap {
-  const cached = roleMapCache.get(path);
-  const mtimeMs = mtimeMsForRoleMap(path);
-  if (cached && (mtimeMs === null || mtimeMs === cached.mtimeMs)) {
-    return cached.value;
-  }
-
   let raw: string;
   try {
     raw = readFileSync(path, "utf8");
   } catch {
-    if (cached) {
-      return cached.value;
-    }
     throw new AuthConfigError(`Role map file is not readable: ${path}`);
   }
 
@@ -107,9 +105,6 @@ export function loadRoleMapFile(path: string): RoleMap {
   try {
     parsedJson = JSON.parse(raw);
   } catch {
-    if (cached) {
-      return cached.value;
-    }
     throw new AuthConfigError(`Role map file is not valid JSON: ${path}`);
   }
 
@@ -123,27 +118,51 @@ export function loadRoleMapFile(path: string): RoleMap {
       );
     }
 
-    if (mtimeMs !== null) {
-      roleMapCache.set(path, { mtimeMs, value: parsed });
-    }
     return parsed;
   } catch (error) {
     if (error instanceof AuthConfigError) {
-      if (cached) {
-        return cached.value;
-      }
       throw error;
     }
     if (error instanceof ZodError) {
-      if (cached) {
-        return cached.value;
-      }
       const issues = error.issues
         .map((issue) => `${issue.path.join(".") || "root"}: ${issue.message}`)
         .join("; ");
       throw new AuthConfigError(`Role map file ${path} is invalid: ${issues}`);
     }
     throw error;
+  }
+}
+
+function loadCachedRoleMapFile(
+  path: string,
+  expectedIssuer: string,
+  validate: (roleMap: RoleMap) => void,
+): RoleMap {
+  const cacheKey = `${path}\0${expectedIssuer}`;
+  const cached = roleMapCache.get(cacheKey);
+  const mtime = mtimeForRoleMap(path);
+  if (
+    cached &&
+    (mtime === UNKNOWN_ROLE_MAP_MTIME ||
+      mtime === cached.mtime ||
+      mtime === cached.rejectedMtimeMs)
+  ) {
+    return cached.value;
+  }
+
+  try {
+    const candidate = loadRoleMapFile(path);
+    validate(candidate);
+    roleMapCache.set(cacheKey, { mtime, value: candidate });
+    return candidate;
+  } catch (error) {
+    if (!cached || !(error instanceof AuthConfigError)) {
+      throw error;
+    }
+    if (mtime !== UNKNOWN_ROLE_MAP_MTIME) {
+      roleMapCache.set(cacheKey, { ...cached, rejectedMtimeMs: mtime });
+    }
+    return cached.value;
   }
 }
 
@@ -192,12 +211,13 @@ export function loadAuthConfig(
     );
   }
 
-  const roleMap = loadRoleMapFile(roleMapFile!);
-  if (roleMap.issuer !== issuer) {
-    throw new AuthConfigError(
-      `Role map issuer must exactly equal SUPERSCRIBER_OIDC_ISSUER; got "${roleMap.issuer}" in ${roleMapFile}.`,
-    );
-  }
+  const roleMap = loadCachedRoleMapFile(roleMapFile!, issuer!, (candidate) => {
+    if (candidate.issuer !== issuer) {
+      throw new AuthConfigError(
+        `Role map issuer must exactly equal SUPERSCRIBER_OIDC_ISSUER; got "${candidate.issuer}" in ${roleMapFile}.`,
+      );
+    }
+  });
 
   return {
     mode,

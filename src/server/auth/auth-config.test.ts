@@ -1,8 +1,33 @@
 import { mkdtempSync, rmSync, unlinkSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { loadAuthConfig, loadDeploymentProfile, loadRoleMapFile } from "@/server/auth/auth-config";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { loadAuthConfig, loadDeploymentProfile } from "@/server/auth/auth-config";
+
+const fsState = vi.hoisted(() => ({
+  failNextStat: false,
+  roleMapReads: 0,
+}));
+
+vi.mock("node:fs", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("node:fs")>();
+  return {
+    ...actual,
+    readFileSync: (...args: unknown[]) => {
+      if (typeof args[0] === "string" && args[0].endsWith("role-map.json")) {
+        fsState.roleMapReads += 1;
+      }
+      return Reflect.apply(actual.readFileSync, actual, args);
+    },
+    statSync: (...args: unknown[]) => {
+      if (fsState.failNextStat) {
+        fsState.failNextStat = false;
+        throw new Error("transient stat failure");
+      }
+      return Reflect.apply(actual.statSync, actual, args);
+    },
+  };
+});
 
 const ISSUER = "https://auth.example.com/application/o/superscriber/";
 
@@ -29,6 +54,8 @@ describe("auth config", () => {
 
   beforeEach(() => {
     dir = mkdtempSync(join(tmpdir(), "superscriber-authcfg-"));
+    fsState.failNextStat = false;
+    fsState.roleMapReads = 0;
   });
 
   afterEach(() => {
@@ -39,6 +66,20 @@ describe("auth config", () => {
     const path = join(dir, "role-map.json");
     writeFileSync(path, typeof contents === "string" ? contents : JSON.stringify(contents));
     return path;
+  }
+
+  function loadDualRoleMap(roleMapPath: string, issuer = ISSUER) {
+    const config = loadAuthConfig({
+      SUPERSCRIBER_AUTH_MODE: "dual",
+      SUPERSCRIBER_OIDC_ISSUER: issuer,
+      SUPERSCRIBER_OIDC_CLIENT_ID: "superscriber",
+      SUPERSCRIBER_OIDC_CLIENT_SECRET_FILE: join(dir, "client-secret"),
+      SUPERSCRIBER_OIDC_ROLE_MAP_FILE: roleMapPath,
+    });
+    if (config.mode === "local") {
+      throw new Error("Expected dual auth config");
+    }
+    return config.roleMap;
   }
 
   const VALID_ROLE_MAP = {
@@ -156,22 +197,15 @@ describe("auth config", () => {
 
   it("keeps the last good role map when a later request-time read fails", () => {
     const roleMapPath = writeRoleMap(VALID_ROLE_MAP);
-    const loaded = loadRoleMapFile(roleMapPath);
+    const loaded = loadDualRoleMap(roleMapPath);
 
-    // A transient mount failure (for example VM file sharing under host
-    // contention) must not crash a request that already saw a good config.
     unlinkSync(roleMapPath);
-    expect(loadRoleMapFile(roleMapPath)).toEqual(loaded);
-
-    // A syntactically broken rewrite between mtimes also falls back.
-    writeFileSync(roleMapPath, "{ not json");
-    utimesSync(roleMapPath, new Date(), new Date(Date.now() + 5_000));
-    expect(loadRoleMapFile(roleMapPath)).toEqual(loaded);
+    expect(loadDualRoleMap(roleMapPath)).toEqual(loaded);
   });
 
   it("picks up a valid role map rewrite once its mtime advances", () => {
     const roleMapPath = writeRoleMap(VALID_ROLE_MAP);
-    const loaded = loadRoleMapFile(roleMapPath);
+    const loaded = loadDualRoleMap(roleMapPath);
 
     const rotated = {
       ...VALID_ROLE_MAP,
@@ -185,8 +219,63 @@ describe("auth config", () => {
     writeFileSync(roleMapPath, JSON.stringify(rotated));
     utimesSync(roleMapPath, new Date(), new Date(Date.now() + 5_000));
 
-    const reloaded = loadRoleMapFile(roleMapPath);
+    const reloaded = loadDualRoleMap(roleMapPath);
     expect(reloaded.groups.admin).toBe(rotated.groups.admin);
     expect(reloaded.groups.admin).not.toBe(loaded.groups.admin);
+  });
+
+  it("keeps an issuer-mismatched rewrite out of the last-good cache", () => {
+    const roleMapPath = writeRoleMap(VALID_ROLE_MAP);
+    const loaded = loadDualRoleMap(roleMapPath);
+    const otherIssuer = "https://auth.example.com/application/o/other/";
+    const rotated = { ...VALID_ROLE_MAP, issuer: otherIssuer };
+
+    writeFileSync(roleMapPath, JSON.stringify(rotated));
+    utimesSync(roleMapPath, new Date(), new Date(Date.now() + 5_000));
+
+    expect(loadDualRoleMap(roleMapPath)).toEqual(loaded);
+    expect(loadDualRoleMap(roleMapPath, otherIssuer)).toEqual(rotated);
+  });
+
+  it("caches a good read with unknown mtime and reloads after stat recovers", () => {
+    const roleMapPath = writeRoleMap(VALID_ROLE_MAP);
+    fsState.failNextStat = true;
+
+    const loaded = loadDualRoleMap(roleMapPath);
+    unlinkSync(roleMapPath);
+    expect(loadDualRoleMap(roleMapPath)).toEqual(loaded);
+
+    const rotated = {
+      ...VALID_ROLE_MAP,
+      groups: { ...VALID_ROLE_MAP.groups, admin: "54444444-4444-4444-8444-444444444444" },
+    };
+    writeFileSync(roleMapPath, JSON.stringify(rotated));
+    utimesSync(roleMapPath, new Date(), new Date(Date.now() + 5_000));
+
+    expect(loadDualRoleMap(roleMapPath).groups.admin).toBe(rotated.groups.admin);
+    expect(fsState.roleMapReads).toBe(2);
+  });
+
+  it("does not retry a rejected role-map mtime until the file changes", () => {
+    const roleMapPath = writeRoleMap(VALID_ROLE_MAP);
+    const loaded = loadDualRoleMap(roleMapPath);
+
+    writeFileSync(roleMapPath, "{ not json");
+    utimesSync(roleMapPath, new Date(), new Date(Date.now() + 5_000));
+    expect(loadDualRoleMap(roleMapPath)).toEqual(loaded);
+    expect(fsState.roleMapReads).toBe(2);
+
+    expect(loadDualRoleMap(roleMapPath)).toEqual(loaded);
+    expect(fsState.roleMapReads).toBe(2);
+
+    const rotated = {
+      ...VALID_ROLE_MAP,
+      groups: { ...VALID_ROLE_MAP.groups, admin: "54444444-4444-4444-8444-444444444444" },
+    };
+    writeFileSync(roleMapPath, JSON.stringify(rotated));
+    utimesSync(roleMapPath, new Date(), new Date(Date.now() + 10_000));
+
+    expect(loadDualRoleMap(roleMapPath).groups.admin).toBe(rotated.groups.admin);
+    expect(fsState.roleMapReads).toBe(3);
   });
 });
