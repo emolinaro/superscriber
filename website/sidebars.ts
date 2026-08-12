@@ -12,6 +12,7 @@ const sidebars: SidebarsConfig = {
       label: 'Superscriber',
     },
     'DESIGN',
+    'CONTRIBUTING',
     {
       type: 'category',
       label: 'Operator runbooks',

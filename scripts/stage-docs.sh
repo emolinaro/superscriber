@@ -22,7 +22,7 @@ mkdir -p "$content/operators"
 
 # Landing page: the README becomes the site index.
 cp README.md "$content/index.md"
-cp DESIGN.md CHANGELOG.md TODOS.md "$content/"
+cp DESIGN.md CHANGELOG.md CONTRIBUTING.md TODOS.md "$content/"
 cp docs/operators/*.md "$content/operators/"
 
 # Future user guide: once the demo lane lands docs/USER-GUIDE.md it is staged
@@ -42,6 +42,8 @@ perl -pi -e "s{\\]\\(\\./docs/operators/\\)}{]($github_tree/docs/operators)}g" *
 perl -pi -e "s{\\]\\(\\./(app|src/components|src/domain|src/server|data|worker|scripts)/\\)}{]($github_tree/\$1)}g" index.md
 #  - the LICENSE file link points at the repo blob
 perl -pi -e "s{\\]\\(\\./LICENSE\\)}{]($github_blob/LICENSE)}g" *.md
+#  - AGENTS.md is agent-orientation, not a docs page; point it at the repo blob
+perl -pi -e "s{\\]\\(\\./AGENTS\\.md\\)}{]($github_blob/AGENTS.md)}g" *.md
 #  - the README is staged as index.md (the docs root), so links back into
 #    README.md must follow it there
 perl -pi -e 's{\]\(\./README\.md(#[A-Za-z0-9_-]+)?\)}{](index.md$1)}g' *.md operators/*.md
