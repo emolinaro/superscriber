@@ -158,8 +158,8 @@ export function TranscriptDocument({
               ) : null}
               <button
                 aria-label={
-                  active && activeSegmentPlaying
-                    ? `Pause segment ${index + 1}, ${windowLabel}.`
+                  active
+                    ? `Play or pause segment ${index + 1}, ${windowLabel}`
                     : `Play from ${windowLabel}`
                 }
                 aria-pressed={active ? activeSegmentPlaying : undefined}

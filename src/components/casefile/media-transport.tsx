@@ -18,7 +18,7 @@ type MediaTransportProps = {
    * keeps that). Clicking the ACTIVE segment toggles instead: pause when it
    * is playing, resume from the paused position (no re-seek) when it is not.
    */
-  seekRequest: { segmentId: string; startMs: number } | null;
+  seekRequest: { segmentId: string; startMs: number; endMs: number } | null;
   onSeekHandled: () => void;
   onActiveSegmentChange: (segmentId: string | null) => void;
   /** Mirrors the media element's playing state so the transcript document
@@ -87,7 +87,11 @@ export function MediaTransport({
       return;
     }
 
-    if (seekRequest.segmentId === activeSegmentId) {
+    const currentTimeMs = media.currentTime * 1000;
+    const requestContainsCurrentTime =
+      currentTimeMs >= seekRequest.startMs && currentTimeMs < seekRequest.endMs;
+
+    if (seekRequest.segmentId === activeSegmentId && requestContainsCurrentTime) {
       // Active-segment click: play/pause toggle (segment-play-toggle).
       // Resume keeps the paused currentTime untouched, so no re-seek jump
       // is audible or visible; pause is the equivalent of the transport

@@ -286,9 +286,11 @@ export function CasefileWorkspace({
     initialCasefile.revision?.segments?.[0]?.id ?? null,
   );
   const [governanceOpen, setGovernanceOpen] = useState(false);
-  const [seekRequest, setSeekRequest] = useState<{ segmentId: string; startMs: number } | null>(
-    null,
-  );
+  const [seekRequest, setSeekRequest] = useState<{
+    segmentId: string;
+    startMs: number;
+    endMs: number;
+  } | null>(null);
   // Playing state mirrored from the transport so the active transcript
   // segment button can expose a truthful play/pause toggle (see
   // TranscriptDocument aria-pressed).
@@ -769,7 +771,11 @@ export function CasefileWorkspace({
                 activeSegmentPlaying={activeSegmentPlaying}
                 editable={editable}
                 onSeek={(segment) =>
-                  setSeekRequest({ segmentId: segment.id, startMs: segment.startMs })
+                  setSeekRequest({
+                    segmentId: segment.id,
+                    startMs: segment.startMs,
+                    endMs: segment.endMs,
+                  })
                 }
                 onSummaryChange={updateSummary}
                 onUpdateSpeaker={updateSpeaker}

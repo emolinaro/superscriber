@@ -120,7 +120,9 @@ describe("TranscriptDocument", () => {
       />,
     );
 
-    const toggle = screen.getByRole("button", { name: "Pause segment 1, 00:00-00:10." });
+    const toggle = screen.getByRole("button", {
+      name: "Play or pause segment 1, 00:00-00:10",
+    });
     expect(toggle).toHaveAttribute("aria-pressed", "true");
     // Inactive segments keep the plain seek-and-play affordance.
     expect(
@@ -144,7 +146,9 @@ describe("TranscriptDocument", () => {
       />,
     );
 
-    const toggle = screen.getByRole("button", { name: "Play from 00:00-00:10" });
+    const toggle = screen.getByRole("button", {
+      name: "Play or pause segment 1, 00:00-00:10",
+    });
     expect(toggle).toHaveAttribute("aria-pressed", "false");
   });
 
