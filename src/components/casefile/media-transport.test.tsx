@@ -138,6 +138,42 @@ describe("MediaTransport", () => {
     expect(onSeekHandled).toHaveBeenCalledTimes(1);
   });
 
+  it("seeks overlapping non-active segments using canonical ownership", () => {
+    const onSeekHandled = vi.fn();
+    const onActiveSegmentChange = vi.fn();
+    const overlappingSegments = [
+      { ...baseSegments[0], endMs: 20_000 },
+      { ...baseSegments[1], startMs: 10_000, endMs: 30_000 },
+    ];
+    const props = {
+      activeSegmentId: "seg-1",
+      mediaKind: "audio" as const,
+      mediaUrl: "/api/media/rec-1",
+      onActiveSegmentChange,
+      onSeekHandled,
+      segments: overlappingSegments,
+    };
+    const { rerender } = render(<MediaTransport {...props} seekRequest={null} />);
+
+    const audio = document.querySelector("audio");
+    expect(audio).not.toBeNull();
+    const stub = stubMediaPlayback(audio!);
+    audio!.currentTime = 15;
+
+    rerender(
+      <MediaTransport
+        {...props}
+        seekRequest={{ segmentId: "seg-2", startMs: 10_000, endMs: 30_000 }}
+      />,
+    );
+
+    expect(audio!.currentTime).toBe(10);
+    expect(stub.play).toHaveBeenCalledTimes(1);
+    expect(stub.pause).not.toHaveBeenCalled();
+    expect(onActiveSegmentChange).toHaveBeenCalledWith("seg-1");
+    expect(onSeekHandled).toHaveBeenCalledTimes(1);
+  });
+
   it("seeks after a save resets the active id away from the paused position", () => {
     const onSeekHandled = vi.fn();
     const onActiveSegmentChange = vi.fn();
@@ -176,7 +212,7 @@ describe("MediaTransport", () => {
       activeSegmentId: "seg-1",
       mediaKind: "audio" as const,
       mediaUrl: "/api/media/rec-1",
-      onActiveSegmentChange: () => undefined,
+      onActiveSegmentChange: vi.fn(),
       onSeekHandled,
       segments: baseSegments,
     };
@@ -198,6 +234,7 @@ describe("MediaTransport", () => {
     expect(stub.pause).not.toHaveBeenCalled();
     expect(audio!.currentTime).toBe(15);
     expect(onSeekHandled).toHaveBeenCalledTimes(1);
+    expect(props.onActiveSegmentChange).toHaveBeenCalledWith("seg-2");
     await waitFor(() =>
       expect(screen.getByTestId("transport-play-toggle")).toHaveAttribute(
         "aria-pressed",

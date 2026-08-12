@@ -78,6 +78,16 @@ function copySegments(casefile: CasefileViewModel) {
   return casefile.revision?.segments?.map((segment) => ({ ...segment })) ?? [];
 }
 
+function activeSegmentAfterReplacement(
+  currentSegmentId: string | null,
+  nextCasefile: CasefileViewModel,
+) {
+  const nextSegments = nextCasefile.revision?.segments ?? [];
+  return currentSegmentId && nextSegments.some((segment) => segment.id === currentSegmentId)
+    ? currentSegmentId
+    : (nextSegments[0]?.id ?? null);
+}
+
 function latestHref(casefile: CasefileViewModel, conflict?: CasefileConflictSnapshot | null) {
   const searchParams = new URLSearchParams();
   const revisionId = conflict?.currentRevisionId ?? casefile.revision?.id ?? null;
@@ -329,7 +339,7 @@ export function CasefileWorkspace({
 
     setSummary(initialCasefile.revision?.summary ?? "");
     setSegments(copySegments(initialCasefile));
-    setActiveSegmentId(initialCasefile.revision?.segments?.[0]?.id ?? null);
+    setActiveSegmentId((current) => activeSegmentAfterReplacement(current, initialCasefile));
   }, [initialCasefile]);
 
   useEffect(() => {
@@ -476,7 +486,7 @@ export function CasefileWorkspace({
     setCasefile(nextCasefile);
     setSummary(nextCasefile.revision?.summary ?? "");
     setSegments(copySegments(nextCasefile));
-    setActiveSegmentId(nextCasefile.revision?.segments?.[0]?.id ?? null);
+    setActiveSegmentId((current) => activeSegmentAfterReplacement(current, nextCasefile));
     setConflict(null);
     setDirty(false);
     setLiveMessage(result.notice ?? `Case state updated to ${nextCasefile.stageLabel}.`);
