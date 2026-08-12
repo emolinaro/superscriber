@@ -1,4 +1,4 @@
-import { readFileSync } from "node:fs";
+import { readFileSync, statSync } from "node:fs";
 import { z, ZodError } from "zod";
 import { GROUP_ID_PATTERN, type RoleMap } from "@/server/auth/role-mapping";
 
@@ -66,11 +66,40 @@ const roleMapFileSchema = z
   })
   .strict();
 
+// The role map is read on the request path (landing-page SSR, OIDC
+// admission, next-auth callbacks), so it had been re-read from the mounted
+// file on every request. A transient read failure of the mount (macOS VM
+// file sharing under host contention, or another process atomically
+// replacing the config directory) then crashed arbitrary requests into the
+// root error boundary. Once a role map has loaded successfully, keep it and
+// re-read only when the file's mtime changes; a stat/read/parse failure
+// after a good load keeps the last good map instead of failing the request.
+// A first-use failure still throws: a config that never loaded is a startup
+// error, not a request-time flake.
+const roleMapCache = new Map<string, { mtimeMs: number; value: RoleMap }>();
+
+function mtimeMsForRoleMap(path: string): number | null {
+  try {
+    return statSync(path).mtimeMs;
+  } catch {
+    return null;
+  }
+}
+
 export function loadRoleMapFile(path: string): RoleMap {
+  const cached = roleMapCache.get(path);
+  const mtimeMs = mtimeMsForRoleMap(path);
+  if (cached && (mtimeMs === null || mtimeMs === cached.mtimeMs)) {
+    return cached.value;
+  }
+
   let raw: string;
   try {
     raw = readFileSync(path, "utf8");
   } catch {
+    if (cached) {
+      return cached.value;
+    }
     throw new AuthConfigError(`Role map file is not readable: ${path}`);
   }
 
@@ -78,6 +107,9 @@ export function loadRoleMapFile(path: string): RoleMap {
   try {
     parsedJson = JSON.parse(raw);
   } catch {
+    if (cached) {
+      return cached.value;
+    }
     throw new AuthConfigError(`Role map file is not valid JSON: ${path}`);
   }
 
@@ -91,12 +123,21 @@ export function loadRoleMapFile(path: string): RoleMap {
       );
     }
 
+    if (mtimeMs !== null) {
+      roleMapCache.set(path, { mtimeMs, value: parsed });
+    }
     return parsed;
   } catch (error) {
     if (error instanceof AuthConfigError) {
+      if (cached) {
+        return cached.value;
+      }
       throw error;
     }
     if (error instanceof ZodError) {
+      if (cached) {
+        return cached.value;
+      }
       const issues = error.issues
         .map((issue) => `${issue.path.join(".") || "root"}: ${issue.message}`)
         .join("; ");

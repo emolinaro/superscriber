@@ -1,8 +1,8 @@
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, rmSync, unlinkSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { loadAuthConfig, loadDeploymentProfile } from "@/server/auth/auth-config";
+import { loadAuthConfig, loadDeploymentProfile, loadRoleMapFile } from "@/server/auth/auth-config";
 
 const ISSUER = "https://auth.example.com/application/o/superscriber/";
 
@@ -152,5 +152,41 @@ describe("auth config", () => {
         SUPERSCRIBER_OIDC_ROLE_MAP_FILE: roleMapPath,
       }),
     ).toThrow(/claim/i);
+  });
+
+  it("keeps the last good role map when a later request-time read fails", () => {
+    const roleMapPath = writeRoleMap(VALID_ROLE_MAP);
+    const loaded = loadRoleMapFile(roleMapPath);
+
+    // A transient mount failure (for example VM file sharing under host
+    // contention) must not crash a request that already saw a good config.
+    unlinkSync(roleMapPath);
+    expect(loadRoleMapFile(roleMapPath)).toEqual(loaded);
+
+    // A syntactically broken rewrite between mtimes also falls back.
+    writeFileSync(roleMapPath, "{ not json");
+    utimesSync(roleMapPath, new Date(), new Date(Date.now() + 5_000));
+    expect(loadRoleMapFile(roleMapPath)).toEqual(loaded);
+  });
+
+  it("picks up a valid role map rewrite once its mtime advances", () => {
+    const roleMapPath = writeRoleMap(VALID_ROLE_MAP);
+    const loaded = loadRoleMapFile(roleMapPath);
+
+    const rotated = {
+      ...VALID_ROLE_MAP,
+      groups: {
+        uploader: "51111111-1111-4111-8111-111111111111",
+        reviewer: "52222222-2222-4222-8222-222222222222",
+        approver: "53333333-3333-4333-8333-333333333333",
+        admin: "54444444-4444-4444-8444-444444444444",
+      },
+    };
+    writeFileSync(roleMapPath, JSON.stringify(rotated));
+    utimesSync(roleMapPath, new Date(), new Date(Date.now() + 5_000));
+
+    const reloaded = loadRoleMapFile(roleMapPath);
+    expect(reloaded.groups.admin).toBe(rotated.groups.admin);
+    expect(reloaded.groups.admin).not.toBe(loaded.groups.admin);
   });
 });
