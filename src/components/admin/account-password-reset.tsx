@@ -1,12 +1,17 @@
 "use client";
 
-import { useId, useState, useTransition, type FormEvent } from "react";
+import { useEffect, useId, useRef, useState, useTransition, type FormEvent } from "react";
 import { Modal } from "@/components/ui/modal";
 import {
   adminPasswordResetInputSchema,
+  PASSWORD_RESET_ADMIN_COPY,
   type AdminPasswordResetInput,
 } from "@/lib/account-password-reset";
-import type { AdminPasswordResetActionResult } from "@/server/actions/administration-actions";
+import type {
+  AdminPasswordResetActionInput,
+  AdminPasswordResetActionResult,
+} from "@/server/actions/administration-actions";
+import { clearSelfResetHold, markSelfResetHold } from "@/lib/self-reset-hold";
 
 type Stage =
   | { kind: "form" }
@@ -35,7 +40,7 @@ export function AccountPasswordResetModal({
   resetMailConfigured: boolean;
   onClose: () => void;
   onIssued: () => void;
-  action: (input: AdminPasswordResetInput) => Promise<AdminPasswordResetActionResult>;
+  action: (input: AdminPasswordResetActionInput) => Promise<AdminPasswordResetActionResult>;
 }) {
   const reasonId = useId();
   const [stage, setStage] = useState<Stage>({ kind: "form" });
@@ -47,8 +52,27 @@ export function AccountPasswordResetModal({
   const [formError, setFormError] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
   const [isPending, startTransition] = useTransition();
+  const mountedRef = useRef(true);
+  const resetHoldOwnedRef = useRef(false);
 
   const isSelf = account.id === currentUserId;
+
+  function releaseResetHold() {
+    if (resetHoldOwnedRef.current) {
+      clearSelfResetHold();
+      resetHoldOwnedRef.current = false;
+    }
+  }
+
+  // A self-reset hold never outlives this dialog: if the modal unmounts for
+  // any reason, the session guard resumes guarding.
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+      releaseResetHold();
+    };
+  }, []);
 
   function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -61,16 +85,35 @@ export function AccountPasswordResetModal({
     const parsed = adminPasswordResetInputSchema.safeParse({
       userId: account.id,
       reason,
-      delivery,
+      delivery: isSelf ? "operator_handoff" : delivery,
     });
     if (!parsed.success) {
+      releaseResetHold();
       setFieldError(parsed.error.flatten().fieldErrors.reason?.[0] ?? "Check the form.");
       return;
     }
 
+    if (isSelf) {
+      markSelfResetHold();
+      resetHoldOwnedRef.current = true;
+    }
+
     startTransition(async () => {
-      const result = await action(parsed.data);
+      let result: AdminPasswordResetActionResult;
+      try {
+        result = await action({ ...parsed.data, expectedActorUserId: currentUserId });
+      } catch {
+        if (mountedRef.current) {
+          releaseResetHold();
+          setFormError(PASSWORD_RESET_ADMIN_COPY.INTERNAL_ERROR);
+        }
+        return;
+      }
+      if (!mountedRef.current) {
+        return;
+      }
       if (!result.ok) {
+        releaseResetHold();
         if (result.fieldErrors?.reason) {
           setFieldError(result.fieldErrors.reason);
         } else {
@@ -79,6 +122,9 @@ export function AccountPasswordResetModal({
         return;
       }
       const actorMustRelogin = result.data.actorMustRelogin;
+      if (!actorMustRelogin) {
+        releaseResetHold();
+      }
       setStage({
         kind: "issued",
         resetUrl: result.data.resetUrl,
@@ -94,6 +140,7 @@ export function AccountPasswordResetModal({
 
   function close() {
     const mustRelogin = stage.kind === "issued" && stage.actorMustRelogin;
+    releaseResetHold();
     setStage({ kind: "form" });
     onClose();
     if (mustRelogin) {
@@ -134,6 +181,19 @@ export function AccountPasswordResetModal({
           ) : (
             <p>The reset link was emailed. It expires at {stage.expiresAt}.</p>
           )}
+          {stage.actorMustRelogin ? (
+            stage.resetUrl ? (
+              <p className="body-copy" role="note">
+                Copy this link now. Closing this dialog signs you out; open the
+                link while signed out (or in a private window) to finish.
+              </p>
+            ) : (
+              <p className="body-copy" role="note">
+                Closing this dialog signs you out; use the emailed link while
+                signed out (or in a private window) to finish.
+              </p>
+            )
+          ) : null}
           <div className="button-row">
             <button className="button button-primary" onClick={close} type="button">
               Done
@@ -149,8 +209,8 @@ export function AccountPasswordResetModal({
           ) : null}
           {isSelf ? (
             <p className="body-copy" role="note">
-              You are resetting your own password. Your current session ends
-              immediately; finish the reset with the new link.
+              You are resetting your own password. This signs YOU out everywhere
+              (including this session) the moment you close the result dialog.
             </p>
           ) : null}
           <p className="body-copy">
@@ -172,19 +232,32 @@ export function AccountPasswordResetModal({
               </p>
             ) : null}
           </div>
-          <fieldset className="field">
-            <legend>Delivery</legend>
-            <label>
-              <input
-                checked={delivery === "operator_handoff"}
-                name="delivery"
-                onChange={() => setDelivery("operator_handoff")}
-                type="radio"
-                value="operator_handoff"
-              />{" "}
-              Out-of-band handoff (show the link once)
-            </label>
-            {resetMailConfigured ? (
+          {isSelf ? (
+            <>
+              <p className="body-copy">
+                Resetting your own account signs you out; copy the link from this
+                dialog - email delivery is unavailable for your own account.
+              </p>
+              {resetMailConfigured ? null : (
+                <p className="body-copy">
+                  Email delivery is not configured on this appliance. The reset link
+                  is shown once here - copy it and hand it over directly.
+                </p>
+              )}
+            </>
+          ) : resetMailConfigured ? (
+            <fieldset className="field">
+              <legend>Delivery</legend>
+              <label>
+                <input
+                  checked={delivery === "operator_handoff"}
+                  name="delivery"
+                  onChange={() => setDelivery("operator_handoff")}
+                  type="radio"
+                  value="operator_handoff"
+                />{" "}
+                Out-of-band handoff (show the link once)
+              </label>
               <label>
                 <input
                   checked={delivery === "email"}
@@ -195,8 +268,13 @@ export function AccountPasswordResetModal({
                 />{" "}
                 Email the reset link
               </label>
-            ) : null}
-          </fieldset>
+            </fieldset>
+          ) : (
+            <p className="body-copy">
+              Email delivery is not configured on this appliance. The reset link
+              is shown once here - copy it and hand it over directly.
+            </p>
+          )}
           <div className="button-row">
             <button className="button button-primary" disabled={isPending} type="submit">
               {isPending ? "Issuing..." : "Issue reset"}

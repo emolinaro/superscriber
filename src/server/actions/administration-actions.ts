@@ -510,14 +510,25 @@ export type AdminPasswordResetActionResult =
       fieldErrors?: Record<string, string>;
     };
 
+export type AdminPasswordResetActionInput = AdminPasswordResetInput & {
+  expectedActorUserId: string;
+};
+
 export async function adminResetAccountPasswordAction(
-  input: AdminPasswordResetInput,
+  input: AdminPasswordResetActionInput,
 ): Promise<AdminPasswordResetActionResult> {
   const activeSession = await getActiveSession();
   if (!activeSession) {
     return { ok: false, code: "AUTH_EXPIRED", message: "Your session expired. Sign in again." };
   }
   const principal = activeSession.user;
+  if (input.expectedActorUserId !== principal.userId) {
+    return {
+      ok: false,
+      code: "AUTH_EXPIRED",
+      message: "Your signed-in account changed. Refresh and try again.",
+    };
+  }
 
   const parsed = adminPasswordResetInputSchema.safeParse(input);
   if (!parsed.success) {
@@ -532,13 +543,18 @@ export async function adminResetAccountPasswordAction(
     };
   }
 
+  const issuanceInput =
+    parsed.data.userId === principal.userId
+      ? { ...parsed.data, delivery: "operator_handoff" as const }
+      : parsed.data;
+
   let issued: AdminPasswordResetSuccess;
   try {
     requireAdmin(principal.role);
     issued = adminIssuePasswordReset({
       actorUserId: principal.userId,
       actorAuthSessionId: activeSession.authSessionId,
-      input: parsed.data,
+      input: issuanceInput,
     });
   } catch (error) {
     if (error instanceof AdminPasswordResetServiceError) {
@@ -579,7 +595,13 @@ export async function adminResetAccountPasswordAction(
     resetUrl = buildResetUrl(issued.rawToken, origin, null);
   }
 
-  revalidatePath("/administration");
+  // No revalidatePath here: a reset issued for the operator's own account
+  // revokes this session, and revalidating would re-render /administration
+  // inside this action response; requireAuthorizedPrincipal then throws
+  // NEXT_REDIRECT and the router navigates away before the client can show
+  // the one-time link. The accounts table refreshes on dialog close instead
+  // (onIssued -> router.refresh, which is where a self-reset bounces to the
+  // sign-in door by design).
   return {
     ok: true,
     notice:
