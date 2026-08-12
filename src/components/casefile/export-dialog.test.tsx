@@ -2,10 +2,15 @@
 
 import * as React from "react";
 import type { ComponentProps } from "react";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { SessionRecoveryDialog } from "@/components/auth/session-recovery-dialog";
 import { ExportDialog } from "./export-dialog";
+
+vi.mock("next-auth/react", () => ({
+  signIn: vi.fn(),
+}));
 
 const fetchMock = vi.fn();
 const createObjectUrlMock = vi.fn(() => "blob:export");
@@ -69,6 +74,7 @@ describe("ExportDialog", () => {
   });
 
   afterEach(() => {
+    cleanup();
     vi.restoreAllMocks();
     URL.createObjectURL = originalCreateObjectURL;
     URL.revokeObjectURL = originalRevokeObjectURL;
@@ -85,6 +91,7 @@ describe("ExportDialog", () => {
     document.body.append(appRoot);
 
     const onClose = vi.fn();
+    const onActionModeRejected = vi.fn();
     const onAnnouncement = vi.fn();
     const onSessionRecoveryRequested = vi.fn();
 
@@ -94,6 +101,7 @@ describe("ExportDialog", () => {
         <ExportDialog
           actionModeId="mode-1"
           approvalDecisions={[approvedDecision]}
+          onActionModeRejected={onActionModeRejected}
           onAnnouncement={onAnnouncement}
           onClose={onClose}
           onSessionRecoveryRequested={onSessionRecoveryRequested}
@@ -106,7 +114,7 @@ describe("ExportDialog", () => {
       { container: appRoot },
     );
 
-    return { onAnnouncement, onClose, onSessionRecoveryRequested };
+    return { onActionModeRejected, onAnnouncement, onClose, onSessionRecoveryRequested };
   }
 
   function renderManagedDialog(overrides: Partial<ComponentProps<typeof ExportDialog>> = {}) {
@@ -115,6 +123,7 @@ describe("ExportDialog", () => {
     document.body.append(appRoot);
 
     const onClose = vi.fn();
+    const onActionModeRejected = vi.fn();
     const onAnnouncement = vi.fn();
     const onSessionRecoveryRequested = vi.fn();
 
@@ -129,6 +138,7 @@ describe("ExportDialog", () => {
           <ExportDialog
             actionModeId="mode-1"
             approvalDecisions={[approvedDecision]}
+            onActionModeRejected={onActionModeRejected}
             onAnnouncement={onAnnouncement}
             onClose={() => {
               onClose();
@@ -147,6 +157,7 @@ describe("ExportDialog", () => {
     render(<Harness />, { container: appRoot });
 
     return {
+      onActionModeRejected,
       onAnnouncement,
       onClose,
       onSessionRecoveryRequested,
@@ -159,6 +170,7 @@ describe("ExportDialog", () => {
       <ExportDialog
         actionModeId={null}
         approvalDecisions={[approvedDecision]}
+        onActionModeRejected={vi.fn()}
         onAnnouncement={vi.fn()}
         onClose={vi.fn()}
         onSessionRecoveryRequested={vi.fn()}
@@ -186,6 +198,7 @@ describe("ExportDialog", () => {
       <ExportDialog
         actionModeId={null}
         approvalDecisions={[]}
+        onActionModeRejected={vi.fn()}
         onAnnouncement={vi.fn()}
         onClose={vi.fn()}
         onSessionRecoveryRequested={vi.fn()}
@@ -210,6 +223,7 @@ describe("ExportDialog", () => {
             actorDisplay: "Approver Example",
           },
         ]}
+        onActionModeRejected={vi.fn()}
         onAnnouncement={vi.fn()}
         onClose={vi.fn()}
         onSessionRecoveryRequested={vi.fn()}
@@ -238,6 +252,25 @@ describe("ExportDialog", () => {
     expect(screen.queryByText(/approved revision v1/)).toBeNull();
   });
 
+  it("disables revisionless formats and does not request an export", async () => {
+    const user = userEvent.setup();
+    renderDialog({
+      hasApprovedRevision: false,
+      revision: null,
+      revisionOptions: [],
+    });
+
+    expect(
+      screen.getByText("Export unlocks once the first transcript revision exists."),
+    ).toBeVisible();
+    const formatButton = screen.getByRole("button", { name: "DOCX" });
+    expect(formatButton).toBeDisabled();
+
+    await user.click(formatButton);
+
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
   it("locks the viewport, traps focus, supports Escape, and restores focus to the trigger", async () => {
     const user = userEvent.setup();
     const appRoot = document.createElement("div");
@@ -255,6 +288,7 @@ describe("ExportDialog", () => {
           <ExportDialog
             actionModeId={null}
             approvalDecisions={[approvedDecision]}
+            onActionModeRejected={vi.fn()}
             onAnnouncement={vi.fn()}
             onClose={() => setOpen(false)}
             onSessionRecoveryRequested={vi.fn()}
@@ -313,6 +347,66 @@ describe("ExportDialog", () => {
     await waitFor(() => expect(onSessionRecoveryRequested).toHaveBeenCalledTimes(1));
     expect(screen.getByRole("dialog", { name: "Export approved transcript" })).toBeVisible();
     expect(onClose).not.toHaveBeenCalled();
+  });
+
+  it("stacks session recovery above export and restores export after Escape", async () => {
+    const user = userEvent.setup();
+    const appRoot = document.createElement("div");
+    appRoot.id = "app-root";
+    document.body.append(appRoot);
+    fetchMock.mockResolvedValue({ ok: false, status: 401, headers: new Headers() });
+
+    function Harness() {
+      const [recoveryOpen, setRecoveryOpen] = React.useState(false);
+
+      return (
+        <>
+          <ExportDialog
+            actionModeId="mode-1"
+            approvalDecisions={[approvedDecision]}
+            onActionModeRejected={vi.fn()}
+            onAnnouncement={vi.fn()}
+            onClose={vi.fn()}
+            onSessionRecoveryRequested={() => setRecoveryOpen(true)}
+            open
+            recordingId="rec-1"
+            revision={{ version: 3, id: "rev-3" }}
+            revisionOptions={[approvedRevisionOption]}
+            hasApprovedRevision
+          />
+          <SessionRecoveryDialog
+            onClose={() => setRecoveryOpen(false)}
+            onRecovered={() => setRecoveryOpen(false)}
+            open={recoveryOpen}
+          />
+        </>
+      );
+    }
+
+    render(<Harness />, { container: appRoot });
+    await user.click(screen.getByRole("button", { name: "DOCX" }));
+
+    const recoveryDialog = await screen.findByRole("dialog", { name: "Session expired" });
+    const exportBackdrop = screen.getByTestId("export-backdrop");
+    const recoveryBackdrop = recoveryDialog.closest(".modal-backdrop") as HTMLElement;
+
+    expect(Number(recoveryBackdrop.style.zIndex)).toBeGreaterThan(
+      Number(exportBackdrop.style.zIndex),
+    );
+    expect(exportBackdrop).toHaveAttribute("inert");
+    expect(exportBackdrop).toHaveAttribute("aria-hidden", "true");
+    expect(recoveryBackdrop).not.toHaveAttribute("inert");
+    expect(recoveryBackdrop).not.toHaveAttribute("aria-hidden");
+    expect(
+      screen.queryByRole("dialog", { name: "Export approved transcript" }),
+    ).not.toBeInTheDocument();
+
+    await user.keyboard("{Escape}");
+
+    expect(screen.queryByRole("dialog", { name: "Session expired" })).not.toBeInTheDocument();
+    expect(screen.getByRole("dialog", { name: "Export approved transcript" })).toBeVisible();
+    expect(exportBackdrop).not.toHaveAttribute("inert");
+    expect(exportBackdrop).not.toHaveAttribute("aria-hidden");
   });
 
   it("keeps the modal open on Escape while an export is pending", async () => {
@@ -407,12 +501,12 @@ describe("ExportDialog", () => {
     await user.click(screen.getByRole("button", { name: "DOCX" }));
     expect(
       await screen.findByText(
-        /Administrators: Open Governance on this casefile and choose Enter approver action mode/,
+        /Administrators: open Governance on this casefile and choose Enter approver action mode/,
       ),
     ).toBeVisible();
     expect(
       screen.getByText(
-        /Open Governance on this casefile and choose Enter approver action mode, then retry the download - attribution stays intact\./,
+        /open Governance on this casefile and choose Enter approver action mode, then retry the download - attribution stays intact\./,
       ),
     ).toBeVisible();
 

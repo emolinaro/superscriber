@@ -34,14 +34,21 @@ describe("GovernanceDrawer", () => {
 
   // demo-gov-placement: the trigger is header-hosted now - tests drive the
   // component's controlled open prop through a tiny state host.
-  function harness() {
+  function harness({
+    actionModeEntryOptions = [],
+  }: {
+    actionModeEntryOptions?: Array<{ effectiveRole: "reviewer" | "approver" }>;
+  } = {}) {
     let state: { open: boolean; setOpen: (value: boolean) => void } | null = null;
     function Host() {
       const [open, setOpen] = useState(false);
       state = { open, setOpen };
       return (
         <GovernanceDrawer
+          actionModeEntryOptions={actionModeEntryOptions}
+          actionModeSessionId={null}
           casefile={createCasefile()}
+          onEnterActionMode={vi.fn()}
           open={open}
           onToggle={() => setOpen((current) => !current)}
         />
@@ -165,5 +172,39 @@ describe("GovernanceDrawer", () => {
     });
     expect(document.body.style.overflow).toBe("");
     expect(trigger).toHaveFocus();
+  });
+
+  it("closes only action-mode entry on Escape when Governance remains open", async () => {
+    const user = userEvent.setup();
+    const appRoot = document.createElement("div");
+    appRoot.id = "app-root";
+    document.body.append(appRoot);
+    setViewport(960);
+    const { Host, getState } = harness({
+      actionModeEntryOptions: [{ effectiveRole: "approver" }],
+    });
+    render(<Host />, { container: appRoot });
+
+    act(() => getState().setOpen(true));
+    const governanceDialog = screen.getByRole("dialog", { name: "Governance" });
+    await user.click(screen.getByRole("button", { name: "Enter approver action mode" }));
+
+    const actionModeDialog = screen.getByRole("dialog", { name: "Enter admin action mode" });
+    const governanceBackdrop = governanceDialog.closest(".modal-backdrop") as HTMLElement;
+    const actionModeBackdrop = actionModeDialog.closest(".modal-backdrop") as HTMLElement;
+
+    expect(Number(actionModeBackdrop.style.zIndex)).toBeGreaterThan(
+      Number(governanceBackdrop.style.zIndex),
+    );
+    expect(governanceBackdrop).toHaveAttribute("inert");
+    expect(governanceBackdrop).toHaveAttribute("aria-hidden", "true");
+    expect(actionModeBackdrop).not.toHaveAttribute("inert");
+    expect(actionModeBackdrop).not.toHaveAttribute("aria-hidden");
+    expect(screen.queryByRole("dialog", { name: "Governance" })).not.toBeInTheDocument();
+
+    await user.keyboard("{Escape}");
+
+    expect(screen.queryByRole("dialog", { name: "Enter admin action mode" })).not.toBeInTheDocument();
+    expect(screen.getByRole("dialog", { name: "Governance" })).toBeVisible();
   });
 });
