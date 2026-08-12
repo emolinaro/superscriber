@@ -87,6 +87,34 @@
   }
 }
 
+@media (max-width: 1099px) {
+  /* Pinned player chrome (player-pinned-center) on every window-scrolling
+     casefile width. The stacked offsets behind the old desktop stickies
+     (case-header top: 64px, transport top: 132px) were calibrated for the
+     single-row desktop chrome; below 1100px the app bar wraps to several
+     rows and the header card grows tall, so the parked transport always
+     ended up hidden behind the header card (z-index 6 beat 5). On the
+     casefile page the shell bar and case header instead flow away and the
+     transport takes the single pinned slot - no overlap, no stacked-chrome
+     jumpiness. Other pages keep their sticky shell bar untouched. */
+  body:has(.casefile-page) .app-shell__header,
+  .case-header {
+    position: static;
+  }
+
+  .media-transport {
+    position: sticky;
+    top: 0;
+  }
+
+  /* Centered follow targeting: clearance matches the pinned transport so
+     block:center aims at the visible region below it and nearest-edge
+     scrolls land below the chrome. */
+  html:has(.casefile-page) {
+    scroll-padding-top: 432px;
+  }
+}
+
 @media (max-width: 767px), (max-height: 767px) and (pointer: coarse) {
   .app-shell__main {
     padding-top: var(--space-6);
@@ -121,23 +149,11 @@
     margin-top: calc(var(--space-6) * -1);
   }
 
-  .media-transport {
-    top: 112px;
-  }
-
-  /* Sticky case-header (top: 64px) and sticky transport (top: 112px) are
-     calibrated for the single-row desktop chrome. At phone widths the
-     header card is several rows tall, so a parked transport slides under
-     the header card (z-index 6 beats 5) and the wave player vanishes
-     behind it. Phone is a status/playback surface (review waits for
-     tablet/desktop), so both blocks just flow in document order. */
-  .case-header,
-  .media-transport {
-    position: static;
-  }
-
-  .transcript-segment {
-    scroll-margin-top: 148px;
+  /* Centered follow targeting on the phone surface: the transport is
+     shorter once the rail and stacked actions are compacted (~316px at
+     390px width), so the window-scroll clearance tightens. */
+  html:has(.casefile-page) {
+    scroll-padding-top: 372px;
   }
 
   .case-header__facts,
@@ -152,6 +168,30 @@
   .casefile-action-bar,
   .media-transport__actions {
     display: grid;
+  }
+
+  /* Phone pinned-chrome budget (player-pinned-center): the pinned transport
+     must leave the transcript readable below it. The chip rail duplicates
+     the per-row timestamp seek, so it collapses, and the action row splits
+     into two columns instead of four stacked rows. */
+  .media-transport__rail {
+    display: none;
+  }
+
+  .media-transport__actions {
+    grid-template-columns: 1fr 1fr;
+  }
+
+  .media-transport__rate-field {
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
+    min-width: 0;
+    grid-column: 1 / -1;
+  }
+
+  .media-transport__segment-label {
+    grid-column: 1 / -1;
   }
 }
 

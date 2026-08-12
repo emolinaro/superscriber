@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 
 import userEvent from "@testing-library/user-event";
-import { cleanup, render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { baseSegments } from "./test-fixtures";
 import { TranscriptDocument } from "./transcript-document";
@@ -193,7 +193,7 @@ describe("TranscriptDocument", () => {
     ).toBeNull();
   });
 
-  it("scrolls the active row into the nearest scrollport as playback advances", () => {
+  it("centers the active row in the scrollport as playback advances", () => {
     const { rerender } = render(
       <TranscriptDocument
         activeSegmentId={null}
@@ -226,7 +226,7 @@ describe("TranscriptDocument", () => {
 
     expect(scrollIntoViewMock).toHaveBeenCalledTimes(1);
     expect(scrollIntoViewMock).toHaveBeenCalledWith({
-      block: "nearest",
+      block: "center",
       behavior: "smooth",
     });
   });
@@ -248,8 +248,156 @@ describe("TranscriptDocument", () => {
     );
 
     expect(scrollIntoViewMock).toHaveBeenCalledWith({
-      block: "nearest",
+      block: "center",
       behavior: "auto",
+    });
+  });
+
+  it("pauses follow after a user scroll gesture and resumes when the active line is back in view", () => {
+    // jsdom reports zero geometry, so a row reads as out of view unless the
+    // rect is stubbed - exactly what the pause contract needs for this test.
+    const { rerender } = render(
+      <TranscriptDocument
+        activeSegmentId="seg-1"
+        editable={false}
+        onSeek={vi.fn()}
+        onUpdateSpeaker={vi.fn()}
+        onUpdateText={vi.fn()}
+        phoneSafetyMode={false}
+        segments={baseSegments}
+        summary="Ready for review."
+        onSummaryChange={vi.fn()}
+      />,
+    );
+    expect(scrollIntoViewMock).toHaveBeenCalledTimes(1);
+    scrollIntoViewMock.mockClear();
+
+    // A wheel gesture anywhere outside the transport rail is a manual
+    // transcript scroll: follow pauses.
+    fireEvent(window, new Event("wheel"));
+    rerender(
+      <TranscriptDocument
+        activeSegmentId="seg-2"
+        editable={false}
+        onSeek={vi.fn()}
+        onUpdateSpeaker={vi.fn()}
+        onUpdateText={vi.fn()}
+        phoneSafetyMode={false}
+        segments={baseSegments}
+        summary="Ready for review."
+        onSummaryChange={vi.fn()}
+      />,
+    );
+    expect(scrollIntoViewMock).not.toHaveBeenCalled();
+
+    // When the active line intersects the scrollport again, follow
+    // re-engages and centers it. The coming active row is segment 1, so
+    // give that row a rect that visibly intersects the window viewport.
+    const row = screen.getByRole("article", { name: /Transcript segment 1,/ });
+    const zeroRect = row.getBoundingClientRect();
+    row.getBoundingClientRect = () =>
+      ({ ...zeroRect, top: 120, bottom: 180, height: 60, y: 120 }) as DOMRect;
+    rerender(
+      <TranscriptDocument
+        activeSegmentId="seg-1"
+        editable={false}
+        onSeek={vi.fn()}
+        onUpdateSpeaker={vi.fn()}
+        onUpdateText={vi.fn()}
+        phoneSafetyMode={false}
+        segments={baseSegments}
+        summary="Ready for review."
+        onSummaryChange={vi.fn()}
+      />,
+    );
+    expect(scrollIntoViewMock).toHaveBeenCalledTimes(1);
+    expect(scrollIntoViewMock).toHaveBeenCalledWith({
+      block: "center",
+      behavior: "smooth",
+    });
+  });
+
+  it("never pauses follow on wheel inside the horizontal segment rail", () => {
+    function RailHarness() {
+      return (
+        <div className="media-transport__rail">
+          <TranscriptDocument
+            activeSegmentId="seg-1"
+            editable={false}
+            onSeek={vi.fn()}
+            onUpdateSpeaker={vi.fn()}
+            onUpdateText={vi.fn()}
+            phoneSafetyMode={false}
+            segments={baseSegments}
+            summary="Ready for review."
+            onSummaryChange={vi.fn()}
+          />
+        </div>
+      );
+    }
+    const { rerender } = render(<RailHarness />);
+    scrollIntoViewMock.mockClear();
+
+    // Simulate chip scrubbing: a wheel event whose target sits inside the
+    // rail. The capture listener must ignore it.
+    const rail = document.querySelector(".media-transport__rail")!;
+    fireEvent(rail, new Event("wheel", { bubbles: true }));
+    rerender(
+      <div className="media-transport__rail">
+        <TranscriptDocument
+          activeSegmentId="seg-2"
+          editable={false}
+          onSeek={vi.fn()}
+          onUpdateSpeaker={vi.fn()}
+          onUpdateText={vi.fn()}
+          phoneSafetyMode={false}
+          segments={baseSegments}
+          summary="Ready for review."
+          onSummaryChange={vi.fn()}
+        />
+      </div>,
+    );
+    expect(scrollIntoViewMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("re-engages follow immediately on an explicit timestamp seek", async () => {
+    const user = userEvent.setup();
+    const onSeek = vi.fn();
+    const { rerender } = render(
+      <TranscriptDocument
+        activeSegmentId="seg-1"
+        editable={false}
+        onSeek={onSeek}
+        onUpdateSpeaker={vi.fn()}
+        onUpdateText={vi.fn()}
+        phoneSafetyMode={false}
+        segments={baseSegments}
+        summary="Ready for review."
+        onSummaryChange={vi.fn()}
+      />,
+    );
+    scrollIntoViewMock.mockClear();
+
+    fireEvent(window, new Event("wheel"));
+    await user.click(screen.getByRole("button", { name: "Play from 00:10-00:20" }));
+    expect(onSeek).toHaveBeenCalledWith(10_000);
+
+    rerender(
+      <TranscriptDocument
+        activeSegmentId="seg-2"
+        editable={false}
+        onSeek={onSeek}
+        onUpdateSpeaker={vi.fn()}
+        onUpdateText={vi.fn()}
+        phoneSafetyMode={false}
+        segments={baseSegments}
+        summary="Ready for review."
+        onSummaryChange={vi.fn()}
+      />,
+    );
+    expect(scrollIntoViewMock).toHaveBeenCalledWith({
+      block: "center",
+      behavior: "smooth",
     });
   });
 
