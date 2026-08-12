@@ -5,6 +5,7 @@
 - Domain workflow rules: `src/domain/workflow.ts`. Governed commands, capabilities, action mode, and access grants: `src/server/casefile/`. Authenticated routes: `app/(authenticated)/`.
 - Unmanageable-instance recovery (accounts exist, no active admin): operator-claim ceremony on the sign-up door gated by an on-host single-use token (`src/server/auth/recovery-claim.ts`, runbook `docs/operators/admin-recovery.md`).
 - Full validation gate: `npm run typecheck`, `npm test`, `npm run build`, `npm run worker:check`, `npm run e2e`, `npm run e2e:container`.
+- Governed server actions that revoke the caller's own session (admin self password reset) must not `revalidatePath` the current route: the action response re-renders it with the dead session, `requireAuthorizedPrincipal` throws NEXT_REDIRECT, and the client navigates before it can use the result. Refresh via the client's close path instead; the shell session-guard hold lives in `src/lib/self-reset-hold.ts` + `src/lib/session-guard-policy.ts`.
 
 ## GBrain Configuration (configured by /setup-gbrain)
 - Engine: pglite

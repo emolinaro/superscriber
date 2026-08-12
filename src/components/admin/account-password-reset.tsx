@@ -1,12 +1,13 @@
 "use client";
 
-import { useId, useState, useTransition, type FormEvent } from "react";
+import { useEffect, useId, useState, useTransition, type FormEvent } from "react";
 import { Modal } from "@/components/ui/modal";
 import {
   adminPasswordResetInputSchema,
   type AdminPasswordResetInput,
 } from "@/lib/account-password-reset";
 import type { AdminPasswordResetActionResult } from "@/server/actions/administration-actions";
+import { clearSelfResetHold, markSelfResetHold } from "@/lib/self-reset-hold";
 
 type Stage =
   | { kind: "form" }
@@ -50,6 +51,10 @@ export function AccountPasswordResetModal({
 
   const isSelf = account.id === currentUserId;
 
+  // A self-reset hold never outlives this dialog: if the modal unmounts for
+  // any reason, the session guard resumes guarding.
+  useEffect(() => () => clearSelfResetHold(), []);
+
   function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (isPending) {
@@ -79,6 +84,12 @@ export function AccountPasswordResetModal({
         return;
       }
       const actorMustRelogin = result.data.actorMustRelogin;
+      if (actorMustRelogin) {
+        // Issuance revoked this account's sessions, including ours. Hold the
+        // session guard's redirect so the one-shot link stays on screen until
+        // the operator dismisses the dialog.
+        markSelfResetHold();
+      }
       setStage({
         kind: "issued",
         resetUrl: result.data.resetUrl,
@@ -94,6 +105,11 @@ export function AccountPasswordResetModal({
 
   function close() {
     const mustRelogin = stage.kind === "issued" && stage.actorMustRelogin;
+    if (mustRelogin) {
+      // Dismissal is the designed sign-out point: release the hold so the
+      // session guard converges this revoked session to the sign-in door.
+      clearSelfResetHold();
+    }
     setStage({ kind: "form" });
     onClose();
     if (mustRelogin) {
@@ -134,6 +150,12 @@ export function AccountPasswordResetModal({
           ) : (
             <p>The reset link was emailed. It expires at {stage.expiresAt}.</p>
           )}
+          {stage.actorMustRelogin ? (
+            <p className="body-copy" role="note">
+              Copy this link now. Closing this dialog signs you out; open the
+              link while signed out (or in a private window) to finish.
+            </p>
+          ) : null}
           <div className="button-row">
             <button className="button button-primary" onClick={close} type="button">
               Done
@@ -149,8 +171,8 @@ export function AccountPasswordResetModal({
           ) : null}
           {isSelf ? (
             <p className="body-copy" role="note">
-              You are resetting your own password. Your current session ends
-              immediately; finish the reset with the new link.
+              You are resetting your own password. This signs YOU out everywhere
+              (including this session) the moment you close the result dialog.
             </p>
           ) : null}
           <p className="body-copy">
@@ -172,19 +194,19 @@ export function AccountPasswordResetModal({
               </p>
             ) : null}
           </div>
-          <fieldset className="field">
-            <legend>Delivery</legend>
-            <label>
-              <input
-                checked={delivery === "operator_handoff"}
-                name="delivery"
-                onChange={() => setDelivery("operator_handoff")}
-                type="radio"
-                value="operator_handoff"
-              />{" "}
-              Out-of-band handoff (show the link once)
-            </label>
-            {resetMailConfigured ? (
+          {resetMailConfigured ? (
+            <fieldset className="field">
+              <legend>Delivery</legend>
+              <label>
+                <input
+                  checked={delivery === "operator_handoff"}
+                  name="delivery"
+                  onChange={() => setDelivery("operator_handoff")}
+                  type="radio"
+                  value="operator_handoff"
+                />{" "}
+                Out-of-band handoff (show the link once)
+              </label>
               <label>
                 <input
                   checked={delivery === "email"}
@@ -195,8 +217,13 @@ export function AccountPasswordResetModal({
                 />{" "}
                 Email the reset link
               </label>
-            ) : null}
-          </fieldset>
+            </fieldset>
+          ) : (
+            <p className="body-copy">
+              Email delivery is not configured on this appliance. The reset link
+              is shown once here - copy it and hand it over directly.
+            </p>
+          )}
           <div className="button-row">
             <button className="button button-primary" disabled={isPending} type="submit">
               {isPending ? "Issuing..." : "Issue reset"}

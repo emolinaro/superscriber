@@ -579,7 +579,13 @@ export async function adminResetAccountPasswordAction(
     resetUrl = buildResetUrl(issued.rawToken, origin, null);
   }
 
-  revalidatePath("/administration");
+  // No revalidatePath here: a reset issued for the operator's own account
+  // revokes this session, and revalidating would re-render /administration
+  // inside this action response; requireAuthorizedPrincipal then throws
+  // NEXT_REDIRECT and the router navigates away before the client can show
+  // the one-time link. The accounts table refreshes on dialog close instead
+  // (onIssued -> router.refresh, which is where a self-reset bounces to the
+  // sign-in door by design).
   return {
     ok: true,
     notice:

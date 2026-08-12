@@ -6,8 +6,9 @@ import { usePathname } from "next/navigation";
 import { SuperscriberLogo } from "@/components/brand/superscriber-logo";
 import {
   clearIntentionalSignOut,
-  hasIntentionalSignOut,
 } from "@/lib/signed-out-marker";
+import { clearSelfResetHold } from "@/lib/self-reset-hold";
+import { shouldHoldSessionExpiredRedirect } from "@/lib/session-guard-policy";
 import type { Principal, UserRole } from "@/domain/models";
 import { AccountMenu } from "./account-menu";
 import { LogoutButton } from "@/components/auth/logout-button";
@@ -45,12 +46,15 @@ function useSessionGuard() {
   useEffect(() => {
     let cancelled = false;
     // A mounted shell means a fresh authenticated render in this tab: clear
-    // any stale intentional-sign-out marker before the first poll.
+    // any stale intentional-sign-out or self-reset hold markers before the
+    // first poll.
     clearIntentionalSignOut();
+    clearSelfResetHold();
 
     const checkSession = async () => {
-      if (hasIntentionalSignOut()) {
-        // The user clicked Sign out; their own navigation wins.
+      if (shouldHoldSessionExpiredRedirect()) {
+        // A deliberate sign-out or a held-open self-reset result dialog wins;
+        // their own navigation decides where this tab lands.
         return;
       }
 
