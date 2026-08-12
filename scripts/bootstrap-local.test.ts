@@ -40,7 +40,8 @@ function freePort(): string {
 }
 const RUN = join(REPO_ROOT, "scripts", "instance-run.sh");
 const STOP = join(REPO_ROOT, "scripts", "instance-stop.sh");
-const SCRIPTS = [BOOTSTRAP, RUN, STOP];
+const INSTANCE_PATHS = join(REPO_ROOT, "scripts", "instance-paths.sh");
+const SCRIPTS = [BOOTSTRAP, RUN, STOP, INSTANCE_PATHS];
 const REQUIRED_NODE_VERSION = "24.18.1";
 
 function runScript(
@@ -51,7 +52,11 @@ function runScript(
   return spawnSync("bash", [script, ...args], {
     cwd: REPO_ROOT,
     encoding: "utf8",
-    env: { ...process.env, ...env },
+    env: {
+      ...process.env,
+      SUPERSCRIBER_BOOTSTRAP_ALLOW_TMP_INSTANCE_ROOT: "1",
+      ...env,
+    },
     timeout: 60_000,
   });
 }
@@ -63,7 +68,11 @@ function runScriptAsync(
 ) {
   const child = spawn("bash", [script, ...args], {
     cwd: REPO_ROOT,
-    env: { ...process.env, ...env },
+    env: {
+      ...process.env,
+      SUPERSCRIBER_BOOTSTRAP_ALLOW_TMP_INSTANCE_ROOT: "1",
+      ...env,
+    },
     stdio: ["ignore", "pipe", "pipe"],
   });
   let stdout = "";
@@ -121,6 +130,16 @@ describe("local deployment bootstrap scripts", () => {
     expect(result.stdout).toContain("--model-tier");
   });
 
+  it("prints a shell-quoted rerun command with the selected root and port", () => {
+    const source = readFileSync(BOOTSTRAP, "utf8");
+    expect(source).toContain(
+      "printf -v bootstrap_command '%q --instance-root %q --port %q'",
+    );
+    expect(source).toContain(
+      "Re-run bootstrap:   ${bootstrap_command} (idempotent)",
+    );
+  });
+
   it("fails loudly with an actionable message when node is missing", () => {
     testRoot = mkdtempSync(join(tmpdir(), "superscriber-bootstrap-test-"));
     const fakeBin = join(testRoot, "bin");
@@ -171,7 +190,10 @@ describe("local deployment bootstrap scripts", () => {
         "--skip-worker-deps",
       ],
       // Hand the script a world where npm ci is satisfied instantly: stub npm.
-      stubToolchainEnv(testRoot),
+      {
+        ...stubToolchainEnv(testRoot),
+        SUPERSCRIBER_BOOTSTRAP_ALLOW_TMP_INSTANCE_ROOT: "0",
+      },
     );
     expect(result.status).toBe(1);
     expect(result.stderr).toContain("never the system temp dir");
@@ -189,7 +211,11 @@ describe("local deployment bootstrap scripts", () => {
         "--skip-model-download",
         "--skip-worker-deps",
       ],
-      { ...stubToolchainEnv(testRoot), TMPDIR: testRoot },
+      {
+        ...stubToolchainEnv(testRoot),
+        TMPDIR: testRoot,
+        SUPERSCRIBER_BOOTSTRAP_ALLOW_TMP_INSTANCE_ROOT: "0",
+      },
     );
     expect(result.status).toBe(1);
     expect(result.stderr).toContain("never the system temp dir");
@@ -208,7 +234,10 @@ describe("local deployment bootstrap scripts", () => {
         "--skip-model-download",
         "--skip-worker-deps",
       ],
-      stubToolchainEnv(testRoot),
+      {
+        ...stubToolchainEnv(testRoot),
+        SUPERSCRIBER_BOOTSTRAP_ALLOW_TMP_INSTANCE_ROOT: "0",
+      },
     );
     expect(result.status).toBe(1);
     expect(result.stderr).toContain("not the filesystem root");
@@ -230,17 +259,98 @@ describe("local deployment bootstrap scripts", () => {
         "--skip-model-download",
         "--skip-worker-deps",
       ],
-      { ...stubToolchainEnv(testRoot), TMPDIR: tempRoot },
+      {
+        ...stubToolchainEnv(testRoot),
+        TMPDIR: tempRoot,
+        SUPERSCRIBER_BOOTSTRAP_ALLOW_TMP_INSTANCE_ROOT: "0",
+      },
     );
     expect(result.status).toBe(1);
     expect(result.stderr).toContain("never the system temp dir");
     expect(existsSync(join(tempRoot, "instance"))).toBe(false);
   });
 
+  it("rejects direct start and stop under a temporary root before writing state", () => {
+    testRoot = mkdtempSync(join(tmpdir(), "superscriber-bootstrap-test-"));
+    const instance = join(testRoot, "instance");
+    markInstanceRoot(instance);
+    const env = {
+      SUPERSCRIBER_BOOTSTRAP_ALLOW_TMP_INSTANCE_ROOT: "0",
+      TMPDIR: testRoot,
+    };
+
+    const start = runScript(RUN, [instance], env);
+    const stop = runScript(STOP, [instance], env);
+
+    expect(start.status).toBe(1);
+    expect(stop.status).toBe(1);
+    expect(start.stderr).toContain("never the system temp dir");
+    expect(stop.stderr).toContain("never the system temp dir");
+    expect(existsSync(join(instance, "logs"))).toBe(false);
+    expect(existsSync(join(instance, "pids"))).toBe(false);
+  });
+
+  it("refuses a non-empty unowned root without mutating it", () => {
+    testRoot = worktreeTestRoot();
+    const instance = join(testRoot, "not-an-instance");
+    mkdirSync(instance, { recursive: true });
+    const existing = join(instance, "keep.txt");
+    writeFileSync(existing, "keep");
+    chmodSync(existing, 0o644);
+
+    const result = runScript(
+      BOOTSTRAP,
+      [
+        "--instance-root",
+        instance,
+        "--port",
+        freePort(),
+        "--skip-model-download",
+        "--skip-worker-deps",
+      ],
+      stubToolchainEnv(testRoot),
+    );
+
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain("non-empty");
+    expect(result.stderr).toContain("ownership marker");
+    expect(readFileSync(existing, "utf8")).toBe("keep");
+    expect(statSync(existing).mode & 0o777).toBe(0o644);
+    expect(existsSync(join(instance, ".superscriber-instance"))).toBe(false);
+  });
+
+  it("rejects managed child symlinks before writing through them", () => {
+    testRoot = worktreeTestRoot();
+    const instance = join(testRoot, "instance");
+    const outsideData = join(testRoot, "outside-data");
+    markInstanceRoot(instance);
+    mkdirSync(outsideData);
+    symlinkSync(outsideData, join(instance, "data"));
+
+    const result = runScript(
+      BOOTSTRAP,
+      [
+        "--instance-root",
+        instance,
+        "--port",
+        freePort(),
+        "--skip-model-download",
+        "--skip-worker-deps",
+      ],
+      stubNpxEnv(testRoot),
+    );
+
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain("managed instance path must not be a symlink");
+    expect(existsSync(join(outsideData, "media"))).toBe(false);
+    expect(existsSync(join(instance, "app.env"))).toBe(false);
+  });
+
   it("instance-run refuses a foreign process on the instance port", async () => {
     testRoot = mkdtempSync(join(tmpdir(), "superscriber-bootstrap-test-"));
     const instance = join(testRoot, "instance");
     mkdirSync(join(instance, "pids"), { recursive: true });
+    markInstanceRoot(instance);
 
     // Occupy a real free port with a short-lived holder, then claim it in app.env.
     const holder: ChildProcess = spawn(
@@ -283,6 +393,7 @@ describe("local deployment bootstrap scripts", () => {
     testRoot = worktreeTestRoot();
     const instance = join(testRoot, "instance");
     mkdirSync(join(instance, "pids"), { recursive: true });
+    markInstanceRoot(instance);
     const holder = spawn("node", ["-e", "setTimeout(()=>{},30000)"], {
       stdio: "ignore",
     });
@@ -332,10 +443,126 @@ describe("local deployment bootstrap scripts", () => {
     testRoot = mkdtempSync(join(tmpdir(), "superscriber-bootstrap-test-"));
     const instance = join(testRoot, "instance");
     mkdirSync(instance, { recursive: true });
+    markInstanceRoot(instance);
     const result = runScript(STOP, [instance]);
     expect(result.status).toBe(0);
     expect(result.stdout).toContain("not running");
   });
+
+  it("refuses a direct start while bootstrap maintenance owns the instance", () => {
+    testRoot = worktreeTestRoot();
+    const instance = join(testRoot, "instance");
+    const port = freePort();
+    const appServer = join(testRoot, "server.js");
+    const workerPython = join(testRoot, "worker-python");
+    writeFileSync(appServer, "setTimeout(()=>{},30000)\n");
+    writeFileSync(workerPython, "#!/bin/sh\nexec sleep 30\n");
+    chmodSync(workerPython, 0o700);
+    prepareRunnableInstance(instance, port, appServer, workerPython);
+    mkdirSync(join(instance, "pids", "maintenance.lock"));
+    writeFileSync(
+      join(instance, "pids", "maintenance.lock", "identity"),
+      `2147483647 ${"a".repeat(48)} 1-1\n`,
+    );
+
+    const result = runScript(RUN, [instance]);
+
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain("maintenance lock");
+    expect(runScript(RUN, [instance, "--status"]).status).toBe(1);
+  });
+
+  it("serializes parallel bootstraps through launch preparation", { timeout: 30_000 }, async () => {
+    testRoot = worktreeTestRoot();
+    const instance = join(testRoot, "instance");
+    const modelDir = join(instance, "model-cache", "medium");
+    markInstanceRoot(instance);
+    mkdirSync(modelDir, { recursive: true });
+    writeModelTier(modelDir, "txt");
+    prepareWorkingVenv(instance);
+    const env = stubNpxEnv(testRoot);
+    writeFileSync(
+      join(testRoot, "bin", "npm"),
+      '#!/bin/sh\nif [ "$1" = "--version" ]; then echo 11.19.0; exit 0; fi\nif [ "$1" = "ci" ]; then sleep 15; exit 0; fi\nif [ "$1" = "run" ]; then exit 1; fi\nexit 0\n',
+    );
+    chmodSync(join(testRoot, "bin", "npm"), 0o700);
+    const args = [
+      "--instance-root",
+      instance,
+      "--port",
+      freePort(),
+      "--model-tier",
+      "medium",
+      "--skip-model-download",
+      "--skip-worker-deps",
+    ];
+    const secondArgs = [...args];
+    secondArgs[3] = freePort();
+
+    const first = runScriptAsync(BOOTSTRAP, args, env);
+    await waitForCondition(() =>
+      existsSync(join(instance, "pids", "maintenance.lock", "identity")),
+    );
+    const second = runScript(BOOTSTRAP, secondArgs, env);
+
+    expect(second.status).toBe(1);
+    expect(second.stderr).toContain("another bootstrap is maintaining");
+    expect((await first).status).not.toBe(0);
+  });
+
+  it("clears exited role identity before restart backoff", async () => {
+    testRoot = worktreeTestRoot();
+    const instance = join(testRoot, "instance");
+    const port = freePort();
+    const appServer = join(testRoot, "server.js");
+    const workerPython = join(testRoot, "worker-python");
+    writeFileSync(appServer, "process.exit(1)\n");
+    writeFileSync(workerPython, "#!/bin/sh\nexec sleep 30\n");
+    chmodSync(workerPython, 0o700);
+    prepareRunnableInstance(instance, port, appServer, workerPython);
+    runningInstances.add(instance);
+
+    const start = runScript(RUN, [instance]);
+    expect(start.status, start.stderr + start.stdout).toBe(0);
+    await waitForCondition(() => {
+      const log = join(instance, "logs", "supervisor.log");
+      return (
+        existsSync(log) &&
+        readFileSync(log, "utf8").includes("app exited status=1")
+      );
+    });
+
+    expect(existsSync(join(instance, "pids", "app.identity"))).toBe(false);
+    expect(existsSync(join(instance, "pids", "app.pid"))).toBe(false);
+    expect(runScript(RUN, [instance, "--app-running"]).status).toBe(1);
+  });
+
+  it(
+    "requires a working worker venv when dependency installation is skipped",
+    { timeout: 20_000 },
+    () => {
+      testRoot = worktreeTestRoot();
+      const instance = join(testRoot, "instance");
+      markInstanceRoot(instance);
+      const result = runScript(
+        BOOTSTRAP,
+        [
+          "--instance-root",
+          instance,
+          "--port",
+          freePort(),
+          "--model-tier",
+          "tiny",
+          "--skip-model-download",
+          "--skip-worker-deps",
+        ],
+        stubNpxEnv(testRoot),
+      );
+
+      expect(result.status).toBe(1);
+      expect(result.stderr).toContain("worker venv is missing");
+    },
+  );
 
   it(
     "bootstrap writes app.env without embedding secret values",
@@ -343,6 +570,7 @@ describe("local deployment bootstrap scripts", () => {
     () => {
       testRoot = worktreeTestRoot();
       const instance = join(testRoot, "instance with spaces");
+      markInstanceRoot(instance);
       mkdirSync(join(instance, "data"), { recursive: true });
       mkdirSync(join(instance, "logs"), { recursive: true });
       writeFileSync(join(instance, "data", "existing.db"), "db");
@@ -353,8 +581,8 @@ describe("local deployment bootstrap scripts", () => {
       chmodSync(join(instance, "logs", "existing.log"), 0o644);
       const modelDir = join(instance, "model-cache", "medium");
       mkdirSync(modelDir, { recursive: true });
-      writeFileSync(join(modelDir, "model.bin"), "model");
-      writeFileSync(join(modelDir, "config.json"), "{}");
+      writeModelTier(modelDir, "txt");
+      prepareWorkingVenv(instance);
       const port = freePort();
       const result = runScript(
         BOOTSTRAP,
@@ -425,10 +653,11 @@ describe("local deployment bootstrap scripts", () => {
     () => {
       testRoot = worktreeTestRoot();
       const instance = join(testRoot, "instance");
+      markInstanceRoot(instance);
       const modelDir = join(instance, "model-cache", "medium");
       mkdirSync(modelDir, { recursive: true });
-      writeFileSync(join(modelDir, "model.bin"), "model");
-      writeFileSync(join(modelDir, "config.json"), "{}");
+      writeModelTier(modelDir, "txt");
+      prepareWorkingVenv(instance);
       writeFileSync(
         join(instance, "app.env"),
         "SUPERSCRIBER_TRANSCRIBE_MODEL=medium\n",
@@ -499,8 +728,8 @@ describe("local deployment bootstrap scripts", () => {
       prepareRunnableInstance(instance, port, appServer, workerPython);
       const modelDir = join(instance, "model-cache", "medium");
       mkdirSync(modelDir, { recursive: true });
-      writeFileSync(join(modelDir, "model.bin"), "model");
-      writeFileSync(join(modelDir, "config.json"), "{}");
+      writeModelTier(modelDir, "txt");
+      prepareWorkingVenv(instance);
       runningInstances.add(instance);
       const start = runScript(RUN, [instance]);
       expect(start.status, start.stderr + start.stdout).toBe(0);
@@ -592,6 +821,7 @@ function prepareRunnableInstance(
   appServer: string,
   workerPython: string,
 ) {
+  markInstanceRoot(instance);
   mkdirSync(join(instance, "pids"), { recursive: true });
   mkdirSync(join(instance, "logs"), { recursive: true });
   mkdirSync(join(instance, "secrets"), { recursive: true });
@@ -608,6 +838,29 @@ function prepareRunnableInstance(
       "",
     ].join("\n"),
   );
+}
+
+function markInstanceRoot(instance: string) {
+  mkdirSync(instance, { recursive: true });
+  writeFileSync(
+    join(instance, ".superscriber-instance"),
+    "superscriber-local-instance-v1\ncreated_at=test\n",
+  );
+}
+
+function writeModelTier(modelDir: string, vocabulary: "txt" | "json") {
+  writeFileSync(join(modelDir, "model.bin"), "model");
+  writeFileSync(join(modelDir, "config.json"), "{}");
+  writeFileSync(join(modelDir, "tokenizer.json"), "{}");
+  writeFileSync(join(modelDir, `vocabulary.${vocabulary}`), "vocabulary");
+}
+
+function prepareWorkingVenv(instance: string) {
+  const bin = join(instance, "venv", "bin");
+  mkdirSync(bin, { recursive: true });
+  const python = join(bin, "python3");
+  writeFileSync(python, "#!/bin/sh\nexit 0\n");
+  chmodSync(python, 0o700);
 }
 
 async function waitForCondition(condition: () => boolean, timeoutMs = 10_000) {

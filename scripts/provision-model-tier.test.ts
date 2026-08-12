@@ -167,7 +167,7 @@ describe("provision-model-tier CLI", () => {
   );
 
   it(
-    "serializes concurrent provisioning processes without clobbering staging",
+    "serializes concurrent stale-lock recovery without clobbering staging",
     { timeout: 240_000 },
     async () => {
       const { fixtureRoot, modelRoot } = makeFixtureAndModelRoot();
@@ -175,10 +175,18 @@ describe("provision-model-tier CLI", () => {
         SUPERSCRIBER_MODEL_DOWNLOAD_FIXTURE_DIR: fixtureRoot,
         SUPERSCRIBER_TRANSCRIBE_MODEL_DIR: modelRoot,
       };
-      const first = runCliAsync(["--tier", TIER], env);
-      await waitForCondition(() =>
-        existsSync(join(modelRoot, ".provisioning")),
+      mkdirSync(join(modelRoot, ".provisioning.lock"));
+      writeFileSync(
+        join(modelRoot, ".provisioning.lock", "owner.json"),
+        JSON.stringify({
+          pid: 2_147_483_647,
+          processStart: "d".repeat(64),
+          tierId: TIER,
+          token: "e".repeat(48),
+          createdAt: new Date(0).toISOString(),
+        }),
       );
+      const first = runCliAsync(["--tier", TIER], env);
       const second = runCliAsync(["--tier", TIER], env);
       const [firstResult, secondResult] = await Promise.all([
         first.completed,
@@ -192,7 +200,10 @@ describe("provision-model-tier CLI", () => {
         secondResult.status,
         secondResult.stderr + secondResult.stdout,
       ).toBe(0);
-      expect(secondResult.stdout).toMatch(
+      expect(firstResult.stdout + secondResult.stdout).toContain(
+        "provisioned successfully",
+      );
+      expect(firstResult.stdout + secondResult.stdout).toMatch(
         /Another model download|already provisioned/,
       );
       for (const file of TIER_DOWNLOADS[TIER].files) {
@@ -202,12 +213,3 @@ describe("provision-model-tier CLI", () => {
     },
   );
 });
-
-async function waitForCondition(condition: () => boolean, timeoutMs = 10_000) {
-  const deadline = Date.now() + timeoutMs;
-  while (Date.now() < deadline) {
-    if (condition()) return;
-    await new Promise((resolvePromise) => setTimeout(resolvePromise, 25));
-  }
-  throw new Error("condition did not become true before timeout");
-}

@@ -1,4 +1,4 @@
-import { existsSync } from "node:fs";
+import { lstatSync } from "node:fs";
 import { join } from "node:path";
 
 import { TIER_DOWNLOADS } from "./tier-downloads";
@@ -98,9 +98,14 @@ export function isModelProvisioned(tierId: string): boolean {
     return false;
   }
   const dir = join(modelRoot(), tierId);
-  return TIER_DOWNLOADS[tierId].files.every((file) =>
-    existsSync(join(dir, file)),
-  );
+  return TIER_DOWNLOADS[tierId].files.every((file) => {
+    try {
+      const artifact = lstatSync(join(dir, file));
+      return artifact.isFile() && artifact.size > 0;
+    } catch {
+      return false;
+    }
+  });
 }
 
 export function listModelCatalog(): {

@@ -74,6 +74,32 @@ describe("model catalog (demo-model-tier-picker)", () => {
     expect(isModelProvisioned("small")).toBe(false);
   });
 
+  it("rejects empty and non-file artifacts", () => {
+    snapshotEnv();
+    const root = mkdtempSync(join(tmpdir(), "model-catalog-invalid-"));
+    const emptyDir = join(root, "small");
+    mkdirSync(emptyDir, { recursive: true });
+    for (const file of TIER_DOWNLOADS.small.files) {
+      writeFileSync(
+        join(emptyDir, file),
+        file === "model.bin" ? "" : "artifact",
+      );
+    }
+    process.env.SUPERSCRIBER_TRANSCRIBE_MODEL_DIR = root;
+    expect(isModelProvisioned("small")).toBe(false);
+
+    const directoryTier = join(root, "tiny");
+    mkdirSync(directoryTier, { recursive: true });
+    for (const file of TIER_DOWNLOADS.tiny.files) {
+      if (file === "tokenizer.json") {
+        mkdirSync(join(directoryTier, file));
+      } else {
+        writeFileSync(join(directoryTier, file), "artifact");
+      }
+    }
+    expect(isModelProvisioned("tiny")).toBe(false);
+  });
+
   it("marks provisioned tiers available and defaults to best provisioned quality", () => {
     snapshotEnv();
     const root = mkdtempSync(join(tmpdir(), "model-catalog-full-"));

@@ -75,8 +75,9 @@ Options: `--instance-root DIR` (default `~/.local/share/superscriber`),
 `--port N` (default `3000`), `--model-tier TIER`, `--skip-model-download`,
 `--skip-worker-deps`.
 
-Instance layout (all under the instance root): `app.env` (non-secret config),
-`secrets/` (auth + engine secrets, mode `0600`, never printed), `data/`
+Instance layout (all under the instance root): `.superscriber-instance`
+(bootstrap ownership marker), `app.env` (non-secret config), `secrets/`
+(auth + engine secrets, mode `0600`, never printed), `data/`
 (SQLite database, media, uploads), `model-cache/` (model tiers), `logs/`
 (`app.log`, `worker.log`, `supervisor.log`), `pids/`.
 
@@ -265,7 +266,7 @@ For the internal worker, the main model/runtime controls are:
 - `SUPERSCRIBER_TRANSCRIBE_ALLOW_RUNTIME_DOWNLOAD`
 - `SUPERSCRIBER_TRANSCRIBE_ALLOW_STUB_FALLBACK`
 
-`SUPERSCRIBER_TRANSCRIBE_MODEL` names the configured worker default. The ingest model catalog checks `SUPERSCRIBER_TRANSCRIBE_MODEL_DIR` on every request and treats a tier as provisioned only when `<model-dir>/<tier>/model.bin` and `<model-dir>/<tier>/config.json` both exist. The standard local commands default to `models/`, while the supplied container sets `/app/models`; when you override the directory, give the app and worker the same value. Advanced settings disables every unprovisioned tier and always preselects the highest-quality provisioned tier, even when the configured model is itself provisioned.
+`SUPERSCRIBER_TRANSCRIBE_MODEL` names the configured worker default. The ingest model catalog checks `SUPERSCRIBER_TRANSCRIBE_MODEL_DIR` on every request and treats a tier as provisioned only when the complete pinned artifact set contains regular, non-empty files: `<model-dir>/<tier>/model.bin`, `config.json`, `tokenizer.json`, and the tier's `vocabulary.txt` or `vocabulary.json`. The standard local commands default to `models/`, while the supplied container sets `/app/models`; when you override the directory, give the app and worker the same value. Advanced settings disables every unprovisioned tier and always preselects the highest-quality provisioned tier, even when the configured model is itself provisioned.
 
 Unprovisioned tiers can be installed straight from the picker: admins outside phone-safety mode get a one-click Download action per tier with the exact size on the button and live byte progress. The server fetches the faster-whisper artifact set (`model.bin`, `config.json`, `tokenizer.json`, and the tier's vocabulary file) from pinned huggingface.co repository and commit URLs into the configured model directory. It stages the complete tier before revealing it, removes partial files after a failure, and needs no worker restart; the tier becomes selectable as soon as the install completes. A free-space preflight rejects the start with HTTP 507 before any download, and only one tier can download at a time, with concurrent starts rejected by HTTP 409. Failures keep the server error on screen next to a retry. `POST /api/models/provisioning` is admin-only; `GET /api/models/provisioning` reports per-tier state to any signed-in account. The only outbound network surface this adds is the pinned huggingface.co artifact URLs.
 

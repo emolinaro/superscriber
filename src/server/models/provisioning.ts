@@ -1,10 +1,8 @@
 import {
-  closeSync,
   createReadStream,
   createWriteStream,
   existsSync,
   mkdirSync,
-  openSync,
   readFileSync,
   renameSync,
   rmdirSync,
@@ -17,7 +15,8 @@ import { stat } from "node:fs/promises";
 import { join } from "node:path";
 import { once } from "node:events";
 import { Readable } from "node:stream";
-import { randomBytes } from "node:crypto";
+import { createHash, randomBytes } from "node:crypto";
+import { execFileSync } from "node:child_process";
 
 import { isModelProvisioned, MODEL_TIER_IDS } from "./catalog";
 import {
@@ -87,27 +86,49 @@ const completions = new Map<string, Promise<void>>();
 
 type ProvisioningLockOwner = {
   pid: number;
+  processStart: string;
   tierId: string;
   token: string;
   createdAt: string;
 };
 
-const LOCK_FILE_NAME = ".provisioning.lock";
+const LOCK_DIRECTORY_NAME = ".provisioning.lock";
+const LOCK_OWNER_FILE_NAME = "owner.json";
 const LOCK_INITIALIZATION_GRACE_MS = 5_000;
 
 function lockPath(root: string) {
-  return join(root, LOCK_FILE_NAME);
+  return join(root, LOCK_DIRECTORY_NAME);
+}
+
+function lockOwnerPath(root: string) {
+  return join(lockPath(root), LOCK_OWNER_FILE_NAME);
+}
+
+function processStartIdentity(pid: number) {
+  try {
+    const identity = execFileSync(
+      "ps",
+      ["-ww", "-p", String(pid), "-o", "lstart=", "-o", "args="],
+      { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] },
+    ).trim();
+    if (!identity) return null;
+    return createHash("sha256").update(identity).digest("hex");
+  } catch {
+    return null;
+  }
 }
 
 function readLockOwner(root: string): ProvisioningLockOwner | null {
   try {
     const parsed = JSON.parse(
-      readFileSync(lockPath(root), "utf8"),
+      readFileSync(lockOwnerPath(root), "utf8"),
     ) as Partial<ProvisioningLockOwner>;
     if (
       typeof parsed.pid !== "number" ||
       !Number.isInteger(parsed.pid) ||
       parsed.pid <= 0 ||
+      typeof parsed.processStart !== "string" ||
+      !/^[0-9a-f]{64}$/.test(parsed.processStart) ||
       typeof parsed.tierId !== "string" ||
       !MODEL_TIER_IDS.includes(parsed.tierId) ||
       typeof parsed.token !== "string" ||
@@ -131,15 +152,81 @@ function processIsAlive(pid: number) {
   }
 }
 
+function processOwnsLock(owner: ProvisioningLockOwner) {
+  return (
+    processIsAlive(owner.pid) &&
+    processStartIdentity(owner.pid) === owner.processStart
+  );
+}
+
 function liveLockOwner(root: string) {
   const owner = readLockOwner(root);
-  return owner && processIsAlive(owner.pid) ? owner : null;
+  return owner && processOwnsLock(owner) ? owner : null;
 }
 
 function releaseProvisioningLock(root: string, owner: ProvisioningLockOwner) {
   const current = readLockOwner(root);
   if (current?.token === owner.token) {
-    rmSync(lockPath(root), { force: true });
+    const stalePath = `${lockPath(root)}.released.${owner.pid}.${owner.token}`;
+    try {
+      renameSync(lockPath(root), stalePath);
+      rmSync(stalePath, { recursive: true, force: true });
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+    }
+  }
+}
+
+function lockGenerationSnapshot(root: string) {
+  try {
+    return readFileSync(lockOwnerPath(root), "utf8");
+  } catch {
+    return "";
+  }
+}
+
+function removeReclaimSlot(root: string) {
+  try {
+    rmdirSync(join(lockPath(root), ".reclaim"));
+  } catch {}
+}
+
+function reclaimStaleProvisioningLock(root: string, observed: string) {
+  const path = lockPath(root);
+  const reclaimPath = join(path, ".reclaim");
+  try {
+    mkdirSync(reclaimPath, { mode: 0o700 });
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "EEXIST") {
+      try {
+        if (
+          Date.now() - statSync(reclaimPath).mtimeMs >=
+          LOCK_INITIALIZATION_GRACE_MS
+        ) {
+          rmSync(reclaimPath, { recursive: true, force: true });
+        }
+      } catch {}
+      return false;
+    }
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return true;
+    throw error;
+  }
+
+  const current = lockGenerationSnapshot(root);
+  if (current !== observed || liveLockOwner(root)) {
+    removeReclaimSlot(root);
+    return false;
+  }
+
+  const stalePath = `${path}.stale.${process.pid}.${randomBytes(8).toString("hex")}`;
+  try {
+    renameSync(path, stalePath);
+    rmSync(stalePath, { recursive: true, force: true });
+    return true;
+  } catch (error) {
+    removeReclaimSlot(root);
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return true;
+    throw error;
   }
 }
 
@@ -149,28 +236,29 @@ function acquireProvisioningLock(
 ): ProvisioningLockOwner {
   const path = lockPath(root);
   for (let attempt = 0; attempt < 5; attempt += 1) {
-    let descriptor: number | undefined;
     let createdLock = false;
     try {
-      descriptor = openSync(path, "wx", 0o600);
+      mkdirSync(path, { mode: 0o700 });
       createdLock = true;
+      const processStart = processStartIdentity(process.pid);
+      if (!processStart) {
+        throw new Error("could not identify the provisioning process");
+      }
       const owner: ProvisioningLockOwner = {
         pid: process.pid,
+        processStart,
         tierId,
         token: randomBytes(24).toString("hex"),
         createdAt: new Date().toISOString(),
       };
-      writeFileSync(descriptor, JSON.stringify(owner), "utf8");
-      closeSync(descriptor);
+      writeFileSync(lockOwnerPath(root), JSON.stringify(owner), {
+        encoding: "utf8",
+        mode: 0o600,
+      });
       return owner;
     } catch (error) {
-      if (descriptor !== undefined) {
-        try {
-          closeSync(descriptor);
-        } catch {}
-      }
       if (createdLock) {
-        rmSync(path, { force: true });
+        rmSync(path, { recursive: true, force: true });
       }
       const code = (error as NodeJS.ErrnoException).code;
       if (code !== "EEXIST") {
@@ -210,15 +298,8 @@ function acquireProvisioningLock(
         }
       }
 
-      const stalePath = `${path}.stale.${process.pid}.${randomBytes(8).toString("hex")}`;
-      try {
-        renameSync(path, stalePath);
-        rmSync(stalePath, { force: true });
-      } catch (reclaimError) {
-        if ((reclaimError as NodeJS.ErrnoException).code !== "ENOENT") {
-          throw reclaimError;
-        }
-      }
+      const observed = lockGenerationSnapshot(root);
+      reclaimStaleProvisioningLock(root, observed);
     }
   }
   throw new ProvisioningError(

@@ -6,6 +6,8 @@ umask 077
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
+# shellcheck source=scripts/instance-paths.sh
+. "${SCRIPT_DIR}/instance-paths.sh"
 
 INSTANCE_ROOT="${SUPERSCRIBER_INSTANCE_ROOT:-${HOME}/.local/share/superscriber}"
 PORT="3000"
@@ -14,7 +16,6 @@ RESOLVED_MODEL_TIER=""
 SKIP_MODEL_DOWNLOAD=0
 SKIP_WORKER_DEPS=0
 CHECK_DEPS_ONLY=0
-INSTANCE_WAS_RUNNING=0
 
 usage() {
   cat <<'EOF'
@@ -26,7 +27,7 @@ Usage: scripts/bootstrap-local.sh [options]
                           picker; non-interactive default: the catalog default 'small')
   --skip-model-download   Do not download; require the selected or previously
                           configured tier to exist in the model cache
-  --skip-worker-deps      Do not create the Python venv / install worker requirements
+  --skip-worker-deps      Reuse an existing valid worker venv without installing
   --check-deps-only       Run only the dependency preflight
   -h, --help              Show this help
 EOF
@@ -104,36 +105,6 @@ log_dependencies() {
   log "dependencies ok: node $(node --version | sed 's/^v//'), npm $(npm --version), $(python3 --version)"
 }
 
-canonicalize_without_create() {
-  local resolved ancestor suffix="" base physical
-  resolved="$(node -e 'process.stdout.write(require("node:path").resolve(process.argv[1]))' "$1")"
-  ancestor="${resolved}"
-  while [[ ! -d "${ancestor}" ]]; do
-    [[ "${ancestor}" != "/" ]] || return 1
-    base="${ancestor##*/}"
-    suffix="${base}${suffix:+/${suffix}}"
-    ancestor="${ancestor%/*}"
-    [[ -n "${ancestor}" ]] || ancestor="/"
-  done
-  physical="$(cd "${ancestor}" && pwd -P)"
-  if [[ "${physical}" == "/" ]]; then
-    printf '/%s\n' "${suffix}"
-  else
-    printf '%s%s\n' "${physical%/}" "${suffix:+/${suffix}}"
-  fi
-}
-
-reject_temporary_instance_root() {
-  local candidate canonical_temp
-  for candidate in "/tmp" "/private/tmp" "${TMPDIR:-/tmp}"; do
-    canonical_temp="$(canonicalize_without_create "${candidate}")" || continue
-    case "${INSTANCE_ROOT}" in
-      "${canonical_temp}"|"${canonical_temp}"/*)
-        fail "instance root must be durable storage, never the system temp dir: ${INSTANCE_ROOT}" ;;
-    esac
-  done
-}
-
 port_is_free() {
   node -e '
     const net = require("node:net");
@@ -145,16 +116,22 @@ port_is_free() {
 
 resolve_instance_root() {
   local configured_port
-  INSTANCE_ROOT="$(canonicalize_without_create "${INSTANCE_ROOT}")" || fail "could not resolve instance root"
-  [[ "${INSTANCE_ROOT}" != "/" ]] || fail "instance root must be a dedicated directory, not the filesystem root"
-  reject_temporary_instance_root
+  INSTANCE_ROOT="$(resolve_durable_instance_root "${INSTANCE_ROOT}")" || exit 1
   case "${PORT}" in
     ''|*[!0-9]*) fail "port must be a number, got '${PORT}'" ;;
   esac
   [[ "${PORT}" -ge 1024 && "${PORT}" -le 65535 ]] || fail "port ${PORT} is outside 1024-65535"
 
+  if [[ -e "${INSTANCE_ROOT}" && ! -d "${INSTANCE_ROOT}" ]]; then
+    fail "instance root exists but is not a directory: ${INSTANCE_ROOT}"
+  fi
+  if [[ -d "${INSTANCE_ROOT}" ]] && ! instance_marker_is_valid "${INSTANCE_ROOT}" && \
+     [[ -n "$(find "${INSTANCE_ROOT}" -mindepth 1 -maxdepth 1 -print -quit)" ]]; then
+    fail "existing instance root is non-empty but has no valid ${INSTANCE_MARKER_NAME} ownership marker. Pick an empty, dedicated instance root."
+  fi
+  reject_managed_instance_symlinks "${INSTANCE_ROOT}" || exit 1
+
   if [[ -d "${INSTANCE_ROOT}" ]] && bash "${SCRIPT_DIR}/instance-run.sh" "${INSTANCE_ROOT}" --status >/dev/null 2>&1; then
-    INSTANCE_WAS_RUNNING=1
     configured_port="$(sed -n 's/^PORT=\([0-9][0-9]*\)$/\1/p' "${INSTANCE_ROOT}/app.env" 2>/dev/null | tail -1 || true)"
     if [[ "${configured_port}" != "${PORT}" ]] && ! port_is_free "${PORT}"; then
       fail "port ${PORT} is occupied by a foreign process. Pick another with --port."
@@ -175,8 +152,23 @@ install_worker_deps() {
     log "creating worker Python venv at ${venv}"
     python3 -m venv "${venv}"
   fi
+  validate_worker_python_version
   log "installing worker dependencies from worker/requirements.txt"
   "${venv}/bin/pip" install --quiet --disable-pip-version-check -r "${REPO_ROOT}/worker/requirements.txt"
+}
+
+validate_worker_python_version() {
+  local python="${INSTANCE_ROOT}/venv/bin/python3"
+  [[ -x "${python}" ]] || fail "worker venv is missing at ${INSTANCE_ROOT}/venv. Re-run without --skip-worker-deps to create it."
+  "${python}" -c 'import sys; raise SystemExit(0 if sys.version_info >= (3, 10) else 1)' >/dev/null 2>&1 || \
+    fail "worker venv Python must be >= 3.10. Remove ${INSTANCE_ROOT}/venv and re-run without --skip-worker-deps."
+}
+
+validate_worker_venv() {
+  local python="${INSTANCE_ROOT}/venv/bin/python3"
+  validate_worker_python_version
+  "${python}" -c 'import faster_whisper' >/dev/null 2>&1 || \
+    fail "worker venv is missing faster-whisper. Re-run without --skip-worker-deps to install worker/requirements.txt."
 }
 
 previous_model_tier() {
@@ -224,9 +216,19 @@ normalize_runtime_permissions() {
     "${INSTANCE_ROOT}/pids" "${INSTANCE_ROOT}/secrets" -type f -exec chmod 600 {} +
   [[ ! -f "${INSTANCE_ROOT}/instance.log" ]] || chmod 600 "${INSTANCE_ROOT}/instance.log"
   [[ ! -f "${INSTANCE_ROOT}/app.env" ]] || chmod 600 "${INSTANCE_ROOT}/app.env"
+  chmod 600 "${INSTANCE_ROOT}/${INSTANCE_MARKER_NAME}"
 }
 
 prepare_instance_root() {
+  reject_managed_instance_symlinks "${INSTANCE_ROOT}" || exit 1
+  mkdir -p "${INSTANCE_ROOT}"
+  if ! instance_marker_is_valid "${INSTANCE_ROOT}"; then
+    local marker_tmp="${INSTANCE_ROOT}/${INSTANCE_MARKER_NAME}.tmp.$$"
+    printf 'superscriber-local-instance-v1\ncreated_at=%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > "${marker_tmp}"
+    chmod 600 "${marker_tmp}"
+    mv "${marker_tmp}" "${INSTANCE_ROOT}/${INSTANCE_MARKER_NAME}"
+  fi
+  reject_managed_instance_symlinks "${INSTANCE_ROOT}" || exit 1
   mkdir -p \
     "${INSTANCE_ROOT}/data/media" \
     "${INSTANCE_ROOT}/data/uploads" \
@@ -234,6 +236,7 @@ prepare_instance_root() {
     "${INSTANCE_ROOT}/logs" \
     "${INSTANCE_ROOT}/pids" \
     "${INSTANCE_ROOT}/secrets"
+  acquire_maintenance_lock
   normalize_runtime_permissions
 
   if [[ ! -s "${INSTANCE_ROOT}/secrets/auth.secret" ]]; then
@@ -245,6 +248,77 @@ prepare_instance_root() {
       > "${INSTANCE_ROOT}/secrets/engine.secret"
   fi
   chmod 600 "${INSTANCE_ROOT}/secrets/auth.secret" "${INSTANCE_ROOT}/secrets/engine.secret"
+}
+
+MAINTENANCE_LOCK_DIR=""
+MAINTENANCE_IDENTITY=""
+
+maintenance_lock_age_ms() {
+  node -e 'process.stdout.write(String(Date.now() - require("node:fs").statSync(process.argv[1]).mtimeMs))' "$1"
+}
+
+reclaim_stale_maintenance_lock() {
+  local observed="$1" current stale reclaim_dir reclaim_age
+  reclaim_dir="${MAINTENANCE_LOCK_DIR}/.reclaim"
+  if ! mkdir "${reclaim_dir}" 2>/dev/null; then
+    reclaim_age="$(maintenance_lock_age_ms "${reclaim_dir}" 2>/dev/null || echo 0)"
+    if [[ "${reclaim_age}" =~ ^[0-9]+$ && "${reclaim_age}" -ge 5000 ]]; then
+      rm -rf -- "${reclaim_dir}"
+    fi
+    return 1
+  fi
+  current="$(cat "${MAINTENANCE_LOCK_DIR}/identity" 2>/dev/null || true)"
+  if [[ "${current}" != "${observed}" ]] || maintenance_lock_is_active "${INSTANCE_ROOT}"; then
+    rmdir "${reclaim_dir}" 2>/dev/null || true
+    return 1
+  fi
+  stale="${MAINTENANCE_LOCK_DIR}.stale.$$.$RANDOM"
+  if mv "${MAINTENANCE_LOCK_DIR}" "${stale}" 2>/dev/null; then
+    rm -rf -- "${stale}"
+    return 0
+  fi
+  rmdir "${reclaim_dir}" 2>/dev/null || true
+  return 1
+}
+
+release_maintenance_lock() {
+  local current
+  [[ -n "${MAINTENANCE_LOCK_DIR}" && -d "${MAINTENANCE_LOCK_DIR}" ]] || return 0
+  current="$(cat "${MAINTENANCE_LOCK_DIR}/identity" 2>/dev/null || true)"
+  [[ "${current}" == "${MAINTENANCE_IDENTITY}" ]] || return 0
+  rm -f "${MAINTENANCE_LOCK_DIR}/identity"
+  rmdir "${MAINTENANCE_LOCK_DIR}" 2>/dev/null || true
+}
+
+acquire_maintenance_lock() {
+  local attempts=0 token started observed age identity_tmp
+  MAINTENANCE_LOCK_DIR="$(maintenance_lock_dir "${INSTANCE_ROOT}")"
+  while [[ "${attempts}" -lt 50 ]]; do
+    if mkdir "${MAINTENANCE_LOCK_DIR}" 2>/dev/null; then
+      token="$(node -e 'process.stdout.write(require("node:crypto").randomBytes(24).toString("hex"))')"
+      started="$(process_start_fingerprint "$$")" || {
+        rmdir "${MAINTENANCE_LOCK_DIR}" 2>/dev/null || true
+        fail "could not identify the bootstrap process for maintenance ownership"
+      }
+      MAINTENANCE_IDENTITY="$$ ${token} ${started}"
+      identity_tmp="${MAINTENANCE_LOCK_DIR}/identity.tmp.$$"
+      printf '%s\n' "${MAINTENANCE_IDENTITY}" > "${identity_tmp}"
+      mv "${identity_tmp}" "${MAINTENANCE_LOCK_DIR}/identity"
+      trap release_maintenance_lock EXIT
+      return 0
+    fi
+    if maintenance_lock_is_active "${INSTANCE_ROOT}"; then
+      fail "another bootstrap is maintaining ${INSTANCE_ROOT}; wait for it to finish before re-running"
+    fi
+    observed="$(cat "${MAINTENANCE_LOCK_DIR}/identity" 2>/dev/null || true)"
+    age="$(maintenance_lock_age_ms "${MAINTENANCE_LOCK_DIR}" 2>/dev/null || echo 0)"
+    if [[ "${age}" =~ ^[0-9]+$ && "${age}" -ge 5000 ]]; then
+      reclaim_stale_maintenance_lock "${observed}" || true
+    fi
+    attempts=$((attempts + 1))
+    sleep 0.1
+  done
+  fail "could not acquire maintenance ownership for ${INSTANCE_ROOT}; another bootstrap may be starting"
 }
 
 write_app_env() {
@@ -283,10 +357,9 @@ provision_model() {
 }
 
 quiesce_instance() {
-  if [[ "${INSTANCE_WAS_RUNNING}" -eq 1 ]]; then
+  if bash "${SCRIPT_DIR}/instance-run.sh" "${INSTANCE_ROOT}" --status >/dev/null 2>&1; then
     log "quiescing the running instance before database and bundle activation"
     bash "${SCRIPT_DIR}/instance-stop.sh" "${INSTANCE_ROOT}"
-    INSTANCE_WAS_RUNNING=0
   fi
   port_is_free "${PORT}" || fail "port ${PORT} remains occupied after instance quiescence"
 }
@@ -313,11 +386,14 @@ launch_failure() {
 
 launch_instance() {
   log "launching supervisor (crash-restart; SIGTERM-stoppable via scripts/instance-stop.sh)"
-  bash "${SCRIPT_DIR}/instance-run.sh" "${INSTANCE_ROOT}"
+  SUPERSCRIBER_MAINTENANCE_IDENTITY="${MAINTENANCE_IDENTITY}" \
+    bash "${SCRIPT_DIR}/instance-run.sh" "${INSTANCE_ROOT}"
 
   log "waiting for app and worker readiness on http://127.0.0.1:${PORT}"
-  local attempts=0 app_ready=0 worker_ready=0 worker_status
+  local attempts=0 app_ready worker_ready worker_status
   while [[ "${attempts}" -lt 120 ]]; do
+    app_ready=0
+    worker_ready=0
     if ! bash "${SCRIPT_DIR}/instance-run.sh" "${INSTANCE_ROOT}" --status >/dev/null 2>&1; then
       launch_failure "the supervisor exited before the instance became ready; inspect ${INSTANCE_ROOT}/logs/supervisor.log"
     fi
@@ -345,8 +421,9 @@ launch_instance() {
 }
 
 print_first_run() {
-  local root_command
+  local root_command bootstrap_command
   printf -v root_command '%q' "${INSTANCE_ROOT}"
+  printf -v bootstrap_command '%q --instance-root %q --port %q' "${BASH_SOURCE[0]}" "${INSTANCE_ROOT}" "${PORT}"
   cat <<EOF
 
 Superscriber is running.
@@ -362,7 +439,7 @@ Superscriber is running.
   Logs:               ${INSTANCE_ROOT}/logs/{app,worker,supervisor}.log
   Stop:               scripts/instance-stop.sh ${root_command}
   Start:              scripts/instance-run.sh ${root_command}
-  Re-run bootstrap:   ${BASH_SOURCE[0]} (idempotent)
+  Re-run bootstrap:   ${bootstrap_command} (idempotent)
 
 EOF
 }
@@ -378,18 +455,21 @@ main() {
   resolve_instance_root
   check_python_venv
   log_dependencies
+  prepare_instance_root
+  quiesce_instance
   install_node_deps
   choose_model_tier
-  prepare_instance_root
   provision_model
   write_app_env
-  quiesce_instance
   if [[ "${SKIP_WORKER_DEPS}" -eq 0 ]]; then
     install_worker_deps
   fi
+  validate_worker_venv
   init_database
   build_app
   launch_instance
+  release_maintenance_lock
+  trap - EXIT
   print_first_run
 }
 

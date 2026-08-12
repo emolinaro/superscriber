@@ -221,13 +221,16 @@ describe("model provisioning service (model-tier-provisioning)", () => {
     });
     await waitForTierDownload("tiny");
 
-    expect(fsFaults.renameSnapshots).toHaveLength(1);
-    expect(fsFaults.renameSnapshots[0]).toMatchObject({
+    const publishRenames = fsFaults.renameSnapshots.filter(
+      (snapshot) => snapshot.destination === join(modelRoot, "tiny"),
+    );
+    expect(publishRenames).toHaveLength(1);
+    expect(publishRenames[0]).toMatchObject({
       destination: join(modelRoot, "tiny"),
       sourceWasDirectory: true,
       destinationExisted: false,
     });
-    expect(fsFaults.renameSnapshots[0].source).toMatch(
+    expect(publishRenames[0].source).toMatch(
       new RegExp(
         `${join(modelRoot, ".provisioning", "tiny-").replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\d+-[0-9a-f]{48}$`,
       ),
@@ -396,12 +399,37 @@ describe("model provisioning service (model-tier-provisioning)", () => {
   });
 
   it("reclaims a filesystem lock left by a dead provisioning process", async () => {
+    mkdirSync(join(modelRoot, ".provisioning.lock"));
     writeFileSync(
-      join(modelRoot, ".provisioning.lock"),
+      join(modelRoot, ".provisioning.lock", "owner.json"),
       JSON.stringify({
         pid: 2_147_483_647,
+        processStart: "b".repeat(64),
         tierId: "tiny",
         token: "a".repeat(48),
+        createdAt: new Date(0).toISOString(),
+      }),
+    );
+
+    startTierDownload("tiny", {
+      transportFor: () => fakeTransport(),
+      probeDiskSpace: unlimitedDisk,
+    });
+    await waitForTierDownload("tiny");
+
+    expect(isModelProvisioned("tiny")).toBe(true);
+    expect(existsSync(join(modelRoot, ".provisioning.lock"))).toBe(false);
+  });
+
+  it("reclaims a lock whose pid was reused by another process", async () => {
+    mkdirSync(join(modelRoot, ".provisioning.lock"));
+    writeFileSync(
+      join(modelRoot, ".provisioning.lock", "owner.json"),
+      JSON.stringify({
+        pid: process.pid,
+        processStart: "0".repeat(64),
+        tierId: "tiny",
+        token: "c".repeat(48),
         createdAt: new Date(0).toISOString(),
       }),
     );
