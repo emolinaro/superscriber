@@ -251,7 +251,7 @@ Run:
 npm test
 ```
 
-Current tests cover the governed casefile command surface (save, submit, withdraw, request changes, approve, reopen, export), capabilities and access grants, assignment semantics and admin action mode, work-inbox read models, auth and bootstrap, resumable ingest, the internal queue lifecycle, and orchestration behavior.
+Current tests cover the governed casefile command surface (save, batch speaker rename, submit, withdraw, request changes, approve, reopen, export), capabilities and access grants, assignment semantics and admin action mode, work-inbox read models, auth and bootstrap, resumable ingest, the internal queue lifecycle, and orchestration behavior.
 The browser suites cover governed-casefile flows end to end, responsive and phone-safety behavior, mobile review regressions, password reset, and axe accessibility checks across auth, work inbox, casefile, export, and administration surfaces. Dual-auth OIDC sign-in, session revocation, and the break-glass ceremony run against a canonical fake OIDC provider that also runs as a network-namespace sidecar in the container suite. Setting `SUPERSCRIBER_E2E_RESET_MAIL=smtp` additionally starts a fake-SMTP sidecar on the same pattern and enables the password-reset mail suite; the default run keeps the reset-mail seam off and exercises the operator-assisted path.
 
 For the browser path against the real single-image appliance:
