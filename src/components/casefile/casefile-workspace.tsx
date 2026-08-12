@@ -23,7 +23,11 @@ import { SessionRecoveryDialog } from "@/components/auth/session-recovery-dialog
 import { InlineNotice } from "@/components/ui/inline-notice";
 import { appendQueryMessages } from "@/lib/navigation-path";
 import { usePhoneSafetyMode } from "@/components/ui/phone-safety";
-import { AdminActionModeBanner, type AdminActionModeResult } from "./admin-action-mode-banner";
+import { AdminActionModeBanner } from "./admin-action-mode-banner";
+import {
+  type AdminActionModeEntryOption,
+  type AdminActionModeResult,
+} from "./admin-action-mode-entry";
 import { CaseHeader } from "./case-header";
 import {
   DecisionDialog,
@@ -31,7 +35,7 @@ import {
   type DecisionKind,
 } from "./decision-dialog";
 import { ConflictPanel } from "./conflict-panel";
-import { ExportDialog } from "./export-dialog";
+import { ExportDialog, REVISIONLESS_EXPORT_REASON } from "./export-dialog";
 import { GovernanceDrawer } from "./governance-drawer";
 import { RecordingDangerZone } from "./recording-danger-zone";
 import { TranscriptionProgressBar } from "@/components/ui/transcription-progress";
@@ -177,6 +181,28 @@ function stripActionMode(current: CasefileViewModel, expired = false): CasefileV
   };
 }
 
+function governanceEntryOptions(
+  casefile: CasefileViewModel,
+  phoneSafetyMode: boolean,
+  exportRejectedActionModeId: string | null,
+): AdminActionModeEntryOption[] {
+  if (
+    casefile.access.kind !== "admin_oversight" ||
+    phoneSafetyMode ||
+    (casefile.actionMode?.effectiveRole === "approver" &&
+      casefile.actionMode.id !== exportRejectedActionModeId)
+  ) {
+    return [];
+  }
+
+  const options = casefile.adminActionModeOptions.filter(
+    (option) => option.effectiveRole !== casefile.actionMode?.effectiveRole,
+  );
+  return options.some((option) => option.effectiveRole === "approver")
+    ? options
+    : [...options, { effectiveRole: "approver" }];
+}
+
 function CasefileStatusCards({ casefile }: { casefile: CasefileViewModel }) {
   const showTranscriptionBar =
     casefile.processing.integrityState === "verified" &&
@@ -292,6 +318,7 @@ export function CasefileWorkspace({
   const [conflict, setConflict] = useState<CasefileConflictSnapshot | null>(null);
   const [activeDecision, setActiveDecision] = useState<DecisionKind | null>(null);
   const [exportOpen, setExportOpen] = useState(false);
+  const [exportRejectedActionModeId, setExportRejectedActionModeId] = useState<string | null>(null);
   const [activeSegmentId, setActiveSegmentId] = useState(
     initialCasefile.revision?.segments?.[0]?.id ?? null,
   );
@@ -418,6 +445,13 @@ export function CasefileWorkspace({
     casefile.access.kind === "admin_oversight"
       ? true
       : !unresolved && casefile.capabilities.canExport;
+  const exportDisabledReason =
+    showExportSurface && !casefile.revision ? REVISIONLESS_EXPORT_REASON : undefined;
+  const governanceActionModeEntryOptions = governanceEntryOptions(
+    casefile,
+    phoneSafetyMode,
+    exportRejectedActionModeId,
+  );
   const hasApprovedRevision = casefile.revisions.some((entry) => entry.state === "approved");
   const currentCasefileLatestHref = useMemo(
     () => latestHref(casefile, conflict),
@@ -810,7 +844,10 @@ export function CasefileWorkspace({
           ) : null}
         </div>
         <GovernanceDrawer
+          actionModeEntryOptions={governanceActionModeEntryOptions}
+          actionModeSessionId={casefile.actionMode?.id ?? null}
           casefile={casefile}
+          onEnterActionMode={handleEnterActionMode}
           open={governanceOpen}
           onToggle={() => setGovernanceOpen((current) => !current)}
         />
@@ -827,13 +864,14 @@ export function CasefileWorkspace({
         canSubmit={!unresolved && casefile.capabilities.canSubmit}
         canWithdraw={!unresolved && casefile.capabilities.canWithdraw}
         dirty={dirty}
+        exportDisabledReason={exportDisabledReason}
         onApprove={() => {
           if (!phoneSafetyMode) {
             setActiveDecision("approve");
           }
         }}
         onExport={() => {
-          if (!phoneSafetyMode) {
+          if (!phoneSafetyMode && casefile.revision) {
             setExportOpen(true);
           }
         }}
@@ -884,6 +922,7 @@ export function CasefileWorkspace({
             actorDisplay: decision.actorDisplay,
           }))}
           hasApprovedRevision={hasApprovedRevision}
+          onActionModeRejected={setExportRejectedActionModeId}
           onAnnouncement={(message) => setLiveMessage(message)}
           onClose={() => setExportOpen(false)}
           onSessionRecoveryRequested={() => setSessionRecoveryOpen(true)}
