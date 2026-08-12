@@ -19,8 +19,8 @@ export type SpeakerRenamePlan = {
   segmentIds: string[];
 };
 
-export function validateSpeakerName(value: string, field: string): string {
-  const name = value.trim();
+export function validateSpeakerName(value: unknown, field: string): string {
+  const name = typeof value === "string" ? value.trim() : "";
 
   if (!name) {
     throw new CasefileCommandError("VALIDATION_ERROR", "Enter a speaker name.", {
@@ -39,6 +39,18 @@ export function validateSpeakerName(value: string, field: string): string {
   return name;
 }
 
+export function normalizeSpeakerLabels(
+  segments: TranscriptSegment[],
+): TranscriptSegment[] {
+  return segments.map((segment, index) => ({
+    ...segment,
+    speakerLabel: validateSpeakerName(
+      segment.speakerLabel,
+      `segments.${index}.speakerLabel`,
+    ),
+  }));
+}
+
 /** Unique speaker labels in first-appearance order with segment counts. */
 export function listSpeakers(segments: TranscriptSegment[]): SpeakerCount[] {
   const counts = new Map<string, number>();
@@ -55,7 +67,7 @@ export function planSpeakerRename(
   fromSpeaker: string,
   toSpeaker: string,
 ): SpeakerRenamePlan {
-  const from = validateSpeakerName(fromSpeaker, "fromSpeaker");
+  const from = fromSpeaker;
   const to = validateSpeakerName(toSpeaker, "toSpeaker");
 
   if (from === to) {

@@ -183,7 +183,7 @@ describe("internal transcript queue", () => {
         segments: [
           {
             id: "seg-1",
-            speakerLabel: "Speaker 1",
+            speakerLabel: "  Speaker 1  ",
             startMs: 0,
             endMs: 1200,
             text: "Hello from the internal worker.",
@@ -201,6 +201,10 @@ describe("internal transcript queue", () => {
       expect(persistedRecording?.currentRevisionId).toBeTruthy();
       expect(persistedJob?.claimedByWorkerId).toBeNull();
       expect(persistedJob?.state).toBe("completed");
+      expect(
+        persisted.revisions.find((revision) => revision.id === completion.outputRevisionId)
+          ?.segments[0]?.speakerLabel,
+      ).toBe("Speaker 1");
       expect(
         persisted.auditEvents.some((event) => event.type === "transcription.completed"),
       ).toBe(true);

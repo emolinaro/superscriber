@@ -82,6 +82,24 @@ describe("planSpeakerRename", () => {
       CasefileCommandError,
     );
   });
+
+  it.each([
+    ["surrounding whitespace", " Dana "],
+    ["an over-length label", "x".repeat(SPEAKER_NAME_MAX_LENGTH + 1)],
+  ])("renames an exact legacy source with %s onto a valid target", (_case, source) => {
+    const legacySegments = [segment("legacy-1", source)];
+    const plan = planSpeakerRename(legacySegments, source, "Dana");
+
+    expect(plan).toMatchObject({
+      fromSpeaker: source,
+      toSpeaker: "Dana",
+      renamedSegmentCount: 1,
+      segmentIds: ["legacy-1"],
+    });
+    expect(applySpeakerRename(legacySegments, plan.fromSpeaker, plan.toSpeaker)).toEqual([
+      expect.objectContaining({ speakerLabel: "Dana" }),
+    ]);
+  });
 });
 
 describe("applySpeakerRename", () => {

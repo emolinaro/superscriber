@@ -62,9 +62,7 @@ function parseSegmentsJson(formData: FormData) {
     return {
       id: typeof candidate.id === "string" ? candidate.id : `segment-${index}`,
       speakerLabel:
-        typeof candidate.speakerLabel === "string" && candidate.speakerLabel.trim()
-          ? candidate.speakerLabel.trim()
-          : `Speaker ${index + 1}`,
+        typeof candidate.speakerLabel === "string" ? candidate.speakerLabel : "",
       startMs:
         typeof candidate.startMs === "number" && Number.isFinite(candidate.startMs)
           ? candidate.startMs

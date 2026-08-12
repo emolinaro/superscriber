@@ -364,6 +364,50 @@ describe("casefile draft commands", () => {
     }
   });
 
+  it.each(["save", "submit"] as const)(
+    "normalizes speaker labels before a reviewer %s writes a revision",
+    async (operation) => {
+      const { bundle, reviewer, draftInput } = await setupDraftFixture();
+
+      try {
+        const segments = cloneSegments(draftInput.segments);
+        segments[0] = { ...segments[0], speakerLabel: "  Speaker A  " };
+
+        const written = operation === "save"
+          ? saveDraftCommand(reviewer, { ...draftInput, segments }, bundle)
+          : submitRevisionCommand(
+              reviewer,
+              { ...draftInput, segments, hasUnsavedChanges: true },
+              bundle,
+            );
+
+        expect(written.segments[0]?.speakerLabel).toBe("Speaker A");
+        expect(readRevision(bundle, written.id)?.segments[0]?.speakerLabel).toBe("Speaker A");
+      } finally {
+        bundle.sqlite.close();
+      }
+    },
+  );
+
+  it.each(["   ", "x".repeat(81)])(
+    "rejects a reviewer draft write with invalid speaker label %j",
+    async (speakerLabel) => {
+      const { bundle, reviewer, draftInput } = await setupDraftFixture();
+
+      try {
+        const segments = cloneSegments(draftInput.segments);
+        segments[0] = { ...segments[0], speakerLabel };
+
+        expect(() =>
+          saveDraftCommand(reviewer, { ...draftInput, segments }, bundle),
+        ).toThrowError(expect.objectContaining({ code: "VALIDATION_ERROR" }));
+        expect(readRecording(bundle)?.currentRevisionId).toBe("rev-1");
+      } finally {
+        bundle.sqlite.close();
+      }
+    },
+  );
+
   it("atomically saves unsaved content and submits the resulting revision", async () => {
     const { bundle, reviewer, draftInput } = await setupDraftFixture();
 

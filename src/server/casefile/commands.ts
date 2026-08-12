@@ -9,6 +9,7 @@ import {
 import {
   applySpeakerRename,
   describeSpeakerRename,
+  normalizeSpeakerLabels,
   planSpeakerRename,
   type SpeakerRenamePlan,
 } from "@/domain/speakers";
@@ -741,7 +742,7 @@ function saveDraftInTransaction(
     submittedAt: null,
     approvedAt: null,
     summary: normalizeSummary(input.summary),
-    segments: input.segments.map((segment) => ({ ...segment })),
+    segments: normalizeSpeakerLabels(input.segments),
   };
 
   db.update(revisions).set({ state: "superseded" }).where(eq(revisions.id, prior.id)).run();
