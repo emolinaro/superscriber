@@ -6,6 +6,7 @@ import { and, eq } from "drizzle-orm";
 import type { Principal, TranscriptRevision } from "@/domain/models";
 import { createLocalUser, toPrincipal } from "@/server/auth/service";
 import { assignRecordingToUser } from "@/server/access/service";
+import { recoverRevisionVersion } from "@/server/administration/service";
 import { enterActionMode } from "@/server/casefile/action-mode";
 import {
   approveRevisionCommand,
@@ -1185,6 +1186,44 @@ describe("casefile draft commands", () => {
       expect(auditRow?.type).toBe("revision.speakers_renamed");
       expect(auditRow?.actorUserId).toBe(reviewer.userId);
       expect(auditRow?.detail).toContain('Renamed "Speaker B" to "Dana" across 1 segment.');
+    } finally {
+      bundle.sqlite.close();
+    }
+  });
+
+  it("supersedes the renamed draft when recovering its ancestor", async () => {
+    const { bundle, reviewer, admin } = await setupDraftFixture();
+
+    try {
+      const renamed = renameSpeakerCommand(reviewer, {
+        recordingId: "rec-1",
+        expectedCurrentRevisionId: "rev-1",
+        fromSpeaker: "Speaker B",
+        toSpeaker: "Dana",
+      }, bundle);
+
+      const recovered = recoverRevisionVersion({
+        recordingId: "rec-1",
+        sourceRevisionId: "rev-1",
+        actorUserId: admin.userId,
+      }, bundle.db);
+
+      expect(recovered.newVersion).toBe(3);
+      expect(readRevision(bundle, renamed.revision.id)?.state).toBe("superseded");
+      expect(readRevision(bundle, "rev-1")?.state).toBe("superseded");
+      expect(readRecording(bundle)?.currentRevisionId).toBe(recovered.newRevisionId);
+      expect(
+        bundle.db
+          .select({ id: revisions.id })
+          .from(revisions)
+          .where(
+            and(
+              eq(revisions.recordingId, "rec-1"),
+              eq(revisions.state, "draft"),
+            ),
+          )
+          .all(),
+      ).toEqual([{ id: recovered.newRevisionId }]);
     } finally {
       bundle.sqlite.close();
     }

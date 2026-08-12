@@ -769,6 +769,9 @@ describe("revision recovery (demo-governance-bringback)", () => {
       expect(recordingAfter.currentRevisionId).toBe(result.newRevisionId);
       expect(recordingAfter.approvedRevisionId).toBeNull();
       expect(recordingAfter.pendingRevisionId).toBeNull();
+      expect(
+        bundle.db.select().from(revisions).where(eq(revisions.id, "rev-v2")).get()?.state,
+      ).toBe("approved");
 
       const auditRows = bundle.db.select().from(auditEvents).all();
       expect(auditRows.some((row) => row.type === "revision.recovered" && row.metadata.includes("rev-v1"))).toBe(true);
@@ -838,6 +841,9 @@ describe("revision recovery (demo-governance-bringback)", () => {
       const after = bundle.db.select().from(recordings).where(eq(recordings.id, "rec-pending")).get()!;
       expect(after.currentRevisionId).toBe("rev-v2-pending");
       expect(after.pendingRevisionId).toBe("rev-v2-pending");
+      expect(
+        bundle.db.select().from(revisions).where(eq(revisions.id, "rev-v2-pending")).get()?.state,
+      ).toBe("pending_approval");
     } finally {
       bundle.sqlite.close();
     }

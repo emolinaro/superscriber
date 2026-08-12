@@ -668,6 +668,19 @@ export function recoverRevisionVersion(
   deserializeSegments(sourceRow.segmentsJson); // shape check: the clone writes the same JSON
 
   db.transaction((tx) => {
+    if (recordingRow.currentRevisionId) {
+      tx.update(revisions)
+        .set({ state: "superseded" })
+        .where(
+          and(
+            eq(revisions.id, recordingRow.currentRevisionId),
+            eq(revisions.recordingId, input.recordingId),
+            eq(revisions.state, "draft"),
+          ),
+        )
+        .run();
+    }
+
     tx.insert(revisions)
       .values({
         id: newRevisionId,
