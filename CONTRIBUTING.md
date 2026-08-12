@@ -45,7 +45,7 @@ Squash-merged PRs keep the commit subject plus the PR number, e.g. `fix(auth): s
 
 ## Sign-off
 
-Sign-off is **not required**. The repo history has no `Signed-off-by` trailers; please don't add them.
+Sign-off is **not required**. The repo history has no `Signed-off-by` trailers, so you do not need to add one.
 
 ## Security posture
 
