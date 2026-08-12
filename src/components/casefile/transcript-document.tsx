@@ -180,7 +180,7 @@ export function TranscriptDocument({
       block: "center",
       behavior: reducedMotion ? "auto" : "smooth",
     });
-  }, [activeSegmentId]);
+  }, [activeSegmentId, followResumeNonce]);
 
   return (
     <section aria-label="Transcript document" className="transcript-document" data-testid="transcript-start">

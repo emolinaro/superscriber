@@ -154,6 +154,18 @@ describe("product css contract", () => {
     expect(desktopScrollport?.[1]).toContain(
       "scroll-padding-block: var(--player-clearance",
     );
+    const desktopDensityStart = casefile.lastIndexOf("@media (min-width: 1100px) {");
+    const compactHeightStart = casefile.indexOf(
+      "@media (min-width: 1100px) and (max-height: 920px)",
+    );
+    expect(compactHeightStart).toBeGreaterThan(desktopDensityStart);
+    const compactHeight = casefile.slice(compactHeightStart);
+    expect(compactHeight).toMatch(
+      /\.media-transport\s*\{[^}]*padding: var\(--space-2\)/,
+    );
+    expect(compactHeight).toMatch(
+      /\.case-header__body\s*\{[^}]*padding: var\(--space-2\) var\(--space-3\)/,
+    );
 
     const responsive = readFileSync(resolve(STYLES_DIR, "responsive.css"), "utf8");
     const windowScrollMedia = responsive.match(

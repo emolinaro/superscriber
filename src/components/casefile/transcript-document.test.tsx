@@ -474,9 +474,9 @@ describe("TranscriptDocument", () => {
   it("re-engages paused follow after a shared media seek", () => {
     const { rerender } = render(
       <TranscriptDocument
-        {...{ followResumeNonce: 0 }}
         activeSegmentId="seg-1"
         editable={false}
+        followResumeNonce={0}
         onSeek={vi.fn()}
         onUpdateSpeaker={vi.fn()}
         onUpdateText={vi.fn()}
@@ -491,23 +491,9 @@ describe("TranscriptDocument", () => {
     fireEvent(window, new Event("wheel"));
     rerender(
       <TranscriptDocument
-        {...{ followResumeNonce: 1 }}
         activeSegmentId="seg-1"
         editable={false}
-        onSeek={vi.fn()}
-        onUpdateSpeaker={vi.fn()}
-        onUpdateText={vi.fn()}
-        phoneSafetyMode={false}
-        segments={baseSegments}
-        summary="Ready for review."
-        onSummaryChange={vi.fn()}
-      />,
-    );
-    rerender(
-      <TranscriptDocument
-        {...{ followResumeNonce: 1 }}
-        activeSegmentId="seg-2"
-        editable={false}
+        followResumeNonce={1}
         onSeek={vi.fn()}
         onUpdateSpeaker={vi.fn()}
         onUpdateText={vi.fn()}
