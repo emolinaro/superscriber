@@ -40,7 +40,10 @@ export SUPERSCRIBER_E2E_CONTAINER_DB_PATH="${SUPERSCRIBER_E2E_CONTAINER_DB_PATH:
 # to the host for Playwright).
 OIDC_PORT="${SUPERSCRIBER_E2E_OIDC_PORT:-4105}"
 OIDC_SIDECAR="${CONTAINER_NAME}-oidc"
-OIDC_DIR="${TMP_ROOT}/e2e-oidc-config"
+# Per-lane overridable like the ports/container name: lanes that share one
+# worktree must not rewrite one another's mounted OIDC config, because the
+# app reads /run/oidc/role-map.json at request time.
+OIDC_DIR="${SUPERSCRIBER_E2E_OIDC_DIR:-${TMP_ROOT}/e2e-oidc-config}"
 export SUPERSCRIBER_E2E_OIDC_PORT="${OIDC_PORT}"
 
 # Reset-mail seam: SUPERSCRIBER_E2E_RESET_MAIL=smtp starts a fake SMTP
