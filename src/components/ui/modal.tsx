@@ -14,6 +14,11 @@ const FOCUSABLE_SELECTOR = [
 
 const MODAL_STACK_BASE_Z_INDEX = 1000;
 const modalStack: Array<{ backdrop: HTMLDivElement; id: symbol }> = [];
+let modalDocumentState: {
+  appRoot: HTMLElement | null;
+  appRootWasInert: boolean;
+  previousOverflow: string;
+} | null = null;
 const useModalLayoutEffect = typeof window === "undefined" ? useEffect : useLayoutEffect;
 
 function syncModalStack() {
@@ -75,20 +80,26 @@ export function Modal({
     }
 
     const appRoot = document.getElementById("app-root");
-    const previousOverflow = document.body.style.overflow;
-    const wasInert = appRoot?.hasAttribute("inert") ?? false;
     const stackId = stackIdRef.current;
     const backdrop = backdropRef.current;
     if (!backdrop) {
       return;
     }
-    modalStack.push({ backdrop, id: stackId });
-    triggerRef.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
-
-    document.body.style.overflow = "hidden";
-    if (appRoot && !wasInert) {
-      appRoot.setAttribute("inert", "");
+    if (modalStack.length === 0) {
+      const appRootWasInert = appRoot?.hasAttribute("inert") ?? false;
+      modalDocumentState = {
+        appRoot,
+        appRootWasInert,
+        previousOverflow: document.body.style.overflow,
+      };
+      document.body.style.overflow = "hidden";
+      if (appRoot && !appRootWasInert) {
+        appRoot.setAttribute("inert", "");
+      }
     }
+    modalStack.push({ backdrop, id: stackId });
+    syncModalStack();
+    triggerRef.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
 
     const focusable = dialogRef.current ? getFocusableElements(dialogRef.current) : [];
     // Corner Close is chrome, not a task control: initial focus belongs to
@@ -98,7 +109,6 @@ export function Modal({
       focusable[0] ??
       dialogRef.current;
     initialFocus?.focus();
-    syncModalStack();
 
     function handleKeyDown(event: KeyboardEvent) {
       if (!dialogRef.current || modalStack[modalStack.length - 1]?.id !== stackId) {
@@ -140,15 +150,21 @@ export function Modal({
     return () => {
       document.removeEventListener("keydown", handleKeyDown);
       const stackIndex = modalStack.findIndex((entry) => entry.id === stackId);
+      const wasTop = stackIndex !== -1 && stackIndex === modalStack.length - 1;
       if (stackIndex !== -1) {
         modalStack.splice(stackIndex, 1);
       }
       syncModalStack();
-      document.body.style.overflow = previousOverflow;
-      if (appRoot && !wasInert) {
-        appRoot.removeAttribute("inert");
+      if (stackIndex !== -1 && modalStack.length === 0 && modalDocumentState) {
+        document.body.style.overflow = modalDocumentState.previousOverflow;
+        if (modalDocumentState.appRoot && !modalDocumentState.appRootWasInert) {
+          modalDocumentState.appRoot.removeAttribute("inert");
+        }
+        modalDocumentState = null;
       }
-      triggerRef.current?.focus();
+      if (wasTop) {
+        triggerRef.current?.focus();
+      }
     };
   }, [open]);
 

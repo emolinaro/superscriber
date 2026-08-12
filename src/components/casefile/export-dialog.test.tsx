@@ -2,7 +2,7 @@
 
 import * as React from "react";
 import type { ComponentProps } from "react";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { SessionRecoveryDialog } from "@/components/auth/session-recovery-dialog";
@@ -74,6 +74,7 @@ describe("ExportDialog", () => {
   });
 
   afterEach(() => {
+    cleanup();
     vi.restoreAllMocks();
     URL.createObjectURL = originalCreateObjectURL;
     URL.revokeObjectURL = originalRevokeObjectURL;
@@ -249,6 +250,25 @@ describe("ExportDialog", () => {
       ),
     ).toBeVisible();
     expect(screen.queryByText(/approved revision v1/)).toBeNull();
+  });
+
+  it("disables revisionless formats and does not request an export", async () => {
+    const user = userEvent.setup();
+    renderDialog({
+      hasApprovedRevision: false,
+      revision: null,
+      revisionOptions: [],
+    });
+
+    expect(
+      screen.getByText("Export unlocks once the first transcript revision exists."),
+    ).toBeVisible();
+    const formatButton = screen.getByRole("button", { name: "DOCX" });
+    expect(formatButton).toBeDisabled();
+
+    await user.click(formatButton);
+
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 
   it("locks the viewport, traps focus, supports Escape, and restores focus to the trigger", async () => {

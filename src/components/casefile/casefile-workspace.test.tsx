@@ -677,23 +677,24 @@ describe("CasefileWorkspace", () => {
     ).toBeVisible();
   });
 
-  it("keeps the export affordance visible with an honest empty state before approval (demo-governance-bringback)", async () => {
+  it("disables revisionless admin export and explains when it unlocks", async () => {
     const user = userEvent.setup();
+    const fetchSpy = vi.spyOn(globalThis, "fetch");
     renderWorkspace(createAdminOversightCasefile({
       revision: null,
       revisions: [],
     }));
 
-    // With no approved revision at all, the button stays for export-authorized
-    // views but is renamed; the dialog explains the empty state. (Admin
-    // oversight keeps the surface even outside action mode.)
-    await user.click(screen.getByRole("button", { name: "Export transcript" }));
-
-    const dialog = await screen.findByRole("dialog", { name: "Export approved transcript" });
+    const exportButton = screen.getByRole("button", { name: "Export transcript" });
+    expect(exportButton).toBeDisabled();
     expect(
-      within(dialog).getByText(/No approved revision yet - the default export target/),
+      screen.getByText("Export unlocks once the first transcript revision exists."),
     ).toBeVisible();
-    expect(within(dialog).getAllByText("No revision exists yet for this casefile.").length).toBeGreaterThan(0);
+
+    await user.click(exportButton);
+
+    expect(screen.queryByRole("dialog", { name: "Export approved transcript" })).toBeNull();
+    expect(fetchSpy).not.toHaveBeenCalled();
   });
 
   it("mounts the danger zone and the revision navigator only for admin oversight (demo-governance-bringback)", () => {

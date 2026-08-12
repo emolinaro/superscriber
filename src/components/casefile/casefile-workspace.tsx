@@ -35,7 +35,7 @@ import {
   type DecisionKind,
 } from "./decision-dialog";
 import { ConflictPanel } from "./conflict-panel";
-import { ExportDialog } from "./export-dialog";
+import { ExportDialog, REVISIONLESS_EXPORT_REASON } from "./export-dialog";
 import { GovernanceDrawer } from "./governance-drawer";
 import { RecordingDangerZone } from "./recording-danger-zone";
 import { TranscriptionProgressBar } from "@/components/ui/transcription-progress";
@@ -427,6 +427,8 @@ export function CasefileWorkspace({
     casefile.access.kind === "admin_oversight"
       ? true
       : !unresolved && casefile.capabilities.canExport;
+  const exportDisabledReason =
+    showExportSurface && !casefile.revision ? REVISIONLESS_EXPORT_REASON : undefined;
   const governanceActionModeEntryOptions = governanceEntryOptions(
     casefile,
     phoneSafetyMode,
@@ -836,13 +838,14 @@ export function CasefileWorkspace({
         canSubmit={!unresolved && casefile.capabilities.canSubmit}
         canWithdraw={!unresolved && casefile.capabilities.canWithdraw}
         dirty={dirty}
+        exportDisabledReason={exportDisabledReason}
         onApprove={() => {
           if (!phoneSafetyMode) {
             setActiveDecision("approve");
           }
         }}
         onExport={() => {
-          if (!phoneSafetyMode) {
+          if (!phoneSafetyMode && casefile.revision) {
             setExportOpen(true);
           }
         }}
