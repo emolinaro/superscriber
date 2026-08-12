@@ -192,6 +192,7 @@ The default build prefetches the configured model into the image. Runtime downlo
 ## Project Docs
 
 - [`CHANGELOG.md`](./CHANGELOG.md) — release history and shipped behavior notes
+- [`CONTRIBUTING.md`](./CONTRIBUTING.md) - contribution workflow, validation gate, commit style, and disclosure rules
 - [`DESIGN.md`](./DESIGN.md) — design record and behavioral contract for the governed casefile workspace
 - [`TODOS.md`](./TODOS.md) — deferred follow-on work after the current appliance release
 - [`docs/operators/`](./docs/operators/) - operator runbooks for authentication and account recovery, including [governed folder-watch ingest](./docs/operators/ingest-watch.md)
