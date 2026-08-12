@@ -154,28 +154,6 @@ function createAdminReviewerActionModeCasefile(overrides: Record<string, unknown
   });
 }
 
-function createAdminApproverActionModeCasefile(overrides: Record<string, unknown> = {}) {
-  return createAdminOversightCasefile({
-    actionMode: {
-      id: "mode-approver",
-      effectiveRole: "approver",
-      expiresAt: "2026-08-01T12:30:00.000Z",
-      purpose: "Export the governed transcript for the approved handoff.",
-      adminDisplayName: "Admin",
-      baseRole: "admin",
-    },
-    capabilities: {
-      ...createCasefile().capabilities,
-      canExport: true,
-      denials: {
-        ...createCasefile().capabilities.denials,
-        canExport: null,
-      },
-    },
-    ...overrides,
-  });
-}
-
 describe("CasefileWorkspace", () => {
   afterEach(() => {
     cleanup();
@@ -608,93 +586,23 @@ describe("CasefileWorkspace", () => {
     );
   });
 
-  it.each([
-    ["without an active action-mode session", createAdminOversightCasefile()],
-    [
-      "on a historical revision snapshot",
-      createAdminOversightCasefile({
-        access: {
-          kind: "admin_oversight",
-          recordingId: "rec-1",
-          historical: true,
-        },
-        adminActionModeOptions: [],
-        historicalLabel: "Historical snapshot",
-      }),
-    ],
-    ["while reviewer action mode is active", createAdminReviewerActionModeCasefile()],
-  ])("offers approver action-mode entry in Governance %s", async (_state, casefile) => {
+  it("keeps the export affordance visible with an honest empty state before approval (demo-governance-bringback)", async () => {
     const user = userEvent.setup();
-    Object.defineProperty(window, "innerWidth", {
-      configurable: true,
-      value: 1280,
-      writable: true,
-    });
-    renderWorkspace(casefile);
-
-    await user.click(screen.getByRole("button", { name: /^Governance/ }));
-
-    const governance = await screen.findByRole("complementary", { name: "Governance" });
-    expect(
-      within(governance).getByRole("button", { name: "Enter approver action mode" }),
-    ).toBeVisible();
-  });
-
-  it("offers Governance recovery after export rejects a cached approver session", async () => {
-    const user = userEvent.setup();
-    Object.defineProperty(window, "innerWidth", {
-      configurable: true,
-      value: 1280,
-      writable: true,
-    });
-    vi.spyOn(globalThis, "fetch").mockResolvedValue({
-      ok: false,
-      status: 403,
-      headers: new Headers(),
-      text: vi.fn().mockResolvedValue(
-        "This admin action mode expired. Enter admin action mode again.",
-      ),
-    } as unknown as Response);
-    renderWorkspace(createAdminApproverActionModeCasefile());
-
-    expect(
-      screen.queryByRole("button", { name: "Enter approver action mode" }),
-    ).not.toBeInTheDocument();
-
-    await user.click(screen.getByRole("button", { name: "Export transcript" }));
-    const exportDialog = await screen.findByRole("dialog", { name: "Export approved transcript" });
-    await user.click(within(exportDialog).getByRole("button", { name: "DOCX" }));
-    expect(
-      await within(exportDialog).findByText(/This admin action mode expired/),
-    ).toBeVisible();
-    await user.click(within(exportDialog).getByRole("button", { name: "Close" }));
-
-    await user.click(screen.getByRole("button", { name: /^Governance/ }));
-
-    const governance = await screen.findByRole("complementary", { name: "Governance" });
-    expect(
-      within(governance).getByRole("button", { name: "Enter approver action mode" }),
-    ).toBeVisible();
-  });
-
-  it("disables revisionless admin export and explains when it unlocks", async () => {
-    const user = userEvent.setup();
-    const fetchSpy = vi.spyOn(globalThis, "fetch");
     renderWorkspace(createAdminOversightCasefile({
       revision: null,
       revisions: [],
     }));
 
-    const exportButton = screen.getByRole("button", { name: "Export transcript" });
-    expect(exportButton).toBeDisabled();
+    // With no approved revision at all, the button stays for export-authorized
+    // views but is renamed; the dialog explains the empty state. (Admin
+    // oversight keeps the surface even outside action mode.)
+    await user.click(screen.getByRole("button", { name: "Export transcript" }));
+
+    const dialog = await screen.findByRole("dialog", { name: "Export approved transcript" });
     expect(
-      screen.getByText("Export unlocks once the first transcript revision exists."),
+      within(dialog).getByText(/No approved revision yet - the default export target/),
     ).toBeVisible();
-
-    await user.click(exportButton);
-
-    expect(screen.queryByRole("dialog", { name: "Export approved transcript" })).toBeNull();
-    expect(fetchSpy).not.toHaveBeenCalled();
+    expect(within(dialog).getAllByText("No revision exists yet for this casefile.").length).toBeGreaterThan(0);
   });
 
   it("mounts the danger zone and the revision navigator only for admin oversight (demo-governance-bringback)", () => {

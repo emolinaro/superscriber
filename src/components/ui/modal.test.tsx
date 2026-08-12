@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 
 import { useState } from "react";
-import { act, cleanup, render, screen } from "@testing-library/react";
+import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it } from "vitest";
 import { Modal } from "./modal";
@@ -30,7 +30,6 @@ function ModalTestHarness() {
 }
 
 afterEach(() => {
-  cleanup();
   document.body.innerHTML = "";
 });
 
@@ -78,53 +77,5 @@ describe("Modal", () => {
       "id",
       dialog.getAttribute("aria-describedby"),
     );
-  });
-
-  it("keeps the page locked when a lower modal closes before the top modal", async () => {
-    const user = userEvent.setup();
-    const appRoot = document.createElement("div");
-    appRoot.id = "app-root";
-    document.body.append(appRoot);
-    let closeLower = () => {};
-
-    function OutOfOrderHarness() {
-      const [lowerOpen, setLowerOpen] = useState(false);
-      const [topOpen, setTopOpen] = useState(false);
-      closeLower = () => setLowerOpen(false);
-
-      return (
-        <>
-          <button type="button" onClick={() => setLowerOpen(true)}>
-            Open lower
-          </button>
-          <Modal open={lowerOpen} onClose={() => setLowerOpen(false)} title="Lower modal">
-            <button type="button" onClick={() => setTopOpen(true)}>
-              Open top
-            </button>
-          </Modal>
-          <Modal open={topOpen} onClose={() => setTopOpen(false)} title="Top modal">
-            <button type="button">Top action</button>
-          </Modal>
-        </>
-      );
-    }
-
-    render(<OutOfOrderHarness />, { container: appRoot });
-    await user.click(screen.getByRole("button", { name: "Open lower" }));
-    await user.click(screen.getByRole("button", { name: "Open top" }));
-    const topDialog = screen.getByRole("dialog", { name: "Top modal" });
-
-    act(() => closeLower());
-
-    expect(topDialog).toBeVisible();
-    expect(topDialog.contains(document.activeElement)).toBe(true);
-    expect(appRoot).toHaveAttribute("inert");
-    expect(document.body).toHaveStyle({ overflow: "hidden" });
-
-    await user.keyboard("{Escape}");
-
-    expect(screen.queryByRole("dialog", { name: "Top modal" })).not.toBeInTheDocument();
-    expect(appRoot).not.toHaveAttribute("inert");
-    expect(document.body.style.overflow).toBe("");
   });
 });

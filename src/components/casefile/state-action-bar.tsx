@@ -1,5 +1,3 @@
-import { useId } from "react";
-
 type StateActionBarProps = {
   assignmentLabel: string;
   stageLabel: string;
@@ -11,7 +9,6 @@ type StateActionBarProps = {
   canRequestChanges: boolean;
   canReopen: boolean;
   canExport: boolean;
-  exportDisabledReason?: string;
   exportLabel?: string;
   saving: boolean;
   phoneSafetyMode: boolean;
@@ -35,7 +32,6 @@ export function StateActionBar({
   canRequestChanges,
   canReopen,
   canExport,
-  exportDisabledReason,
   exportLabel,
   saving,
   phoneSafetyMode,
@@ -47,7 +43,6 @@ export function StateActionBar({
   onReopen,
   onExport,
 }: StateActionBarProps) {
-  const exportDisabledReasonId = useId();
   const hasGovernedActions =
     canSubmit || canWithdraw || canApprove || canRequestChanges || canReopen || canExport;
 
@@ -101,23 +96,12 @@ export function StateActionBar({
             </button>
           ) : null}
           {canExport ? (
-            <button
-              aria-describedby={exportDisabledReason ? exportDisabledReasonId : undefined}
-              className="button button-secondary"
-              disabled={Boolean(exportDisabledReason)}
-              onClick={onExport}
-              type="button"
-            >
+            <button className="button button-secondary" onClick={onExport} type="button">
               {exportLabel ?? "Export approved transcript"}
             </button>
           ) : null}
           {!canSave && !hasGovernedActions ? null : null}
         </div>
-      ) : null}
-      {!phoneSafetyMode && canExport && exportDisabledReason ? (
-        <p className="field-note" id={exportDisabledReasonId}>
-          {exportDisabledReason}
-        </p>
       ) : null}
     </section>
   );

@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   APPROVED_TRANSCRIPT_EXPORT_FORMAT_GROUPS,
   type ApprovedTranscriptExportFormat,
@@ -21,9 +21,6 @@ const FORMAT_DESCRIPTIONS: Record<ApprovedTranscriptExportFormat, string> = {
   json: "Structured transcript data for system-to-system exchange.",
 };
 
-export const REVISIONLESS_EXPORT_REASON =
-  "Export unlocks once the first transcript revision exists.";
-
 function fileNameFromDisposition(headers: Headers, format: ApprovedTranscriptExportFormat) {
   return /filename="([^"]+)"/.exec(headers.get("content-disposition") ?? "")?.[1]
     ?? `approved-transcript.${format}`;
@@ -41,7 +38,6 @@ function triggerObjectUrlDownload(blob: Blob, fileName: string) {
 export function ExportDialog({
   actionModeId,
   approvalDecisions,
-  onActionModeRejected,
   onAnnouncement,
   onClose,
   onSessionRecoveryRequested,
@@ -57,7 +53,6 @@ export function ExportDialog({
     state: string;
     actorDisplay: string;
   }>;
-  onActionModeRejected: (actionModeId: string | null) => void;
   onAnnouncement: (message: string) => void;
   onClose: () => void;
   onSessionRecoveryRequested: () => void;
@@ -77,7 +72,6 @@ export function ExportDialog({
      nothing is approved yet. */
   hasApprovedRevision: boolean;
 }) {
-  const exportUnavailableReasonId = useId();
   const [pendingFormat, setPendingFormat] = useState<ApprovedTranscriptExportFormat | null>(null);
   const [selectedFormat, setSelectedFormat] = useState<ApprovedTranscriptExportFormat | null>(null);
   const approvedDefault =
@@ -90,7 +84,6 @@ export function ExportDialog({
   const buttonRefs = useRef(new Map<ApprovedTranscriptExportFormat, HTMLButtonElement>());
   const pendingRef = useRef(false);
   const isPending = pendingFormat !== null;
-  const exportUnavailableReason = revision ? null : REVISIONLESS_EXPORT_REASON;
   const selectedRevision =
     revisionOptions.find((option) => option.id === selectedRevisionId) ?? null;
   const selectedApprovalDecision = approvalDecisions.find(
@@ -147,7 +140,7 @@ export function ExportDialog({
   }, [onClose]);
 
   async function handleExport(format: ApprovedTranscriptExportFormat) {
-    if (pendingRef.current || exportUnavailableReason) {
+    if (pendingRef.current) {
       return;
     }
 
@@ -171,9 +164,8 @@ export function ExportDialog({
           onSessionRecoveryRequested();
         } else if (response.status === 403) {
           const serverMessage = (await response.text()).trim();
-          onActionModeRejected(actionModeId);
           setError(
-            `${serverMessage ? `${serverMessage} ` : "Export is not allowed under the current authority. "}Administrators: open Governance on this casefile and choose Enter approver action mode, then retry the download - attribution stays intact.`,
+            `${serverMessage ? `${serverMessage} ` : "Export is not allowed under the current authority. "}Administrators: Open Governance on this casefile and choose Enter approver action mode, then retry the download - attribution stays intact.`,
           );
         } else if (response.status === 409) {
           setError("This casefile no longer has an active approved revision.");
@@ -213,11 +205,7 @@ export function ExportDialog({
         </button>
       </div>
 
-      {exportUnavailableReason ? (
-        <InlineNotice tone="info">
-          <span id={exportUnavailableReasonId}>{exportUnavailableReason}</span>
-        </InlineNotice>
-      ) : hasApprovedRevision ? null : (
+      {hasApprovedRevision ? null : (
         <InlineNotice tone="info">
           No approved revision yet - the default export target (approved transcript) unlocks
           once a revision is approved. Revision snapshots below remain exportable under the
@@ -239,7 +227,6 @@ export function ExportDialog({
             Revision to export
           </label>
           <select
-            disabled={Boolean(exportUnavailableReason)}
             id="export-revision"
             onChange={(event) => setSelectedRevisionId(event.currentTarget.value)}
             value={selectedRevisionId}
@@ -268,12 +255,8 @@ export function ExportDialog({
               <div className="export-option-list">
                 {group.formats.map((format) => (
                   <button
-                    aria-describedby={
-                      exportUnavailableReason ? exportUnavailableReasonId : undefined
-                    }
                     aria-label={format.toUpperCase()}
                     className="button button-secondary export-option"
-                    disabled={Boolean(exportUnavailableReason)}
                     key={format}
                     onClick={() => {
                       void handleExport(format);

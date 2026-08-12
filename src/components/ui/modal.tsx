@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useId, useLayoutEffect, useRef, type ReactNode } from "react";
+import { useEffect, useId, useRef, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 
 const FOCUSABLE_SELECTOR = [
@@ -11,28 +11,6 @@ const FOCUSABLE_SELECTOR = [
   "textarea:not([disabled])",
   '[tabindex]:not([tabindex="-1"])',
 ].join(", ");
-
-const MODAL_STACK_BASE_Z_INDEX = 1000;
-const modalStack: Array<{ backdrop: HTMLDivElement; id: symbol }> = [];
-let modalDocumentState: {
-  appRoot: HTMLElement | null;
-  appRootWasInert: boolean;
-  previousOverflow: string;
-} | null = null;
-const useModalLayoutEffect = typeof window === "undefined" ? useEffect : useLayoutEffect;
-
-function syncModalStack() {
-  modalStack.forEach(({ backdrop }, index) => {
-    const isTop = index === modalStack.length - 1;
-    backdrop.style.zIndex = String(MODAL_STACK_BASE_Z_INDEX + index);
-    backdrop.toggleAttribute("inert", !isTop);
-    if (isTop) {
-      backdrop.removeAttribute("aria-hidden");
-    } else {
-      backdrop.setAttribute("aria-hidden", "true");
-    }
-  });
-}
 
 function getFocusableElements(container: HTMLElement) {
   return Array.from(container.querySelectorAll<HTMLElement>(FOCUSABLE_SELECTOR)).filter(
@@ -61,9 +39,7 @@ export function Modal({
 }) {
   const titleId = useId();
   const descriptionId = useId();
-  const backdropRef = useRef<HTMLDivElement>(null);
   const dialogRef = useRef<HTMLElement>(null);
-  const stackIdRef = useRef(Symbol());
   const triggerRef = useRef<HTMLElement | null>(null);
   // Consumers pass inline onClose arrows, so the identity changes every
   // render. Without the ref, any re-render (e.g. per-keystroke state in a
@@ -74,32 +50,20 @@ export function Modal({
     onCloseRef.current = onClose;
   }, [onClose]);
 
-  useModalLayoutEffect(() => {
+  useEffect(() => {
     if (!open || typeof document === "undefined") {
       return;
     }
 
     const appRoot = document.getElementById("app-root");
-    const stackId = stackIdRef.current;
-    const backdrop = backdropRef.current;
-    if (!backdrop) {
-      return;
-    }
-    if (modalStack.length === 0) {
-      const appRootWasInert = appRoot?.hasAttribute("inert") ?? false;
-      modalDocumentState = {
-        appRoot,
-        appRootWasInert,
-        previousOverflow: document.body.style.overflow,
-      };
-      document.body.style.overflow = "hidden";
-      if (appRoot && !appRootWasInert) {
-        appRoot.setAttribute("inert", "");
-      }
-    }
-    modalStack.push({ backdrop, id: stackId });
-    syncModalStack();
+    const previousOverflow = document.body.style.overflow;
+    const wasInert = appRoot?.hasAttribute("inert") ?? false;
     triggerRef.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+
+    document.body.style.overflow = "hidden";
+    if (appRoot && !wasInert) {
+      appRoot.setAttribute("inert", "");
+    }
 
     const focusable = dialogRef.current ? getFocusableElements(dialogRef.current) : [];
     // Corner Close is chrome, not a task control: initial focus belongs to
@@ -111,7 +75,7 @@ export function Modal({
     initialFocus?.focus();
 
     function handleKeyDown(event: KeyboardEvent) {
-      if (!dialogRef.current || modalStack[modalStack.length - 1]?.id !== stackId) {
+      if (!dialogRef.current) {
         return;
       }
 
@@ -149,22 +113,11 @@ export function Modal({
 
     return () => {
       document.removeEventListener("keydown", handleKeyDown);
-      const stackIndex = modalStack.findIndex((entry) => entry.id === stackId);
-      const wasTop = stackIndex !== -1 && stackIndex === modalStack.length - 1;
-      if (stackIndex !== -1) {
-        modalStack.splice(stackIndex, 1);
+      document.body.style.overflow = previousOverflow;
+      if (appRoot && !wasInert) {
+        appRoot.removeAttribute("inert");
       }
-      syncModalStack();
-      if (stackIndex !== -1 && modalStack.length === 0 && modalDocumentState) {
-        document.body.style.overflow = modalDocumentState.previousOverflow;
-        if (modalDocumentState.appRoot && !modalDocumentState.appRootWasInert) {
-          modalDocumentState.appRoot.removeAttribute("inert");
-        }
-        modalDocumentState = null;
-      }
-      if (wasTop) {
-        triggerRef.current?.focus();
-      }
+      triggerRef.current?.focus();
     };
   }, [open]);
 
@@ -177,14 +130,10 @@ export function Modal({
       className={backdropClassName ? `modal-backdrop ${backdropClassName}` : "modal-backdrop"}
       data-testid={backdropTestId}
       onMouseDown={(event) => {
-        if (
-          modalStack[modalStack.length - 1]?.id === stackIdRef.current &&
-          event.target === event.currentTarget
-        ) {
+        if (event.target === event.currentTarget) {
           onCloseRef.current();
         }
       }}
-      ref={backdropRef}
     >
       <section
         aria-describedby={description ? descriptionId : undefined}
