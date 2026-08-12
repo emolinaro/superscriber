@@ -92,6 +92,34 @@ describe("AccountPasswordResetModal", () => {
     expect(screen.getByLabelText(/email the reset link/i)).toBeInTheDocument();
   });
 
+  it("forces handoff delivery when resetting the current account", async () => {
+    const action = vi.fn(async () => SELF_RESET_HANDOFF_SUCCESS);
+    renderModal({ action, currentUserId: "user-1", resetMailConfigured: true });
+
+    expect(screen.queryByRole("radio")).not.toBeInTheDocument();
+    expect(
+      screen.getByText(
+        /resetting your own account signs you out; copy the link from this dialog/i,
+      ),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText(/email delivery is unavailable for your own account/i),
+    ).toBeInTheDocument();
+
+    await userEvent.type(
+      screen.getByLabelText(/reason/i),
+      "Rotating my own password after a device loss.",
+    );
+    await userEvent.click(screen.getByRole("button", { name: /issue reset/i }));
+
+    expect(await screen.findByDisplayValue("https://app.test/reset/tok")).toBeInTheDocument();
+    expect(action).toHaveBeenCalledWith({
+      userId: "user-1",
+      reason: "Rotating my own password after a device loss.",
+      delivery: "operator_handoff",
+    });
+  });
+
   it("blocks short reasons without calling the action", async () => {
     const action = renderModal({ currentUserId: "user-1" });
     await userEvent.type(screen.getByLabelText(/reason/i), "short");
@@ -228,26 +256,6 @@ describe("AccountPasswordResetModal", () => {
     },
   );
 
-  it("uses emailed-link guidance for a self-reset delivered by email", async () => {
-    const action = vi.fn(async () => ({
-      ...SELF_RESET_HANDOFF_SUCCESS,
-      notice: "Reviewer One's password reset was issued and emailed.",
-      data: { ...SELF_RESET_HANDOFF_SUCCESS.data, resetUrl: null },
-    }));
-    renderModal({ action, currentUserId: "user-1", resetMailConfigured: true });
-    await userEvent.click(screen.getByLabelText(/email the reset link/i));
-    await userEvent.type(
-      screen.getByLabelText(/reason/i),
-      "Rotating my own password after a device loss.",
-    );
-    await userEvent.click(screen.getByRole("button", { name: /issue reset/i }));
-
-    expect(await screen.findByText(/the reset link was emailed/i)).toBeInTheDocument();
-    expect(screen.queryByText(/copy this link now/i)).not.toBeInTheDocument();
-    expect(screen.getByText(/use the emailed link while signed out/i)).toBeInTheDocument();
-    expect(screen.getByText(/closing this dialog signs you out/i)).toBeInTheDocument();
-  });
-
   it("keeps non-self emailed-delivery copy unchanged", async () => {
     const action = vi.fn(async () => ({
       ok: true as const,
@@ -270,17 +278,57 @@ describe("AccountPasswordResetModal", () => {
     expect(screen.queryByText(/closing this dialog signs you out/i)).not.toBeInTheDocument();
   });
 
-  it("releases the provisional hold when issuance does not revoke our session", async () => {
-    renderModal({ currentUserId: "user-1" });
-    expect(hasSelfResetHold()).toBe(false);
+  it("holds every valid issuance until the server reports no actor revocation", async () => {
+    const pending = deferred<AdminPasswordResetActionResult>();
+    renderModal({ action: () => pending.promise });
 
     await userEvent.type(
       screen.getByLabelText(/reason/i),
-      "Rotating my own password after a device loss.",
+      "User forgot their password at the front desk.",
     );
     await userEvent.click(screen.getByRole("button", { name: /issue reset/i }));
 
+    expect(hasSelfResetHold()).toBe(true);
+
+    await act(async () => {
+      pending.resolve({
+        ok: true,
+        notice: "Reviewer One's password reset was issued.",
+        data: {
+          targetDisplayName: "Reviewer One",
+          resetUrl: "https://app.test/reset/tok",
+          expiresAt: "2026-08-10T13:00:00.000Z",
+          actorMustRelogin: false,
+        },
+      });
+      await pending.promise;
+    });
+
     expect(await screen.findByDisplayValue("https://app.test/reset/tok")).toBeInTheDocument();
+    expect(hasSelfResetHold()).toBe(false);
+  });
+
+  it("keeps the hold when stale UI identity differs from the server actor", async () => {
+    const pending = deferred<AdminPasswordResetActionResult>();
+    renderModal({ action: () => pending.promise });
+
+    await userEvent.type(
+      screen.getByLabelText(/reason/i),
+      "Rotating the active administrator password after a device loss.",
+    );
+    await userEvent.click(screen.getByRole("button", { name: /issue reset/i }));
+
+    expect(hasSelfResetHold()).toBe(true);
+
+    await act(async () => {
+      pending.resolve(SELF_RESET_HANDOFF_SUCCESS);
+      await pending.promise;
+    });
+
+    expect(await screen.findByDisplayValue("https://app.test/reset/tok")).toBeInTheDocument();
+    expect(hasSelfResetHold()).toBe(true);
+
+    await userEvent.click(screen.getByRole("button", { name: /done/i }));
     expect(hasSelfResetHold()).toBe(false);
   });
 

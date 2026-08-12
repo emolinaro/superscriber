@@ -50,14 +50,14 @@ export function AccountPasswordResetModal({
   const [copied, setCopied] = useState(false);
   const [isPending, startTransition] = useTransition();
   const mountedRef = useRef(true);
-  const selfResetHoldOwnedRef = useRef(false);
+  const resetHoldOwnedRef = useRef(false);
 
   const isSelf = account.id === currentUserId;
 
-  function releaseSelfResetHold() {
-    if (selfResetHoldOwnedRef.current) {
+  function releaseResetHold() {
+    if (resetHoldOwnedRef.current) {
       clearSelfResetHold();
-      selfResetHoldOwnedRef.current = false;
+      resetHoldOwnedRef.current = false;
     }
   }
 
@@ -67,7 +67,7 @@ export function AccountPasswordResetModal({
     mountedRef.current = true;
     return () => {
       mountedRef.current = false;
-      releaseSelfResetHold();
+      releaseResetHold();
     };
   }, []);
 
@@ -82,18 +82,16 @@ export function AccountPasswordResetModal({
     const parsed = adminPasswordResetInputSchema.safeParse({
       userId: account.id,
       reason,
-      delivery,
+      delivery: isSelf ? "operator_handoff" : delivery,
     });
     if (!parsed.success) {
-      releaseSelfResetHold();
+      releaseResetHold();
       setFieldError(parsed.error.flatten().fieldErrors.reason?.[0] ?? "Check the form.");
       return;
     }
 
-    if (isSelf) {
-      markSelfResetHold();
-      selfResetHoldOwnedRef.current = true;
-    }
+    markSelfResetHold();
+    resetHoldOwnedRef.current = true;
 
     startTransition(async () => {
       let result: AdminPasswordResetActionResult;
@@ -101,7 +99,7 @@ export function AccountPasswordResetModal({
         result = await action(parsed.data);
       } catch {
         if (mountedRef.current) {
-          releaseSelfResetHold();
+          releaseResetHold();
           setFormError(PASSWORD_RESET_ADMIN_COPY.INTERNAL_ERROR);
         }
         return;
@@ -110,7 +108,7 @@ export function AccountPasswordResetModal({
         return;
       }
       if (!result.ok) {
-        releaseSelfResetHold();
+        releaseResetHold();
         if (result.fieldErrors?.reason) {
           setFieldError(result.fieldErrors.reason);
         } else {
@@ -120,7 +118,7 @@ export function AccountPasswordResetModal({
       }
       const actorMustRelogin = result.data.actorMustRelogin;
       if (!actorMustRelogin) {
-        releaseSelfResetHold();
+        releaseResetHold();
       }
       setStage({
         kind: "issued",
@@ -137,7 +135,7 @@ export function AccountPasswordResetModal({
 
   function close() {
     const mustRelogin = stage.kind === "issued" && stage.actorMustRelogin;
-    releaseSelfResetHold();
+    releaseResetHold();
     setStage({ kind: "form" });
     onClose();
     if (mustRelogin) {
@@ -229,7 +227,20 @@ export function AccountPasswordResetModal({
               </p>
             ) : null}
           </div>
-          {resetMailConfigured ? (
+          {isSelf ? (
+            <>
+              <p className="body-copy">
+                Resetting your own account signs you out; copy the link from this
+                dialog - email delivery is unavailable for your own account.
+              </p>
+              {resetMailConfigured ? null : (
+                <p className="body-copy">
+                  Email delivery is not configured on this appliance. The reset link
+                  is shown once here - copy it and hand it over directly.
+                </p>
+              )}
+            </>
+          ) : resetMailConfigured ? (
             <fieldset className="field">
               <legend>Delivery</legend>
               <label>

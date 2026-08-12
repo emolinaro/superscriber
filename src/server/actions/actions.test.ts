@@ -1310,6 +1310,45 @@ describe("adminResetAccountPasswordAction", () => {
     delete process.env.SUPERSCRIBER_RESET_MAIL_PASSWORD_FILE;
   });
 
+  it("forces self-reset requests to handoff delivery", async () => {
+    adminIssuePasswordResetMock.mockReturnValue({
+      userId: "admin-1",
+      targetDisplayName: "Admin",
+      targetEmail: "admin@example.com",
+      rawToken: "raw-token-value",
+      recordId: "record-1",
+      expiresAt: "2026-08-10T13:00:00.000Z",
+      delivery: "operator_handoff",
+      revokedSessionCount: 1,
+      resultingAuthVersion: 3,
+      actorMustRelogin: true,
+    });
+
+    const result = await adminResetAccountPasswordAction({
+      userId: "admin-1",
+      reason: "Rotating my own password after a device loss.",
+      delivery: "email",
+    });
+
+    expect(adminIssuePasswordResetMock).toHaveBeenCalledWith({
+      actorUserId: "admin-1",
+      actorAuthSessionId: "auth-session-admin-1",
+      input: {
+        userId: "admin-1",
+        reason: "Rotating my own password after a device loss.",
+        delivery: "operator_handoff",
+      },
+    });
+    expect(sendPasswordResetEmailMock).not.toHaveBeenCalled();
+    expect(result).toMatchObject({
+      ok: true,
+      data: {
+        resetUrl: "https://app.test/reset/raw-token-value",
+        actorMustRelogin: true,
+      },
+    });
+  });
+
   it("maps typed service failures onto the failure result", async () => {
     const { AdminPasswordResetServiceError } = await import(
       "@/server/administration/password-reset-service"

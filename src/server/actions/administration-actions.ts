@@ -532,13 +532,18 @@ export async function adminResetAccountPasswordAction(
     };
   }
 
+  const issuanceInput =
+    parsed.data.userId === principal.userId
+      ? { ...parsed.data, delivery: "operator_handoff" as const }
+      : parsed.data;
+
   let issued: AdminPasswordResetSuccess;
   try {
     requireAdmin(principal.role);
     issued = adminIssuePasswordReset({
       actorUserId: principal.userId,
       actorAuthSessionId: activeSession.authSessionId,
-      input: parsed.data,
+      input: issuanceInput,
     });
   } catch (error) {
     if (error instanceof AdminPasswordResetServiceError) {
