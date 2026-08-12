@@ -174,11 +174,13 @@ function stripActionMode(current: CasefileViewModel, expired = false): CasefileV
 function governanceEntryOptions(
   casefile: CasefileViewModel,
   phoneSafetyMode: boolean,
+  exportRejectedActionModeId: string | null,
 ): AdminActionModeEntryOption[] {
   if (
     casefile.access.kind !== "admin_oversight" ||
     phoneSafetyMode ||
-    casefile.actionMode?.effectiveRole === "approver"
+    (casefile.actionMode?.effectiveRole === "approver" &&
+      casefile.actionMode.id !== exportRejectedActionModeId)
   ) {
     return [];
   }
@@ -306,6 +308,7 @@ export function CasefileWorkspace({
   const [conflict, setConflict] = useState<CasefileConflictSnapshot | null>(null);
   const [activeDecision, setActiveDecision] = useState<DecisionKind | null>(null);
   const [exportOpen, setExportOpen] = useState(false);
+  const [exportRejectedActionModeId, setExportRejectedActionModeId] = useState<string | null>(null);
   const [activeSegmentId, setActiveSegmentId] = useState(
     initialCasefile.revision?.segments?.[0]?.id ?? null,
   );
@@ -424,7 +427,11 @@ export function CasefileWorkspace({
     casefile.access.kind === "admin_oversight"
       ? true
       : !unresolved && casefile.capabilities.canExport;
-  const governanceActionModeEntryOptions = governanceEntryOptions(casefile, phoneSafetyMode);
+  const governanceActionModeEntryOptions = governanceEntryOptions(
+    casefile,
+    phoneSafetyMode,
+    exportRejectedActionModeId,
+  );
   const hasApprovedRevision = casefile.revisions.some((entry) => entry.state === "approved");
   const currentCasefileLatestHref = useMemo(
     () => latestHref(casefile, conflict),
@@ -886,6 +893,7 @@ export function CasefileWorkspace({
             actorDisplay: decision.actorDisplay,
           }))}
           hasApprovedRevision={hasApprovedRevision}
+          onActionModeRejected={setExportRejectedActionModeId}
           onAnnouncement={(message) => setLiveMessage(message)}
           onClose={() => setExportOpen(false)}
           onSessionRecoveryRequested={() => setSessionRecoveryOpen(true)}

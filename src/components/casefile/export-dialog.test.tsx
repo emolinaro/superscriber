@@ -85,6 +85,7 @@ describe("ExportDialog", () => {
     document.body.append(appRoot);
 
     const onClose = vi.fn();
+    const onActionModeRejected = vi.fn();
     const onAnnouncement = vi.fn();
     const onSessionRecoveryRequested = vi.fn();
 
@@ -94,6 +95,7 @@ describe("ExportDialog", () => {
         <ExportDialog
           actionModeId="mode-1"
           approvalDecisions={[approvedDecision]}
+          onActionModeRejected={onActionModeRejected}
           onAnnouncement={onAnnouncement}
           onClose={onClose}
           onSessionRecoveryRequested={onSessionRecoveryRequested}
@@ -106,7 +108,7 @@ describe("ExportDialog", () => {
       { container: appRoot },
     );
 
-    return { onAnnouncement, onClose, onSessionRecoveryRequested };
+    return { onActionModeRejected, onAnnouncement, onClose, onSessionRecoveryRequested };
   }
 
   function renderManagedDialog(overrides: Partial<ComponentProps<typeof ExportDialog>> = {}) {
@@ -115,6 +117,7 @@ describe("ExportDialog", () => {
     document.body.append(appRoot);
 
     const onClose = vi.fn();
+    const onActionModeRejected = vi.fn();
     const onAnnouncement = vi.fn();
     const onSessionRecoveryRequested = vi.fn();
 
@@ -129,6 +132,7 @@ describe("ExportDialog", () => {
           <ExportDialog
             actionModeId="mode-1"
             approvalDecisions={[approvedDecision]}
+            onActionModeRejected={onActionModeRejected}
             onAnnouncement={onAnnouncement}
             onClose={() => {
               onClose();
@@ -147,6 +151,7 @@ describe("ExportDialog", () => {
     render(<Harness />, { container: appRoot });
 
     return {
+      onActionModeRejected,
       onAnnouncement,
       onClose,
       onSessionRecoveryRequested,
@@ -159,6 +164,7 @@ describe("ExportDialog", () => {
       <ExportDialog
         actionModeId={null}
         approvalDecisions={[approvedDecision]}
+        onActionModeRejected={vi.fn()}
         onAnnouncement={vi.fn()}
         onClose={vi.fn()}
         onSessionRecoveryRequested={vi.fn()}
@@ -186,6 +192,7 @@ describe("ExportDialog", () => {
       <ExportDialog
         actionModeId={null}
         approvalDecisions={[]}
+        onActionModeRejected={vi.fn()}
         onAnnouncement={vi.fn()}
         onClose={vi.fn()}
         onSessionRecoveryRequested={vi.fn()}
@@ -210,6 +217,7 @@ describe("ExportDialog", () => {
             actorDisplay: "Approver Example",
           },
         ]}
+        onActionModeRejected={vi.fn()}
         onAnnouncement={vi.fn()}
         onClose={vi.fn()}
         onSessionRecoveryRequested={vi.fn()}
@@ -255,6 +263,7 @@ describe("ExportDialog", () => {
           <ExportDialog
             actionModeId={null}
             approvalDecisions={[approvedDecision]}
+            onActionModeRejected={vi.fn()}
             onAnnouncement={vi.fn()}
             onClose={() => setOpen(false)}
             onSessionRecoveryRequested={vi.fn()}

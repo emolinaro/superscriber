@@ -38,6 +38,7 @@ function triggerObjectUrlDownload(blob: Blob, fileName: string) {
 export function ExportDialog({
   actionModeId,
   approvalDecisions,
+  onActionModeRejected,
   onAnnouncement,
   onClose,
   onSessionRecoveryRequested,
@@ -53,6 +54,7 @@ export function ExportDialog({
     state: string;
     actorDisplay: string;
   }>;
+  onActionModeRejected: (actionModeId: string | null) => void;
   onAnnouncement: (message: string) => void;
   onClose: () => void;
   onSessionRecoveryRequested: () => void;
@@ -164,6 +166,7 @@ export function ExportDialog({
           onSessionRecoveryRequested();
         } else if (response.status === 403) {
           const serverMessage = (await response.text()).trim();
+          onActionModeRejected(actionModeId);
           setError(
             `${serverMessage ? `${serverMessage} ` : "Export is not allowed under the current authority. "}Administrators: open Governance on this casefile and choose Enter approver action mode, then retry the download - attribution stays intact.`,
           );

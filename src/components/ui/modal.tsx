@@ -12,6 +12,8 @@ const FOCUSABLE_SELECTOR = [
   '[tabindex]:not([tabindex="-1"])',
 ].join(", ");
 
+const modalStack: symbol[] = [];
+
 function getFocusableElements(container: HTMLElement) {
   return Array.from(container.querySelectorAll<HTMLElement>(FOCUSABLE_SELECTOR)).filter(
     (element) => !element.hasAttribute("hidden") && !element.getAttribute("aria-hidden"),
@@ -40,6 +42,7 @@ export function Modal({
   const titleId = useId();
   const descriptionId = useId();
   const dialogRef = useRef<HTMLElement>(null);
+  const stackIdRef = useRef(Symbol());
   const triggerRef = useRef<HTMLElement | null>(null);
   // Consumers pass inline onClose arrows, so the identity changes every
   // render. Without the ref, any re-render (e.g. per-keystroke state in a
@@ -58,6 +61,8 @@ export function Modal({
     const appRoot = document.getElementById("app-root");
     const previousOverflow = document.body.style.overflow;
     const wasInert = appRoot?.hasAttribute("inert") ?? false;
+    const stackId = stackIdRef.current;
+    modalStack.push(stackId);
     triggerRef.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
 
     document.body.style.overflow = "hidden";
@@ -75,7 +80,7 @@ export function Modal({
     initialFocus?.focus();
 
     function handleKeyDown(event: KeyboardEvent) {
-      if (!dialogRef.current) {
+      if (!dialogRef.current || modalStack[modalStack.length - 1] !== stackId) {
         return;
       }
 
@@ -113,6 +118,10 @@ export function Modal({
 
     return () => {
       document.removeEventListener("keydown", handleKeyDown);
+      const stackIndex = modalStack.lastIndexOf(stackId);
+      if (stackIndex !== -1) {
+        modalStack.splice(stackIndex, 1);
+      }
       document.body.style.overflow = previousOverflow;
       if (appRoot && !wasInert) {
         appRoot.removeAttribute("inert");
