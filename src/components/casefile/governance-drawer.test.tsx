@@ -41,7 +41,10 @@ describe("GovernanceDrawer", () => {
       state = { open, setOpen };
       return (
         <GovernanceDrawer
+          actionModeEntryOptions={[]}
+          actionModeSessionId={null}
           casefile={createCasefile()}
+          onEnterActionMode={vi.fn()}
           open={open}
           onToggle={() => setOpen((current) => !current)}
         />

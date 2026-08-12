@@ -586,6 +586,38 @@ describe("CasefileWorkspace", () => {
     );
   });
 
+  it.each([
+    ["without an active action-mode session", createAdminOversightCasefile()],
+    [
+      "on a historical revision snapshot",
+      createAdminOversightCasefile({
+        access: {
+          kind: "admin_oversight",
+          recordingId: "rec-1",
+          historical: true,
+        },
+        adminActionModeOptions: [],
+        historicalLabel: "Historical snapshot",
+      }),
+    ],
+    ["while reviewer action mode is active", createAdminReviewerActionModeCasefile()],
+  ])("offers approver action-mode entry in Governance %s", async (_state, casefile) => {
+    const user = userEvent.setup();
+    Object.defineProperty(window, "innerWidth", {
+      configurable: true,
+      value: 1280,
+      writable: true,
+    });
+    renderWorkspace(casefile);
+
+    await user.click(screen.getByRole("button", { name: /^Governance/ }));
+
+    const governance = await screen.findByRole("complementary", { name: "Governance" });
+    expect(
+      within(governance).getByRole("button", { name: "Enter approver action mode" }),
+    ).toBeVisible();
+  });
+
   it("keeps the export affordance visible with an honest empty state before approval (demo-governance-bringback)", async () => {
     const user = userEvent.setup();
     renderWorkspace(createAdminOversightCasefile({

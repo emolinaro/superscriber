@@ -23,7 +23,11 @@ import { SessionRecoveryDialog } from "@/components/auth/session-recovery-dialog
 import { InlineNotice } from "@/components/ui/inline-notice";
 import { appendQueryMessages } from "@/lib/navigation-path";
 import { usePhoneSafetyMode } from "@/components/ui/phone-safety";
-import { AdminActionModeBanner, type AdminActionModeResult } from "./admin-action-mode-banner";
+import { AdminActionModeBanner } from "./admin-action-mode-banner";
+import {
+  type AdminActionModeEntryOption,
+  type AdminActionModeResult,
+} from "./admin-action-mode-entry";
 import { CaseHeader } from "./case-header";
 import {
   DecisionDialog,
@@ -165,6 +169,26 @@ function stripActionMode(current: CasefileViewModel, expired = false): CasefileV
       (action) => !governedKeys.includes(action.capability as (typeof governedKeys)[number]),
     ),
   };
+}
+
+function governanceEntryOptions(
+  casefile: CasefileViewModel,
+  phoneSafetyMode: boolean,
+): AdminActionModeEntryOption[] {
+  if (
+    casefile.access.kind !== "admin_oversight" ||
+    phoneSafetyMode ||
+    casefile.actionMode?.effectiveRole === "approver"
+  ) {
+    return [];
+  }
+
+  const options = casefile.adminActionModeOptions.filter(
+    (option) => option.effectiveRole !== casefile.actionMode?.effectiveRole,
+  );
+  return options.some((option) => option.effectiveRole === "approver")
+    ? options
+    : [...options, { effectiveRole: "approver" }];
 }
 
 function CasefileStatusCards({ casefile }: { casefile: CasefileViewModel }) {
@@ -400,6 +424,7 @@ export function CasefileWorkspace({
     casefile.access.kind === "admin_oversight"
       ? true
       : !unresolved && casefile.capabilities.canExport;
+  const governanceActionModeEntryOptions = governanceEntryOptions(casefile, phoneSafetyMode);
   const hasApprovedRevision = casefile.revisions.some((entry) => entry.state === "approved");
   const currentCasefileLatestHref = useMemo(
     () => latestHref(casefile, conflict),
@@ -784,7 +809,10 @@ export function CasefileWorkspace({
           ) : null}
         </div>
         <GovernanceDrawer
+          actionModeEntryOptions={governanceActionModeEntryOptions}
+          actionModeSessionId={casefile.actionMode?.id ?? null}
           casefile={casefile}
+          onEnterActionMode={handleEnterActionMode}
           open={governanceOpen}
           onToggle={() => setGovernanceOpen((current) => !current)}
         />

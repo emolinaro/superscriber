@@ -3,6 +3,12 @@
 import { useEffect, useId, useMemo, useState, type KeyboardEvent } from "react";
 import type { CasefileViewModel } from "@/server/casefile/read-model";
 import { Modal } from "@/components/ui/modal";
+import {
+  AdminActionModeEntry,
+  type AdminActionModeEntryOption,
+  type AdminActionModeResult,
+  type AdminActionModeRole,
+} from "./admin-action-mode-entry";
 import { RevisionHistory } from "./revision-history";
 
 const GOVERNANCE_TABS = ["Policy", "Provenance", "Assignments", "Revisions", "Decisions", "Audit"] as const;
@@ -177,15 +183,55 @@ function GovernanceTabs({
   );
 }
 
-function DesktopDrawer({
+function GovernanceContents({
+  actionModeEntryOptions,
+  actionModeSessionId,
   activeTab,
   casefile,
+  onEnterActionMode,
+  setActiveTab,
+}: {
+  actionModeEntryOptions: AdminActionModeEntryOption[];
+  actionModeSessionId: string | null;
+  activeTab: GovernanceTab;
+  casefile: CasefileViewModel;
+  onEnterActionMode: (input: {
+    effectiveRole: AdminActionModeRole;
+    purpose: string;
+  }) => Promise<AdminActionModeResult> | AdminActionModeResult;
+  setActiveTab: (value: GovernanceTab) => void;
+}) {
+  return (
+    <>
+      <AdminActionModeEntry
+        entryOptions={actionModeEntryOptions}
+        onEnter={onEnterActionMode}
+        recordingTitle={casefile.title}
+        sessionId={actionModeSessionId}
+      />
+      <GovernanceTabs activeTab={activeTab} casefile={casefile} setActiveTab={setActiveTab} />
+    </>
+  );
+}
+
+function DesktopDrawer({
+  actionModeEntryOptions,
+  actionModeSessionId,
+  activeTab,
+  casefile,
+  onEnterActionMode,
   open,
   setActiveTab,
   setOpen,
 }: {
+  actionModeEntryOptions: AdminActionModeEntryOption[];
+  actionModeSessionId: string | null;
   activeTab: GovernanceTab;
   casefile: CasefileViewModel;
+  onEnterActionMode: (input: {
+    effectiveRole: AdminActionModeRole;
+    purpose: string;
+  }) => Promise<AdminActionModeResult> | AdminActionModeResult;
   open: boolean;
   setActiveTab: (value: GovernanceTab) => void;
   setOpen: (value: boolean) => void;
@@ -200,21 +246,37 @@ function DesktopDrawer({
   return (
     <aside aria-label="Governance" className="governance-drawer" data-open>
       <div className="governance-drawer__surface">
-        <GovernanceTabs activeTab={activeTab} casefile={casefile} setActiveTab={setActiveTab} />
+        <GovernanceContents
+          actionModeEntryOptions={actionModeEntryOptions}
+          actionModeSessionId={actionModeSessionId}
+          activeTab={activeTab}
+          casefile={casefile}
+          onEnterActionMode={onEnterActionMode}
+          setActiveTab={setActiveTab}
+        />
       </div>
     </aside>
   );
 }
 
 function TabletDrawer({
+  actionModeEntryOptions,
+  actionModeSessionId,
   activeTab,
   casefile,
+  onEnterActionMode,
   open,
   setActiveTab,
   setOpen,
 }: {
+  actionModeEntryOptions: AdminActionModeEntryOption[];
+  actionModeSessionId: string | null;
   activeTab: GovernanceTab;
   casefile: CasefileViewModel;
+  onEnterActionMode: (input: {
+    effectiveRole: AdminActionModeRole;
+    purpose: string;
+  }) => Promise<AdminActionModeResult> | AdminActionModeResult;
   open: boolean;
   setActiveTab: (value: GovernanceTab) => void;
   setOpen: (value: boolean) => void;
@@ -231,7 +293,14 @@ function TabletDrawer({
         surfaceClassName="governance-tablet-drawer__surface"
         title="Governance"
       >
-        <GovernanceTabs activeTab={activeTab} casefile={casefile} setActiveTab={setActiveTab} />
+        <GovernanceContents
+          actionModeEntryOptions={actionModeEntryOptions}
+          actionModeSessionId={actionModeSessionId}
+          activeTab={activeTab}
+          casefile={casefile}
+          onEnterActionMode={onEnterActionMode}
+          setActiveTab={setActiveTab}
+        />
         <button className="button button-primary" onClick={() => setOpen(false)} type="button">
           Close governance
         </button>
@@ -254,12 +323,21 @@ function PhoneAccordions({ casefile }: { casefile: CasefileViewModel }) {
 }
 
 export function GovernanceDrawer({
+  actionModeEntryOptions,
+  actionModeSessionId,
   casefile,
+  onEnterActionMode,
   open: controlledOpen,
   onOpenChange,
   onToggle,
 }: {
+  actionModeEntryOptions: AdminActionModeEntryOption[];
+  actionModeSessionId: string | null;
   casefile: CasefileViewModel;
+  onEnterActionMode: (input: {
+    effectiveRole: AdminActionModeRole;
+    purpose: string;
+  }) => Promise<AdminActionModeResult> | AdminActionModeResult;
   /** demo-gov-placement: the header hosts the trigger; the workspace owns state. */
   open?: boolean;
   onOpenChange?: (open: boolean) => void;
@@ -305,8 +383,11 @@ export function GovernanceDrawer({
     if (viewportMode === "tablet") {
       return (
         <TabletDrawer
+          actionModeEntryOptions={actionModeEntryOptions}
+          actionModeSessionId={actionModeSessionId}
           activeTab={activeTab}
           casefile={casefile}
+          onEnterActionMode={onEnterActionMode}
           open={open}
           setActiveTab={setActiveTab}
           setOpen={setOpen}
@@ -316,14 +397,25 @@ export function GovernanceDrawer({
 
     return (
       <DesktopDrawer
+        actionModeEntryOptions={actionModeEntryOptions}
+        actionModeSessionId={actionModeSessionId}
         activeTab={activeTab}
         casefile={casefile}
+        onEnterActionMode={onEnterActionMode}
         open={open}
         setActiveTab={setActiveTab}
         setOpen={setOpen}
       />
     );
-  }, [activeTab, casefile, open, viewportMode]);
+  }, [
+    actionModeEntryOptions,
+    actionModeSessionId,
+    activeTab,
+    casefile,
+    onEnterActionMode,
+    open,
+    viewportMode,
+  ]);
 
   return drawer;
 }
