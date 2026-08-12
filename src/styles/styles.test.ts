@@ -205,6 +205,9 @@ describe("product css contract", () => {
     expect(phoneMedia?.[1]).toMatch(
       /\.media-transport__actions\s*\{[^}]*grid-template-columns: 1fr 1fr/,
     );
+    expect(responsive).toContain(
+      "@media (max-width: 1099px) and (max-height: 767px) and (pointer: coarse) and (orientation: landscape)",
+    );
   });
 
   it("keeps the exact responsive, sticky, reduced-motion, and export rules", () => {
