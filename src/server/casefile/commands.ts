@@ -6,6 +6,12 @@ import {
   type WorkflowOriginDecision,
   type WorkflowStageInput,
 } from "@/domain/casefile";
+import {
+  applySpeakerRename,
+  describeSpeakerRename,
+  planSpeakerRename,
+  type SpeakerRenamePlan,
+} from "@/domain/speakers";
 import type {
   Principal,
   Recording,
@@ -44,6 +50,20 @@ export type SaveDraftCommandInput = {
 
 export type SubmitRevisionCommandInput = SaveDraftCommandInput & {
   hasUnsavedChanges: boolean;
+};
+
+export type RenameSpeakerCommandInput = {
+  recordingId: string;
+  expectedCurrentRevisionId: string;
+  fromSpeaker: string;
+  toSpeaker: string;
+  summary?: string;
+  actionModeId?: string | null;
+};
+
+export type RenameSpeakerCommandResult = {
+  revision: TranscriptRevision;
+  rename: SpeakerRenamePlan;
 };
 
 export type WithdrawRevisionCommandInput = {
@@ -839,6 +859,61 @@ export function submitRevisionCommand(
       submittedAt: now,
       submittedByUserId: state.actor.userId,
     };
+  }, bundle);
+}
+
+export function renameSpeakerCommand(
+  principal: Principal,
+  input: RenameSpeakerCommandInput,
+  bundle: AppDatabaseBundle = getAppDbBundle(),
+): RenameSpeakerCommandResult {
+  requireExpectedCurrentRevisionId(input.expectedCurrentRevisionId);
+
+  return runGovernedTransaction((db, now) => {
+    const state = loadCommandState(db, principal, {
+      ...input,
+      requiredEffectiveRole: "reviewer",
+    }, now);
+    requireSaveAuthority(state, principal);
+    const prior = currentRevisionOrThrow(state.recording, state.revision);
+    assertDraftState(db, state.recording, prior, input.expectedCurrentRevisionId);
+
+    // Plan and apply against the stored draft, not a client-computed segment
+    // array: the command owns the batch math so a stale or tampered payload
+    // cannot rename fewer or different segments than the summary promised.
+    const rename = planSpeakerRename(prior.segments, input.fromSpeaker, input.toSpeaker);
+    const renamedSegments = applySpeakerRename(prior.segments, rename.fromSpeaker, rename.toSpeaker);
+
+    const saved = saveDraftInTransaction(db, state.actor, state.recording, prior, {
+      recordingId: input.recordingId,
+      expectedCurrentRevisionId: input.expectedCurrentRevisionId,
+      segments: renamedSegments,
+      summary:
+        input.summary?.trim() ||
+        `Renamed speaker "${rename.fromSpeaker}" to "${rename.toSpeaker}".`,
+      actionModeId: input.actionModeId ?? null,
+    }, now);
+
+    insertAuditEvent(db, {
+      workspaceId: state.workspace.id,
+      recordingId: state.recording.id,
+      actor: state.actor,
+      type: "revision.speakers_renamed",
+      detail: `${describeSpeakerRename(rename)} Saved as draft revision ${saved.version}.`,
+      metadata: {
+        priorRevisionId: prior.id,
+        revisionId: saved.id,
+        version: saved.version,
+        fromSpeaker: rename.fromSpeaker,
+        toSpeaker: rename.toSpeaker,
+        renamedSegmentCount: rename.renamedSegmentCount,
+        existingTargetSegmentCount: rename.existingTargetSegmentCount,
+        mergedIntoExisting: rename.mergesWithExisting,
+      },
+      createdAt: now,
+    });
+
+    return { revision: saved, rename };
   }, bundle);
 }
 

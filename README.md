@@ -20,7 +20,7 @@ It runs as a single-institution deployment with local accounts, SQLite persisten
 - Unmanageable-instance recovery: if accounts survive but no active administrator remains, the sign-up door offers an operator-gated claim ceremony for a fresh admin, protected by a single-use on-host claim token so a network-only attacker without the host proof cannot take the instance over ([`docs/operators/admin-recovery.md`](./docs/operators/admin-recovery.md))
 - Role-aware work inbox ledgers (tabbed per role) and a transcript-first casefile for review
 - Live, engine-derived transcription progress in work ledgers and uploader status casefiles
-- Governed casefile commands - save draft, submit, withdraw submission, request changes, approve, reopen - with non-admin submitters barred from approving or requesting changes on their own revisions; see the [behavioral contract](./DESIGN.md#revision-and-decision-commands)
+- Governed casefile commands - save draft, batch speaker rename with a confirmed count summary (renaming onto an existing name merges both), submit, withdraw submission, request changes, approve, reopen - with non-admin submitters barred from approving or requesting changes on their own revisions; see the [behavioral contract](./DESIGN.md#revision-and-decision-commands)
 - Admin read-only oversight by default, plus an explicit, record-bound, audited reviewer/approver action mode across every casefile; see [admin oversight and action mode](./DESIGN.md#admin-oversight-and-action-mode)
 - Append-only assignment history, with approval completing all active assignments atomically
 - Unified resumable ingest (1 MiB chunks) for upload and browser audio recording, with host-verified faster-whisper model selection under Advanced settings

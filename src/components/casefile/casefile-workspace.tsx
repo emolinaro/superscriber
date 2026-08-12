@@ -4,6 +4,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import type {
   ApproveRevisionCommandInput,
+  RenameSpeakerCommandInput,
   ReopenRevisionCommandInput,
   RequestChangesCommandInput,
   SaveDraftCommandInput,
@@ -38,6 +39,10 @@ import { ConflictPanel } from "./conflict-panel";
 import { ExportDialog, REVISIONLESS_EXPORT_REASON } from "./export-dialog";
 import { GovernanceDrawer } from "./governance-drawer";
 import { RecordingDangerZone } from "./recording-danger-zone";
+import {
+  SpeakerRenameDialog,
+  type SpeakerRenameDialogResult,
+} from "./speaker-rename-dialog";
 import { TranscriptionProgressBar } from "@/components/ui/transcription-progress";
 import { MediaTransport } from "./media-transport";
 import { StateActionBar } from "./state-action-bar";
@@ -65,6 +70,10 @@ type ApproveAction = (
 
 type ReopenAction = (
   input: ReopenRevisionCommandInput,
+) => Promise<CommandResult<CasefileMutationResult>>;
+
+type RenameSpeakersAction = (
+  input: RenameSpeakerCommandInput,
 ) => Promise<CommandResult<CasefileMutationResult>>;
 
 type EnterAdminActionModeAction = (input: {
@@ -293,6 +302,7 @@ export function CasefileWorkspace({
   requestChangesAction,
   approveAction,
   reopenAction,
+  renameSpeakerAction,
   enterAdminActionModeAction,
   exitAdminActionModeAction,
 }: {
@@ -304,6 +314,7 @@ export function CasefileWorkspace({
   requestChangesAction: RequestChangesAction;
   approveAction: ApproveAction;
   reopenAction: ReopenAction;
+  renameSpeakerAction: RenameSpeakersAction;
   enterAdminActionModeAction: EnterAdminActionModeAction;
   exitAdminActionModeAction: ExitAdminActionModeAction;
 }) {
@@ -317,6 +328,7 @@ export function CasefileWorkspace({
   const [sessionRecoveryOpen, setSessionRecoveryOpen] = useState(false);
   const [conflict, setConflict] = useState<CasefileConflictSnapshot | null>(null);
   const [activeDecision, setActiveDecision] = useState<DecisionKind | null>(null);
+  const [speakerRenameOpen, setSpeakerRenameOpen] = useState(false);
   const [exportOpen, setExportOpen] = useState(false);
   const [exportRejectedActionModeId, setExportRejectedActionModeId] = useState<string | null>(null);
   const [activeSegmentId, setActiveSegmentId] = useState(
@@ -652,6 +664,60 @@ export function CasefileWorkspace({
     setDirty(true);
   }
 
+  async function handleRenameSpeaker(input: {
+    fromSpeaker: string;
+    toSpeaker: string;
+  }): Promise<SpeakerRenameDialogResult> {
+    if (phoneSafetyMode || dirty || !casefile.revision) {
+      return { ok: false };
+    }
+
+    const result = await renameSpeakerAction({
+      recordingId: casefile.recordingId,
+      expectedCurrentRevisionId: casefile.revision.id,
+      fromSpeaker: input.fromSpeaker,
+      toSpeaker: input.toSpeaker,
+      summary,
+      actionModeId: casefile.actionMode?.id ?? null,
+    });
+
+    if (!result.ok) {
+      if (result.code === "AUTH_EXPIRED") {
+        setSessionRecoveryOpen(true);
+        return { ok: false };
+      }
+
+      if (result.code === "STALE_REVISION" && result.latest) {
+        setConflict(result.latest);
+        setSpeakerRenameOpen(false);
+        return { ok: false };
+      }
+
+      if (result.code === "STATE_CHANGED") {
+        setSpeakerRenameOpen(false);
+        router.refresh();
+        setLiveMessage(result.message);
+        return { ok: false };
+      }
+
+      if (
+        result.code === "ACTION_MODE_EXPIRED" ||
+        result.code === "ACTION_MODE_ENDED" ||
+        result.code === "ACTION_MODE_REQUIRED"
+      ) {
+        handleActionModeLoss(result.message, result.code === "ACTION_MODE_EXPIRED");
+        setSpeakerRenameOpen(false);
+        return { ok: false };
+      }
+
+      return { ok: false, error: result.message };
+    }
+
+    applyMutationResult(result);
+    setSpeakerRenameOpen(false);
+    return { ok: true };
+  }
+
   function updateSpeaker(segmentId: string, value: string) {
     setSegments((current) =>
       current.map((segment) =>
@@ -814,6 +880,12 @@ export function CasefileWorkspace({
                 activeSegmentId={activeSegmentId}
                 activeSegmentPlaying={activeSegmentPlaying}
                 editable={editable}
+                onOpenSpeakerRename={
+                  editable ? () => setSpeakerRenameOpen(true) : undefined
+                }
+                speakerRenameNote={
+                  dirty ? "Save or discard unsaved changes before renaming speakers." : null
+                }
                 onSeek={(segment) =>
                   setSeekRequest({
                     segmentId: segment.id,
@@ -910,6 +982,15 @@ export function CasefileWorkspace({
           onConfirm={(detail) => runDecision(activeDecision, detail)}
           open={!phoneSafetyMode}
           revision={casefile.revision}
+        />
+      ) : null}
+
+      {speakerRenameOpen && casefile.revision ? (
+        <SpeakerRenameDialog
+          onCancel={() => setSpeakerRenameOpen(false)}
+          onConfirm={handleRenameSpeaker}
+          open={speakerRenameOpen}
+          segments={casefile.revision.segments ?? []}
         />
       ) : null}
 

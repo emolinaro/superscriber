@@ -218,6 +218,7 @@ export type AuditEvent = {
     | "transcription.completed"
     | "transcription.failed"
     | "revision.saved"
+    | "revision.speakers_renamed"
     | "revision.submitted"
     | "revision.withdrawn"
     | "approval.approved"

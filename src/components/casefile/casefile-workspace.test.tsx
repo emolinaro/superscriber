@@ -42,6 +42,7 @@ function renderWorkspace(overrides: Record<string, unknown> = {}, pageNotice?: s
   const withdrawAction = vi.fn();
   const requestChangesAction = vi.fn();
   const approveAction = vi.fn();
+  const renameSpeakerAction = vi.fn();
   const reopenAction = vi.fn();
   const enterAdminActionModeAction = vi.fn();
   const exitAdminActionModeAction = vi.fn();
@@ -53,6 +54,7 @@ function renderWorkspace(overrides: Record<string, unknown> = {}, pageNotice?: s
       exitAdminActionModeAction={exitAdminActionModeAction}
       initialCasefile={createCasefile(overrides)}
       pageNotice={pageNotice}
+      renameSpeakerAction={renameSpeakerAction}
       reopenAction={reopenAction}
       requestChangesAction={requestChangesAction}
       saveAction={saveAction}
@@ -63,6 +65,7 @@ function renderWorkspace(overrides: Record<string, unknown> = {}, pageNotice?: s
 
   return {
     approveAction,
+    renameSpeakerAction,
     enterAdminActionModeAction,
     exitAdminActionModeAction,
     reopenAction,
@@ -71,6 +74,7 @@ function renderWorkspace(overrides: Record<string, unknown> = {}, pageNotice?: s
       view.rerender(
         <CasefileWorkspace
           approveAction={approveAction}
+          renameSpeakerAction={renameSpeakerAction}
           enterAdminActionModeAction={enterAdminActionModeAction}
           exitAdminActionModeAction={exitAdminActionModeAction}
           initialCasefile={createCasefile(nextOverrides)}

@@ -29,6 +29,7 @@ describe("CasefileWorkspace SSR", () => {
     const html = renderToString(
       <CasefileWorkspace
         approveAction={vi.fn()}
+        renameSpeakerAction={vi.fn()}
         enterAdminActionModeAction={vi.fn()}
         exitAdminActionModeAction={vi.fn()}
         initialCasefile={createCasefile()}
