@@ -9,7 +9,9 @@ import { RecoveryClaimForm } from "@/components/auth/recovery-claim-form";
 import { LoginForm } from "@/components/auth/login-form";
 import { OidcSignInButton } from "@/components/auth/oidc-sign-in-button";
 import { SuperscriberLogo } from "@/components/brand/superscriber-logo";
+import { LandingFooter } from "@/components/auth/landing-footer";
 import { sanitizeReturnTo } from "@/lib/safe-return-to";
+import { getDocsGuideUrl } from "@/lib/site-links";
 import {
   buildAuthNotice,
   resolveAuthSurfaceModel,
@@ -309,6 +311,7 @@ export default async function LandingPage({
           </div>
         </section>
       </div>
+      <LandingFooter docsGuideUrl={getDocsGuideUrl()} />
     </main>
   );
 }

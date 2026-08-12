@@ -185,3 +185,23 @@
 .auth-tabs__panel {
   min-width: 0;
 }
+
+/* Landing footer: quiet, factual outbound links (source repository, and the
+   hosted user guide only when SUPERSCRIBER_DOCS_URL is configured). */
+
+.auth-footer {
+  display: grid;
+  gap: var(--space-2);
+  margin-top: var(--space-6);
+  text-align: center;
+}
+
+.auth-footer__line {
+  margin: 0;
+  font-size: var(--type-14);
+  color: var(--color-muted);
+}
+
+.auth-footer__external-mark {
+  font-size: 0.85em;
+}
