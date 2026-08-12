@@ -36,6 +36,15 @@ UUIDs and must name the same issuer byte-for-byte:
 }
 ```
 
+Superscriber caches the last successfully validated role map in memory. Later
+request-path configuration loads check the file modification time and reload
+only when it changes. A temporary stat or read failure, or an invalid
+replacement after the first successful load, leaves the previous mapping
+active; an unreadable or invalid file on first use remains a configuration
+error. Publish a rotation with a new modification time, preferably by
+atomically replacing the file, then use the verification steps below to
+confirm the new mapping.
+
 ## Authentik-side setup
 
 1. Create a confidential **OAuth2/OIDC provider**:
