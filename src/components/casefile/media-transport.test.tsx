@@ -1,10 +1,28 @@
 // @vitest-environment jsdom
 
 import userEvent from "@testing-library/user-event";
-import { cleanup, render, screen } from "@testing-library/react";
+import { cleanup, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { baseSegments } from "./test-fixtures";
 import { MediaTransport } from "./media-transport";
+
+function stubMediaPlayback(media: HTMLMediaElement) {
+  let isPlaying = false;
+  const play = vi.fn(() => {
+    isPlaying = true;
+    media.dispatchEvent(new Event("play"));
+    return Promise.resolve();
+  });
+  const pause = vi.fn(() => {
+    isPlaying = false;
+    media.dispatchEvent(new Event("pause"));
+  });
+  Object.defineProperty(media, "paused", { configurable: true, get: () => !isPlaying });
+  Object.defineProperty(media, "ended", { configurable: true, get: () => false });
+  media.play = play as unknown as () => Promise<void>;
+  media.pause = pause;
+  return { play, pause };
+}
 
 describe("MediaTransport", () => {
   afterEach(() => {
@@ -20,7 +38,7 @@ describe("MediaTransport", () => {
         mediaUrl="/api/media/rec-1"
         onActiveSegmentChange={() => undefined}
         onSeekHandled={() => undefined}
-        seekRequestMs={null}
+        seekRequest={null}
         segments={baseSegments}
       />,
     );
@@ -50,7 +68,7 @@ describe("MediaTransport", () => {
         onActiveSegmentChange={onActiveSegmentChange}
         onLocateSegment={onLocateSegment}
         onSeekHandled={() => undefined}
-        seekRequestMs={null}
+        seekRequest={null}
         segments={baseSegments}
       />,
     );
@@ -81,12 +99,137 @@ describe("MediaTransport", () => {
         mediaDenialReason="Media playback is denied for this role under the current policy."
         onActiveSegmentChange={() => undefined}
         onSeekHandled={() => undefined}
-        seekRequestMs={null}
+        seekRequest={null}
         segments={baseSegments}
       />,
     );
 
     expect(screen.getByText("Media playback is denied for this role under the current policy.")).toBeVisible();
     expect(document.querySelector("audio, video")).toBeNull();
+  });
+
+  it("seek request for a non-active segment keeps the seek-and-play contract", () => {
+    const onSeekHandled = vi.fn();
+    const onActiveSegmentChange = vi.fn();
+    const props = {
+      activeSegmentId: "seg-1",
+      mediaKind: "audio" as const,
+      mediaUrl: "/api/media/rec-1",
+      onActiveSegmentChange,
+      onSeekHandled,
+      segments: baseSegments,
+    };
+    const { rerender } = render(<MediaTransport {...props} seekRequest={null} />);
+
+    const audio = document.querySelector("audio");
+    expect(audio).not.toBeNull();
+    const stub = stubMediaPlayback(audio!);
+
+    rerender(<MediaTransport {...props} seekRequest={{ segmentId: "seg-2", startMs: 10_000 }} />);
+
+    expect(audio!.currentTime).toBe(10);
+    expect(stub.play).toHaveBeenCalledTimes(1);
+    expect(onActiveSegmentChange).toHaveBeenCalledWith("seg-2");
+    expect(onSeekHandled).toHaveBeenCalledTimes(1);
+  });
+
+  it("seek request for the playing active segment pauses without re-seeking", async () => {
+    const onSeekHandled = vi.fn();
+    const onPlayingChange = vi.fn();
+    const props = {
+      activeSegmentId: "seg-1",
+      mediaKind: "audio" as const,
+      mediaUrl: "/api/media/rec-1",
+      onActiveSegmentChange: () => undefined,
+      onPlayingChange,
+      onSeekHandled,
+      segments: baseSegments,
+    };
+    const { rerender } = render(<MediaTransport {...props} seekRequest={null} />);
+
+    const audio = document.querySelector("audio");
+    expect(audio).not.toBeNull();
+    const stub = stubMediaPlayback(audio!);
+    audio!.currentTime = 5;
+    void audio!.play();
+
+    const toggle = screen.getByTestId("transport-play-toggle");
+    await waitFor(() => expect(toggle).toHaveAttribute("aria-pressed", "true"));
+
+    rerender(<MediaTransport {...props} seekRequest={{ segmentId: "seg-1", startMs: 0 }} />);
+
+    // Pause is the equivalent of the transport pause button: no play() call,
+    // no currentTime write, exposed state flips to paused on both controls.
+    expect(stub.pause).toHaveBeenCalledTimes(1);
+    expect(stub.play).toHaveBeenCalledTimes(1);
+    expect(audio!.currentTime).toBe(5);
+    expect(onSeekHandled).toHaveBeenCalledTimes(1);
+    await waitFor(() => expect(toggle).toHaveAttribute("aria-pressed", "false"));
+    expect(toggle).toHaveTextContent("Play");
+    expect(onPlayingChange).toHaveBeenLastCalledWith(false);
+  });
+
+  it("seek request for the paused active segment resumes from the paused position", async () => {
+    const onSeekHandled = vi.fn();
+    const props = {
+      activeSegmentId: "seg-1",
+      mediaKind: "audio" as const,
+      mediaUrl: "/api/media/rec-1",
+      onActiveSegmentChange: () => undefined,
+      onSeekHandled,
+      segments: baseSegments,
+    };
+    const { rerender } = render(<MediaTransport {...props} seekRequest={null} />);
+
+    const audio = document.querySelector("audio");
+    expect(audio).not.toBeNull();
+    const stub = stubMediaPlayback(audio!);
+    audio!.currentTime = 5;
+
+    rerender(<MediaTransport {...props} seekRequest={{ segmentId: "seg-1", startMs: 0 }} />);
+
+    // Resume plays without touching currentTime: no audible/visible re-seek
+    // jump back to the segment start.
+    expect(stub.play).toHaveBeenCalledTimes(1);
+    expect(stub.pause).not.toHaveBeenCalled();
+    expect(audio!.currentTime).toBe(5);
+    expect(onSeekHandled).toHaveBeenCalledTimes(1);
+    const toggle = screen.getByTestId("transport-play-toggle");
+    await waitFor(() => expect(toggle).toHaveAttribute("aria-pressed", "true"));
+    expect(toggle).toHaveTextContent("Pause");
+  });
+
+  it("keeps the Space key toggling the transport play/pause button (keyboard parity)", async () => {
+    const user = userEvent.setup();
+    render(
+      <MediaTransport
+        activeSegmentId="seg-1"
+        mediaKind="audio"
+        mediaUrl="/api/media/rec-1"
+        onActiveSegmentChange={() => undefined}
+        onSeekHandled={() => undefined}
+        seekRequest={null}
+        segments={baseSegments}
+      />,
+    );
+
+    const audio = document.querySelector("audio");
+    expect(audio).not.toBeNull();
+    const stub = stubMediaPlayback(audio!);
+
+    const toggle = screen.getByTestId("transport-play-toggle");
+    toggle.focus();
+    expect(toggle).toHaveFocus();
+    expect(toggle).toHaveAttribute("aria-pressed", "false");
+
+    await user.keyboard(" ");
+    expect(stub.play).toHaveBeenCalledTimes(1);
+    await waitFor(() => expect(toggle).toHaveAttribute("aria-pressed", "true"));
+    expect(toggle).toHaveTextContent("Pause");
+
+    await user.keyboard(" ");
+    expect(stub.pause).toHaveBeenCalledTimes(1);
+    await waitFor(() => expect(toggle).toHaveAttribute("aria-pressed", "false"));
+    expect(toggle).toHaveTextContent("Play");
   });
 });

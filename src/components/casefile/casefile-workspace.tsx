@@ -286,7 +286,13 @@ export function CasefileWorkspace({
     initialCasefile.revision?.segments?.[0]?.id ?? null,
   );
   const [governanceOpen, setGovernanceOpen] = useState(false);
-  const [seekRequestMs, setSeekRequestMs] = useState<number | null>(null);
+  const [seekRequest, setSeekRequest] = useState<{ segmentId: string; startMs: number } | null>(
+    null,
+  );
+  // Playing state mirrored from the transport so the active transcript
+  // segment button can expose a truthful play/pause toggle (see
+  // TranscriptDocument aria-pressed).
+  const [activeSegmentPlaying, setActiveSegmentPlaying] = useState(false);
   const [reviewFocus, setReviewFocus] = useState<{ segmentId: string; nonce: number } | null>(
     null,
   );
@@ -753,14 +759,18 @@ export function CasefileWorkspace({
                     nonce: (prev?.nonce ?? 0) + 1,
                   }));
                 }}
-                onSeekHandled={() => setSeekRequestMs(null)}
-                seekRequestMs={seekRequestMs}
+                onSeekHandled={() => setSeekRequest(null)}
+                onPlayingChange={setActiveSegmentPlaying}
+                seekRequest={seekRequest}
                 segments={segments}
               />
               <TranscriptDocument
                 activeSegmentId={activeSegmentId}
+                activeSegmentPlaying={activeSegmentPlaying}
                 editable={editable}
-                onSeek={(startMs) => setSeekRequestMs(startMs)}
+                onSeek={(segment) =>
+                  setSeekRequest({ segmentId: segment.id, startMs: segment.startMs })
+                }
                 onSummaryChange={updateSummary}
                 onUpdateSpeaker={updateSpeaker}
                 onUpdateText={updateText}

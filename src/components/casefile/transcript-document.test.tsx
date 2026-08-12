@@ -101,7 +101,51 @@ describe("TranscriptDocument", () => {
 
     expect(screen.queryAllByRole("textbox")).toHaveLength(0);
     await user.click(screen.getByRole("button", { name: "Play from 00:00-00:10" }));
-    expect(onSeek).toHaveBeenCalledWith(0);
+    expect(onSeek).toHaveBeenCalledWith(expect.objectContaining({ id: "seg-1", startMs: 0 }));
+  });
+
+  it("exposes the active playing segment button as a pressed pause toggle", () => {
+    render(
+      <TranscriptDocument
+        activeSegmentId="seg-1"
+        activeSegmentPlaying
+        editable={false}
+        onSeek={vi.fn()}
+        onUpdateSpeaker={vi.fn()}
+        onUpdateText={vi.fn()}
+        phoneSafetyMode={false}
+        segments={baseSegments}
+        summary="Summary"
+        onSummaryChange={vi.fn()}
+      />,
+    );
+
+    const toggle = screen.getByRole("button", { name: "Pause segment 1, 00:00-00:10." });
+    expect(toggle).toHaveAttribute("aria-pressed", "true");
+    // Inactive segments keep the plain seek-and-play affordance.
+    expect(
+      screen.getByRole("button", { name: "Play from 00:10-00:20" }),
+    ).not.toHaveAttribute("aria-pressed");
+  });
+
+  it("shows the active segment button as unpressed once playback is paused", () => {
+    render(
+      <TranscriptDocument
+        activeSegmentId="seg-1"
+        activeSegmentPlaying={false}
+        editable={false}
+        onSeek={vi.fn()}
+        onUpdateSpeaker={vi.fn()}
+        onUpdateText={vi.fn()}
+        phoneSafetyMode={false}
+        segments={baseSegments}
+        summary="Summary"
+        onSummaryChange={vi.fn()}
+      />,
+    );
+
+    const toggle = screen.getByRole("button", { name: "Play from 00:00-00:10" });
+    expect(toggle).toHaveAttribute("aria-pressed", "false");
   });
 
   it("names the withheld editors on the phone-safety surface", () => {

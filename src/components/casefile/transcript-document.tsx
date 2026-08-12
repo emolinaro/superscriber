@@ -16,7 +16,13 @@ type TranscriptDocumentProps = {
      parent. */
   diffHighlight?: { parentVersion: number; editedSegmentIds: string[] } | null;
   onSummaryChange: (value: string) => void;
-  onSeek: (startMs: number) => void;
+  /**
+   * True while the media element is playing inside the active segment. The
+   * active segment's timestamp button doubles as a play/pause toggle
+   * (segment-play-toggle) and must expose that pressed state truthfully.
+   */
+  activeSegmentPlaying?: boolean;
+  onSeek: (segment: TranscriptSegment) => void;
   onUpdateSpeaker: (segmentId: string, value: string) => void;
   onUpdateText: (segmentId: string, value: string) => void;
   /**
@@ -41,6 +47,7 @@ export function TranscriptDocument({
   safetyStripped = false,
   diffHighlight = null,
   reviewFocus = null,
+  activeSegmentPlaying = false,
 }: TranscriptDocumentProps) {
   const readOnly = !editable || phoneSafetyMode;
   // Guarded presentation (narrow/coarse surface) silently swaps the segment
@@ -150,9 +157,14 @@ export function TranscriptDocument({
                 </span>
               ) : null}
               <button
-                aria-label={`Play from ${windowLabel}`}
+                aria-label={
+                  active && activeSegmentPlaying
+                    ? `Pause segment ${index + 1}, ${windowLabel}.`
+                    : `Play from ${windowLabel}`
+                }
+                aria-pressed={active ? activeSegmentPlaying : undefined}
                 className="transcript-segment__timestamp"
-                onClick={() => onSeek(segment.startMs)}
+                onClick={() => onSeek(segment)}
                 type="button"
               >
                 {windowLabel}
