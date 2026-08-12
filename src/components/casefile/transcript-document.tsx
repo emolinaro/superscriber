@@ -13,6 +13,7 @@ type TranscriptDocumentProps = {
   activeSegmentId: string | null;
   editable: boolean;
   phoneSafetyMode: boolean;
+  followResumeNonce?: number;
   /** True when phone safety (not permissions or history) removed the editors. */
   safetyStripped?: boolean;
   summary: string;
@@ -57,6 +58,7 @@ function isFollowScrollIgnoredTarget(target: EventTarget | null): boolean {
 export function TranscriptDocument({
   activeSegmentId,
   editable,
+  followResumeNonce = 0,
   phoneSafetyMode,
   summary,
   segments,
@@ -144,8 +146,12 @@ export function TranscriptDocument({
       row.querySelector<HTMLElement>("[data-editor-key^='text:']") ??
       row.querySelector<HTMLElement>("[data-editor-key^='speaker:']") ??
       row.querySelector<HTMLElement>(".transcript-segment__timestamp");
-    affordance?.focus();
+    affordance?.focus({ preventScroll: true });
   }, [reviewFocus]);
+
+  useEffect(() => {
+    followPausedRef.current = false;
+  }, [followResumeNonce]);
 
   // Playback follow: CENTER the active segment inside the nearest scrollport
   // (the bounded .casefile-main scrollport on desktop, the window elsewhere)

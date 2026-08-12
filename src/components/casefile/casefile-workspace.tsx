@@ -344,6 +344,7 @@ export function CasefileWorkspace({
   // segment button can expose a truthful play/pause toggle (see
   // TranscriptDocument aria-pressed).
   const [activeSegmentPlaying, setActiveSegmentPlaying] = useState(false);
+  const [followResumeNonce, setFollowResumeNonce] = useState(0);
   const [reviewFocus, setReviewFocus] = useState<{ segmentId: string; nonce: number } | null>(
     null,
   );
@@ -862,6 +863,7 @@ export function CasefileWorkspace({
                 mediaKind={casefile.media.kind}
                 mediaUrl={casefile.media.url}
                 onActiveSegmentChange={setActiveSegmentId}
+                onMediaSeek={() => setFollowResumeNonce((current) => current + 1)}
                 onLocateSegment={(segment) => {
                   // Player rail/marker seek already happened in the
                   // transport; here the transcript list surfaces the segment
@@ -880,6 +882,7 @@ export function CasefileWorkspace({
                 activeSegmentId={activeSegmentId}
                 activeSegmentPlaying={activeSegmentPlaying}
                 editable={editable}
+                followResumeNonce={followResumeNonce}
                 onOpenSpeakerRename={
                   editable ? () => setSpeakerRenameOpen(true) : undefined
                 }

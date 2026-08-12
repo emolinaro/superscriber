@@ -148,6 +148,12 @@ describe("product css contract", () => {
     );
     expect(desktopTransport?.[1]).toContain("position: sticky");
     expect(desktopTransport?.[1]).toContain("top: 0");
+    const desktopScrollport = casefile.match(
+      /\.casefile-main\[data-revision="true"\]\s*\{([^}]*)\}/,
+    );
+    expect(desktopScrollport?.[1]).toContain(
+      "scroll-padding-block: var(--player-clearance",
+    );
 
     const responsive = readFileSync(resolve(STYLES_DIR, "responsive.css"), "utf8");
     const windowScrollMedia = responsive.match(
@@ -158,6 +164,14 @@ describe("product css contract", () => {
     const windowTransport = windowScrollMedia?.[1].match(/\.media-transport\s*\{([^}]*)\}/);
     expect(windowTransport?.[1]).toContain("position: sticky");
     expect(windowTransport?.[1]).toContain("top: 0");
+    expect(windowScrollMedia?.[1]).toContain(
+      "scroll-padding-top: var(--player-clearance",
+    );
+    const compactVideo = windowScrollMedia?.[1].match(
+      /\.media-transport__controls video\s*\{([^}]*)\}/,
+    );
+    expect(compactVideo?.[1]).toContain("max-height: 42vh");
+    expect(compactVideo?.[1]).toContain("object-fit: contain");
     // The case header must not double-park above the pinned transport on
     // window-scrolling surfaces.
     expect(windowScrollMedia?.[1]).toMatch(/\.case-header[\s,\{][^}]*position: static/);

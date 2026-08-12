@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 
 import userEvent from "@testing-library/user-event";
-import { cleanup, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { baseSegments } from "./test-fixtures";
 import { MediaTransport } from "./media-transport";
@@ -27,6 +27,8 @@ function stubMediaPlayback(media: HTMLMediaElement) {
 describe("MediaTransport", () => {
   afterEach(() => {
     cleanup();
+    vi.unstubAllGlobals();
+    document.documentElement.style.removeProperty("--player-clearance");
   });
 
   it("renders native controls, jump back 10 seconds, playback rate, and current segment label", async () => {
@@ -88,6 +90,73 @@ describe("MediaTransport", () => {
     expect(onLocateSegment).toHaveBeenCalledWith(
       expect.objectContaining({ id: "seg-2", startMs: 10_000 }),
     );
+  });
+
+  it("notifies the shared follow boundary for media seek events", () => {
+    const onMediaSeek = vi.fn();
+    render(
+      <MediaTransport
+        {...{ onMediaSeek }}
+        activeSegmentId={null}
+        mediaKind="audio"
+        mediaUrl="/api/media/rec-1"
+        onActiveSegmentChange={() => undefined}
+        onSeekHandled={() => undefined}
+        seekRequest={null}
+        segments={baseSegments}
+      />,
+    );
+
+    const audio = document.querySelector("audio")!;
+    fireEvent(audio, new Event("seeking"));
+    fireEvent(audio, new Event("seeked"));
+
+    expect(onMediaSeek).toHaveBeenCalledTimes(2);
+  });
+
+  it("publishes the rendered transport height as player clearance", () => {
+    let resizeCallback: ResizeObserverCallback = () => undefined;
+    const observe = vi.fn();
+    const disconnect = vi.fn();
+    vi.stubGlobal(
+      "ResizeObserver",
+      class {
+        constructor(callback: ResizeObserverCallback) {
+          resizeCallback = callback;
+        }
+
+        observe = observe;
+        disconnect = disconnect;
+        unobserve = vi.fn();
+      },
+    );
+
+    const { container } = render(
+      <div className="casefile-page">
+        <MediaTransport
+          activeSegmentId={null}
+          mediaKind="audio"
+          mediaUrl="/api/media/rec-1"
+          onActiveSegmentChange={() => undefined}
+          onSeekHandled={() => undefined}
+          seekRequest={null}
+          segments={baseSegments}
+        />
+      </div>,
+    );
+
+    const page = container.querySelector<HTMLElement>(".casefile-page")!;
+    const transport = container.querySelector<HTMLElement>(".media-transport")!;
+    transport.getBoundingClientRect = () =>
+      ({ height: 287, width: 800 } as DOMRect);
+    resizeCallback([], {} as ResizeObserver);
+
+    expect(observe).toHaveBeenCalledWith(transport);
+    expect(page.style.getPropertyValue("--player-clearance")).toBe("287px");
+    expect(
+      document.documentElement.style.getPropertyValue("--player-clearance"),
+    ).toBe("287px");
+    expect(disconnect).not.toHaveBeenCalled();
   });
 
   it("replaces transport with one denial reason when media is unavailable", () => {

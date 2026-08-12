@@ -112,7 +112,12 @@
      block:center aims at the visible region below it and nearest-edge
      scrolls land below the chrome. */
   html:has(.casefile-page) {
-    scroll-padding-top: 432px;
+    scroll-padding-top: var(--player-clearance, 432px);
+  }
+
+  .media-transport__controls video {
+    max-height: 42vh;
+    object-fit: contain;
   }
 
   .media-transport__rail {
@@ -169,7 +174,7 @@
      shorter once the rail and stacked actions are compacted (~316px at
      390px width), so the window-scroll clearance tightens. */
   html:has(.casefile-page) {
-    scroll-padding-top: 372px;
+    scroll-padding-top: var(--player-clearance, 372px);
   }
 
   .case-header__facts,
