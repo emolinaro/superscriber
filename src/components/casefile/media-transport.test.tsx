@@ -170,6 +170,42 @@ describe("MediaTransport", () => {
     expect(onSeekHandled).toHaveBeenCalledTimes(1);
   });
 
+  it("resumes the paused segment when a save leaves its active id stale", async () => {
+    const onSeekHandled = vi.fn();
+    const props = {
+      activeSegmentId: "seg-1",
+      mediaKind: "audio" as const,
+      mediaUrl: "/api/media/rec-1",
+      onActiveSegmentChange: () => undefined,
+      onSeekHandled,
+      segments: baseSegments,
+    };
+    const { rerender } = render(<MediaTransport {...props} seekRequest={null} />);
+
+    const audio = document.querySelector("audio");
+    expect(audio).not.toBeNull();
+    const stub = stubMediaPlayback(audio!);
+    audio!.currentTime = 15;
+
+    rerender(
+      <MediaTransport
+        {...props}
+        seekRequest={{ segmentId: "seg-2", startMs: 10_000, endMs: 20_000 }}
+      />,
+    );
+
+    expect(stub.play).toHaveBeenCalledTimes(1);
+    expect(stub.pause).not.toHaveBeenCalled();
+    expect(audio!.currentTime).toBe(15);
+    expect(onSeekHandled).toHaveBeenCalledTimes(1);
+    await waitFor(() =>
+      expect(screen.getByTestId("transport-play-toggle")).toHaveAttribute(
+        "aria-pressed",
+        "true",
+      ),
+    );
+  });
+
   it("seek request for the playing active segment pauses without re-seeking", async () => {
     const onSeekHandled = vi.fn();
     const onPlayingChange = vi.fn();

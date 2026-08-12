@@ -91,7 +91,7 @@ export function MediaTransport({
     const requestContainsCurrentTime =
       currentTimeMs >= seekRequest.startMs && currentTimeMs < seekRequest.endMs;
 
-    if (seekRequest.segmentId === activeSegmentId && requestContainsCurrentTime) {
+    if (requestContainsCurrentTime) {
       // Active-segment click: play/pause toggle (segment-play-toggle).
       // Resume keeps the paused currentTime untouched, so no re-seek jump
       // is audible or visible; pause is the equivalent of the transport
@@ -108,7 +108,7 @@ export function MediaTransport({
       syncActiveSegment(seekRequest.startMs / 1000);
     }
     onSeekHandled();
-  }, [activeSegmentId, onSeekHandled, seekRequest]);
+  }, [onSeekHandled, seekRequest]);
 
   const activeSegment = useMemo(
     () => segments.find((segment) => segment.id === activeSegmentId) ?? null,
