@@ -145,6 +145,12 @@
 }
 
 .auth-tabs__tab {
+  /* Doors are real links (progressive enhancement); give them the same box
+     and centered label the buttons had. */
+  display: grid;
+  place-items: center;
+  box-sizing: border-box;
+  text-decoration: none;
   min-height: var(--type-44);
   padding: 0 var(--space-4);
   border: 1px solid transparent;

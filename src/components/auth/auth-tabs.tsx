@@ -6,10 +6,12 @@ import {
   useRef,
   useState,
   type KeyboardEvent,
+  type MouseEvent,
   type ReactNode,
 } from "react";
+import type { AuthEntry } from "@/lib/auth-entry";
 
-export type AuthEntry = "signup" | "signin";
+export type { AuthEntry };
 
 /**
  * Explicit first-run vs returning-user split for the auth landing page
@@ -21,14 +23,23 @@ export type AuthEntry = "signup" | "signin";
  *
  * Renders as an APG tab pair: two visually distinct doors, one visible pane,
  * arrow-key navigation, and a labelled tabpanel each.
+ *
+ * Progressive enhancement: each door is a real link to `/?entry=signup` /
+ * `/?entry=signin`, so the doors work with zero JavaScript (the server
+ * renders the requested pane). Once hydrated, clicks are intercepted and
+ * toggled client-side instantly, with no navigation.
  */
 export function AuthTabs({
   signUpPane,
   signInPane,
+  signUpHref,
+  signInHref,
   initialEntry = "signin",
 }: {
   signUpPane: ReactNode;
   signInPane: ReactNode;
+  signUpHref: string;
+  signInHref: string;
   initialEntry?: AuthEntry;
 }) {
   const [entry, setEntry] = useState<AuthEntry>(initialEntry);
@@ -46,27 +57,43 @@ export function AuthTabs({
     setEntry(initialEntry);
   }
 
-  const tabRefs = useRef<Array<HTMLButtonElement | null>>([]);
+  const tabRefs = useRef<Array<HTMLAnchorElement | null>>([]);
 
-  const entries: Array<{ key: AuthEntry; label: string }> = [
-    { key: "signup", label: "Sign up" },
-    { key: "signin", label: "Sign in" },
+  const entries: Array<{ key: AuthEntry; label: string; href: string }> = [
+    { key: "signup", label: "Sign up", href: signUpHref },
+    { key: "signin", label: "Sign in", href: signInHref },
   ];
+
+  // Post-hydration the doors toggle instantly in place; the href is only a
+  // no-JS (and open-in-new-tab) fallback, so navigation is always cancelled.
+  const onTabClick = useCallback(
+    (event: MouseEvent<HTMLAnchorElement>, key: AuthEntry) => {
+      event.preventDefault();
+      setEntry(key);
+    },
+    [],
+  );
 
   // eslint-disable-next-line react-hooks/exhaustive-deps -- entries is a stable per-render literal
   const onTabKeyDown = useCallback(
-    (event: KeyboardEvent<HTMLButtonElement>, index: number) => {
-      if (event.key !== "ArrowRight" && event.key !== "ArrowLeft") {
+    (event: KeyboardEvent<HTMLAnchorElement>, index: number) => {
+      if (event.key === "ArrowRight" || event.key === "ArrowLeft") {
+        event.preventDefault();
+        const nextIndex =
+          event.key === "ArrowRight"
+            ? (index + 1) % entries.length
+            : (index + entries.length - 1) % entries.length;
+        const next = entries[nextIndex];
+        setEntry(next.key);
+        tabRefs.current[nextIndex]?.focus();
         return;
       }
-      event.preventDefault();
-      const nextIndex =
-        event.key === "ArrowRight"
-          ? (index + 1) % entries.length
-          : (index + entries.length - 1) % entries.length;
-      const next = entries[nextIndex];
-      setEntry(next.key);
-      tabRefs.current[nextIndex]?.focus();
+      // Anchors only fire click on Enter; Space keeps the toggle contract
+      // the doors had as buttons without following the href.
+      if (event.key === " ") {
+        event.preventDefault();
+        setEntry(entries[index].key);
+      }
     },
     [],
   );
@@ -77,24 +104,24 @@ export function AuthTabs({
         {entries.map((tab, index) => {
           const selected = entry === tab.key;
           return (
-            <button
+            <a
               aria-controls={`${baseId}-panel-${tab.key}`}
               aria-selected={selected}
               className="auth-tabs__tab"
               data-selected={selected}
+              href={tab.href}
               id={`${baseId}-tab-${tab.key}`}
               key={tab.key}
-              onClick={() => setEntry(tab.key)}
+              onClick={(event) => onTabClick(event, tab.key)}
               onKeyDown={(event) => onTabKeyDown(event, index)}
               ref={(node) => {
                 tabRefs.current[index] = node;
               }}
               role="tab"
               tabIndex={selected ? 0 : -1}
-              type="button"
             >
               {tab.label}
-            </button>
+            </a>
           );
         })}
       </div>
