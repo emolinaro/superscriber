@@ -9,6 +9,7 @@ import {
   UserRole,
   WorkspaceBucket,
 } from "@/domain/models";
+import { normalizeSpeakerLabels } from "@/domain/speakers";
 import { actorContextForPrincipal, type ActorContext } from "@/server/casefile/audit";
 import { EMPTY_AUDIT_METADATA } from "@/server/db/mappers";
 
@@ -180,7 +181,7 @@ export function createSystemDraftRevision(params: {
     submittedAt: null,
     approvedAt: null,
     summary: params.summary,
-    segments: params.segments,
+    segments: normalizeSpeakerLabels(params.segments),
   };
 
   params.state.revisions.push(revision);

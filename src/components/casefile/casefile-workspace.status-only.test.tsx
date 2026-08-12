@@ -27,6 +27,7 @@ function renderStatusOnlyWorkspace(overrides: Record<string, unknown> = {}) {
   return render(
     <CasefileWorkspace
       approveAction={vi.fn()}
+      renameSpeakerAction={vi.fn()}
       enterAdminActionModeAction={vi.fn()}
       exitAdminActionModeAction={vi.fn()}
       initialCasefile={createCasefile({

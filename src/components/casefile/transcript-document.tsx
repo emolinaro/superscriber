@@ -1,5 +1,6 @@
 import { useEffect, useRef } from "react";
 import type { TranscriptSegment } from "@/domain/models";
+import { listSpeakers } from "@/domain/speakers";
 import { formatSegmentWindow } from "@/lib/format";
 import { InlineNotice } from "@/components/ui/inline-notice";
 
@@ -25,6 +26,11 @@ type TranscriptDocumentProps = {
   onSeek: (segment: TranscriptSegment) => void;
   onUpdateSpeaker: (segmentId: string, value: string) => void;
   onUpdateText: (segmentId: string, value: string) => void;
+  /** Bulk speaker rename (per-casefile): opens the governed rename dialog.
+     `speakerRenameNote` explains why the action is currently withheld (for
+     example unsaved local edits) and disables the trigger. */
+  onOpenSpeakerRename?: () => void;
+  speakerRenameNote?: string | null;
   /**
    * Player rail/marker asked to surface one segment inline: scroll it into
    * view inside the nearest scrollport and focus its inline review
@@ -44,12 +50,15 @@ export function TranscriptDocument({
   onSeek,
   onUpdateSpeaker,
   onUpdateText,
+  onOpenSpeakerRename,
+  speakerRenameNote = null,
   safetyStripped = false,
   diffHighlight = null,
   reviewFocus = null,
   activeSegmentPlaying = false,
 }: TranscriptDocumentProps) {
   const readOnly = !editable || phoneSafetyMode;
+  const speakerTools = !readOnly && Boolean(onOpenSpeakerRename) && segments.length > 0;
   // Guarded presentation (narrow/coarse surface) silently swaps the segment
   // editors for static copy; name the withheld affordance inline so the guard
   // never looks like broken editing (demo-segment-edit). The workspace passes
@@ -132,6 +141,32 @@ export function TranscriptDocument({
       </div>
 
       <div className="transcript-document__segments" ref={segmentsRef}>
+        {speakerTools ? (
+          <div className="transcript-document__speaker-tools">
+            <p className="field-note" data-testid="speaker-toolbar-list">
+              Speakers:{" "}
+              {listSpeakers(segments)
+                .map(
+                  (speaker) =>
+                    `${speaker.label} (${speaker.segmentCount} ${
+                      speaker.segmentCount === 1 ? "segment" : "segments"
+                    })`,
+                )
+                .join(", ")}
+            </p>
+            <button
+              className="button button-secondary"
+              disabled={Boolean(speakerRenameNote)}
+              onClick={onOpenSpeakerRename}
+              type="button"
+            >
+              Rename speaker...
+            </button>
+            {speakerRenameNote ? (
+              <span className="field-note">{speakerRenameNote}</span>
+            ) : null}
+          </div>
+        ) : null}
         {safetyStripped ? (
           <InlineNotice tone="info">
             Review and decisions require a tablet or desktop.

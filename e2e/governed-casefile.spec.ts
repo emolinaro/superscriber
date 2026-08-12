@@ -203,6 +203,87 @@ test.describe.serial("governed casefile workflows", () => {
     ).toBeEditable();
   });
 
+  test("renames a speaker across the draft and merges onto an existing speaker", async ({
+    page,
+  }) => {
+    // Upload + real container transcription pipeline: same guard class as the
+    // sibling tests under loaded hosts.
+    test.setTimeout(240_000);
+    await bootstrapAndLogin(page, adminUser);
+    const recordingId = await uploadFixture(page, { title: "Speaker rename casefile" });
+    await createAndAssignUsers(page, recordingId);
+
+    await openAssignedDraft(page, reviewerUser);
+    // The stub engine emits a non-diarized single-speaker transcript; first
+    // attribute one segment to a second speaker so both the plain rename and
+    // the merge path are exercised against real persisted state.
+    await page
+      .getByRole("textbox", { name: /Speaker for segment 1, / })
+      .fill("Interviewer");
+    await page.getByRole("button", { name: "Save draft" }).click();
+    await expect(page.locator(".casefile-page > span[role='status']")).toContainText(
+      "Draft revision saved server-side.",
+    );
+    await expect(page.getByTestId("speaker-toolbar-list")).toContainText(
+      "Interviewer (1 segment), Speaker 1 (1 segment)",
+    );
+
+    await page.getByRole("button", { name: "Rename speaker..." }).click();
+    const renameDialog = page.getByRole("dialog", { name: "Rename speaker everywhere" });
+    await expect(renameDialog).toBeVisible();
+    await renameDialog
+      .getByLabel("Current speaker")
+      .selectOption({ label: "Speaker 1 (1 segment)" });
+    await renameDialog.getByLabel("New speaker name").fill("Dana");
+    // Pre-commit batch summary: the operator confirms the counts before
+    // anything is written.
+    await expect(renameDialog.getByTestId("speaker-rename-summary")).toHaveText(
+      'Renamed "Speaker 1" to "Dana" across 1 segment.',
+    );
+    await renameDialog.getByRole("button", { name: "Rename speaker" }).click();
+    await expect(page.locator(".casefile-page > span[role='status']")).toContainText(
+      'Renamed "Speaker 1" to "Dana" across 1 segment.',
+    );
+    await expect(
+      page.getByRole("textbox", { name: /Speaker for segment 2, / }),
+    ).toHaveValue("Dana");
+    await expect(page.getByTestId("speaker-toolbar-list")).toContainText(
+      "Interviewer (1 segment), Dana (1 segment)",
+    );
+
+    // Renaming onto an existing speaker merges the two names.
+    await page.getByRole("button", { name: "Rename speaker..." }).click();
+    const mergeDialog = page.getByRole("dialog", { name: "Rename speaker everywhere" });
+    await expect(mergeDialog).toBeVisible();
+    await mergeDialog
+      .getByLabel("Current speaker")
+      .selectOption({ label: "Dana (1 segment)" });
+    await mergeDialog.getByLabel("New speaker name").fill("Interviewer");
+    await expect(mergeDialog.getByTestId("speaker-rename-summary")).toHaveText(
+      'Renamed "Dana" to "Interviewer" across 1 segment. Merged with existing "Interviewer" (1 segment).',
+    );
+    await mergeDialog.getByRole("button", { name: "Rename speaker" }).click();
+    await expect(page.locator(".casefile-page > span[role='status']")).toContainText(
+      'Merged with existing "Interviewer" (1 segment).',
+    );
+    await expect(page.getByTestId("speaker-toolbar-list")).toContainText(
+      "Interviewer (2 segments)",
+    );
+
+    // Governed undo surface: every rename is its own revision, so the
+    // pre-rename wording stays recoverable in the lineage, and the batch ran
+    // under an attributed audit entry.
+    await openGovernanceTab(page, "Revisions");
+    const revisionRows = page.locator(".revision-history__row");
+    await expect(revisionRows).toHaveCount(4);
+    await expect(revisionRows.filter({ hasText: "v1" })).toContainText("Superseded");
+    await openGovernanceTab(page, "Audit");
+    await expect(page.getByText("revision.speakers_renamed").first()).toBeVisible();
+    await expect(
+      page.getByText('Renamed "Dana" to "Interviewer" across 1 segment.').first(),
+    ).toBeVisible();
+  });
+
   test("requires audited admin action mode without implicit assignment", async ({ page }) => {
     // This test uploads and waits through the real container transcription
     // pipeline; under loaded hosts the 90s default was observed to expire.

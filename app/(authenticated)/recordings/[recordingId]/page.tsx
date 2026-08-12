@@ -1,6 +1,7 @@
 import { notFound, redirect } from "next/navigation";
 import {
   approveRevisionAction,
+  renameSpeakerAction,
   reopenRevisionAction,
   requestChangesAction,
   saveDraftAction,
@@ -90,6 +91,7 @@ export default async function RecordingPage({
       exitAdminActionModeAction={exitAdminActionModeAction}
       initialCasefile={casefile}
       pageNotice={safeQueryValue(resolvedSearch.notice)}
+      renameSpeakerAction={renameSpeakerAction}
       reopenAction={reopenRevisionAction}
       requestChangesAction={requestChangesAction}
       saveAction={saveDraftAction}

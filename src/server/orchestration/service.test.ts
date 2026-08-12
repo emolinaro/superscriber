@@ -169,7 +169,7 @@ describe("orchestration service", () => {
         segments: [
           {
             id: "ext-1",
-            speakerLabel: "Speaker A",
+            speakerLabel: "  Speaker A  ",
             startMs: 0,
             endMs: 2_000,
             text: "Webhook transcript segment.",
@@ -183,5 +183,6 @@ describe("orchestration service", () => {
     expect(state.recordings[0].transcriptJobState).toBe("completed");
     expect(state.recordings[0].currentRevisionId).toBeTruthy();
     expect(state.revisions.at(-1)?.summary).toBe("External engine first draft.");
+    expect(state.revisions.at(-1)?.segments[0]?.speakerLabel).toBe("Speaker A");
   });
 });

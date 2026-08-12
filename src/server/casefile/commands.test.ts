@@ -6,9 +6,11 @@ import { and, eq } from "drizzle-orm";
 import type { Principal, TranscriptRevision } from "@/domain/models";
 import { createLocalUser, toPrincipal } from "@/server/auth/service";
 import { assignRecordingToUser } from "@/server/access/service";
+import { recoverRevisionVersion } from "@/server/administration/service";
 import { enterActionMode } from "@/server/casefile/action-mode";
 import {
   approveRevisionCommand,
+  renameSpeakerCommand,
   requestChangesCommand,
   reopenRevisionCommand,
   saveDraftCommand,
@@ -361,6 +363,50 @@ describe("casefile draft commands", () => {
       bundle.sqlite.close();
     }
   });
+
+  it.each(["save", "submit"] as const)(
+    "normalizes speaker labels before a reviewer %s writes a revision",
+    async (operation) => {
+      const { bundle, reviewer, draftInput } = await setupDraftFixture();
+
+      try {
+        const segments = cloneSegments(draftInput.segments);
+        segments[0] = { ...segments[0], speakerLabel: "  Speaker A  " };
+
+        const written = operation === "save"
+          ? saveDraftCommand(reviewer, { ...draftInput, segments }, bundle)
+          : submitRevisionCommand(
+              reviewer,
+              { ...draftInput, segments, hasUnsavedChanges: true },
+              bundle,
+            );
+
+        expect(written.segments[0]?.speakerLabel).toBe("Speaker A");
+        expect(readRevision(bundle, written.id)?.segments[0]?.speakerLabel).toBe("Speaker A");
+      } finally {
+        bundle.sqlite.close();
+      }
+    },
+  );
+
+  it.each(["   ", "x".repeat(81)])(
+    "rejects a reviewer draft write with invalid speaker label %j",
+    async (speakerLabel) => {
+      const { bundle, reviewer, draftInput } = await setupDraftFixture();
+
+      try {
+        const segments = cloneSegments(draftInput.segments);
+        segments[0] = { ...segments[0], speakerLabel };
+
+        expect(() =>
+          saveDraftCommand(reviewer, { ...draftInput, segments }, bundle),
+        ).toThrowError(expect.objectContaining({ code: "VALIDATION_ERROR" }));
+        expect(readRecording(bundle)?.currentRevisionId).toBe("rev-1");
+      } finally {
+        bundle.sqlite.close();
+      }
+    },
+  );
 
   it("atomically saves unsaved content and submits the resulting revision", async () => {
     const { bundle, reviewer, draftInput } = await setupDraftFixture();
@@ -1152,6 +1198,257 @@ describe("casefile draft commands", () => {
         bundle.db.select().from(adminActionSessions).where(eq(adminActionSessions.id, session.id)).get()
           ?.id,
       ).toBe(session.id);
+    } finally {
+      bundle.sqlite.close();
+    }
+  });
+
+  it("renames a speaker across every segment as one governed revision", async () => {
+    const { bundle, reviewer } = await setupDraftFixture();
+
+    try {
+      const result = renameSpeakerCommand(reviewer, {
+        recordingId: "rec-1",
+        expectedCurrentRevisionId: "rev-1",
+        fromSpeaker: "Speaker B",
+        toSpeaker: "Dana",
+        summary: "",
+      }, bundle);
+
+      expect(result.revision.version).toBe(2);
+      expect(result.revision.state).toBe("draft");
+      expect(result.revision.segments.map((segment) => segment.speakerLabel)).toEqual([
+        "Speaker A",
+        "Dana",
+      ]);
+      expect(result.rename.renamedSegmentCount).toBe(1);
+      expect(result.rename.mergesWithExisting).toBe(false);
+      expect(readRevision(bundle, "rev-1")?.state).toBe("superseded");
+      expect(readRecording(bundle)?.currentRevisionId).toBe(result.revision.id);
+
+      const auditRow = listAuditRows(bundle).at(-1);
+      expect(auditRow?.type).toBe("revision.speakers_renamed");
+      expect(auditRow?.actorUserId).toBe(reviewer.userId);
+      expect(auditRow?.detail).toContain('Renamed "Speaker B" to "Dana" across 1 segment.');
+    } finally {
+      bundle.sqlite.close();
+    }
+  });
+
+  it("preserves unrelated legacy labels during an exact-source rename", async () => {
+    const { bundle, reviewer } = await setupDraftFixture();
+    const overLengthLabel = "x".repeat(81);
+    const legacySegments = [
+      { ...baseSegments[0], speakerLabel: " Legacy " },
+      { ...baseSegments[1], speakerLabel: " Legacy " },
+      {
+        ...baseSegments[0],
+        id: "seg-3",
+        startMs: 9_000,
+        endMs: 12_000,
+        speakerLabel: " Other ",
+      },
+      {
+        ...baseSegments[1],
+        id: "seg-4",
+        startMs: 12_000,
+        endMs: 15_000,
+        speakerLabel: overLengthLabel,
+      },
+    ];
+
+    try {
+      bundle.db
+        .update(revisions)
+        .set({ segmentsJson: JSON.stringify(legacySegments) })
+        .where(eq(revisions.id, "rev-1"))
+        .run();
+
+      const result = renameSpeakerCommand(reviewer, {
+        recordingId: "rec-1",
+        expectedCurrentRevisionId: "rev-1",
+        fromSpeaker: " Legacy ",
+        toSpeaker: "Dana",
+      }, bundle);
+
+      expect(result.rename.renamedSegmentCount).toBe(2);
+      expect(result.rename.segmentIds).toEqual(["seg-1", "seg-2"]);
+      expect(result.revision.segments.map((segment) => segment.speakerLabel)).toEqual([
+        "Dana",
+        "Dana",
+        " Other ",
+        overLengthLabel,
+      ]);
+    } finally {
+      bundle.sqlite.close();
+    }
+  });
+
+  it("supersedes the renamed draft when recovering its ancestor", async () => {
+    const { bundle, reviewer, admin } = await setupDraftFixture();
+
+    try {
+      const renamed = renameSpeakerCommand(reviewer, {
+        recordingId: "rec-1",
+        expectedCurrentRevisionId: "rev-1",
+        fromSpeaker: "Speaker B",
+        toSpeaker: "Dana",
+      }, bundle);
+
+      const recovered = recoverRevisionVersion({
+        recordingId: "rec-1",
+        sourceRevisionId: "rev-1",
+        actorUserId: admin.userId,
+      }, bundle.db);
+
+      expect(recovered.newVersion).toBe(3);
+      expect(readRevision(bundle, renamed.revision.id)?.state).toBe("superseded");
+      expect(readRevision(bundle, "rev-1")?.state).toBe("superseded");
+      expect(readRecording(bundle)?.currentRevisionId).toBe(recovered.newRevisionId);
+      expect(
+        bundle.db
+          .select({ id: revisions.id })
+          .from(revisions)
+          .where(
+            and(
+              eq(revisions.recordingId, "rec-1"),
+              eq(revisions.state, "draft"),
+            ),
+          )
+          .all(),
+      ).toEqual([{ id: recovered.newRevisionId }]);
+    } finally {
+      bundle.sqlite.close();
+    }
+  });
+
+  it("merges both names when the target speaker already exists", async () => {
+    const { bundle, reviewer } = await setupDraftFixture();
+
+    try {
+      const result = renameSpeakerCommand(reviewer, {
+        recordingId: "rec-1",
+        expectedCurrentRevisionId: "rev-1",
+        fromSpeaker: "Speaker B",
+        toSpeaker: "Speaker A",
+      }, bundle);
+
+      expect(
+        new Set(result.revision.segments.map((segment) => segment.speakerLabel)),
+      ).toEqual(new Set(["Speaker A"]));
+      expect(result.rename.mergesWithExisting).toBe(true);
+      expect(result.rename.existingTargetSegmentCount).toBe(1);
+    } finally {
+      bundle.sqlite.close();
+    }
+  });
+
+  it("rejects a rename with an empty, oversized, or unchanged speaker name", async () => {
+    const { bundle, reviewer } = await setupDraftFixture();
+
+    try {
+      expect(() =>
+        renameSpeakerCommand(reviewer, {
+          recordingId: "rec-1",
+          expectedCurrentRevisionId: "rev-1",
+          fromSpeaker: "Speaker B",
+          toSpeaker: "  ",
+        }, bundle),
+      ).toThrowError(expect.objectContaining({ code: "VALIDATION_ERROR" }));
+
+      expect(() =>
+        renameSpeakerCommand(reviewer, {
+          recordingId: "rec-1",
+          expectedCurrentRevisionId: "rev-1",
+          fromSpeaker: "Speaker B",
+          toSpeaker: "x".repeat(81),
+        }, bundle),
+      ).toThrowError(expect.objectContaining({ code: "VALIDATION_ERROR" }));
+
+      expect(() =>
+        renameSpeakerCommand(reviewer, {
+          recordingId: "rec-1",
+          expectedCurrentRevisionId: "rev-1",
+          fromSpeaker: "Speaker B",
+          toSpeaker: "Speaker B",
+        }, bundle),
+      ).toThrowError(expect.objectContaining({ code: "VALIDATION_ERROR" }));
+    } finally {
+      bundle.sqlite.close();
+    }
+  });
+
+  it("rejects a rename for a speaker with no attributed segments", async () => {
+    const { bundle, reviewer } = await setupDraftFixture();
+
+    try {
+      expect(() =>
+        renameSpeakerCommand(reviewer, {
+          recordingId: "rec-1",
+          expectedCurrentRevisionId: "rev-1",
+          fromSpeaker: "Speaker Z",
+          toSpeaker: "Dana",
+        }, bundle),
+      ).toThrowError(expect.objectContaining({ code: "VALIDATION_ERROR" }));
+    } finally {
+      bundle.sqlite.close();
+    }
+  });
+
+  it("rejects a rename once the revision leaves draft state", async () => {
+    const { bundle, reviewer, pending } = await setupPendingFixture();
+
+    try {
+      expect(() =>
+        renameSpeakerCommand(reviewer, {
+          recordingId: "rec-1",
+          expectedCurrentRevisionId: pending.id,
+          fromSpeaker: "Speaker B",
+          toSpeaker: "Dana",
+        }, bundle),
+      ).toThrowError(expect.objectContaining({ code: "VALIDATION_ERROR" }));
+    } finally {
+      bundle.sqlite.close();
+    }
+  });
+
+  it("rejects a rename against a stale current revision", async () => {
+    const { bundle, reviewer, draftInput } = await setupDraftFixture();
+
+    try {
+      saveDraftCommand(reviewer, draftInput, bundle);
+
+      expect(() =>
+        renameSpeakerCommand(reviewer, {
+          recordingId: "rec-1",
+          expectedCurrentRevisionId: "rev-1",
+          fromSpeaker: "Speaker B",
+          toSpeaker: "Dana",
+        }, bundle),
+      ).toThrowError(expect.objectContaining({ code: "STALE_REVISION" }));
+    } finally {
+      bundle.sqlite.close();
+    }
+  });
+
+  it("denies a rename without an active reviewer assignment", async () => {
+    const bundle = openAppDatabase(":memory:");
+    insertDraftFixture(bundle);
+    const outsider = await createPrincipal(bundle, {
+      displayName: "Outsider",
+      email: "outsider@example.com",
+      role: "reviewer",
+    });
+
+    try {
+      expect(() =>
+        renameSpeakerCommand(outsider, {
+          recordingId: "rec-1",
+          expectedCurrentRevisionId: "rev-1",
+          fromSpeaker: "Speaker B",
+          toSpeaker: "Dana",
+        }, bundle),
+      ).toThrowError(expect.objectContaining({ code: "ACCESS_DENIED" }));
     } finally {
       bundle.sqlite.close();
     }

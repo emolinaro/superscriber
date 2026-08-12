@@ -6,14 +6,17 @@ import { type Principal, type TranscriptSegment } from "@/domain/models";
 import { type CommandResult, type FocusTarget } from "@/lib/command-result";
 import { authExpiredResult, toCommandResultError } from "@/lib/command-result";
 import { appendQueryMessages } from "@/lib/navigation-path";
+import { describeSpeakerRename } from "@/domain/speakers";
 import {
   approveRevisionCommand,
+  renameSpeakerCommand,
   requestChangesCommand,
   reopenRevisionCommand,
   saveDraftCommand,
   submitRevisionCommand,
   withdrawRevisionCommand,
   type ApproveRevisionCommandInput,
+  type RenameSpeakerCommandInput,
   type ReopenRevisionCommandInput,
   type RequestChangesCommandInput,
   type SaveDraftCommandInput,
@@ -59,9 +62,7 @@ function parseSegmentsJson(formData: FormData) {
     return {
       id: typeof candidate.id === "string" ? candidate.id : `segment-${index}`,
       speakerLabel:
-        typeof candidate.speakerLabel === "string" && candidate.speakerLabel.trim()
-          ? candidate.speakerLabel.trim()
-          : `Speaker ${index + 1}`,
+        typeof candidate.speakerLabel === "string" ? candidate.speakerLabel : "",
       startMs:
         typeof candidate.startMs === "number" && Number.isFinite(candidate.startMs)
           ? candidate.startMs
@@ -177,6 +178,19 @@ export async function submitRevisionAction(
         actionModeId: input.actionModeId ?? null,
       }),
     () => "Revision submitted for approval.",
+  );
+}
+
+export async function renameSpeakerAction(
+  input: RenameSpeakerCommandInput,
+): Promise<CommandResult<CasefileMutationResult>> {
+  return runCasefileAction(
+    (principal) => renameSpeakerCommand(principal, input),
+    async (_result, principal) =>
+      refreshCasefileMutation(principal, input.recordingId, "retain", {
+        actionModeId: input.actionModeId ?? null,
+      }),
+    (result) => describeSpeakerRename(result.rename),
   );
 }
 

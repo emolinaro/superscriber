@@ -42,6 +42,7 @@ function renderWorkspace(overrides: Record<string, unknown> = {}, pageNotice?: s
   const withdrawAction = vi.fn();
   const requestChangesAction = vi.fn();
   const approveAction = vi.fn();
+  const renameSpeakerAction = vi.fn();
   const reopenAction = vi.fn();
   const enterAdminActionModeAction = vi.fn();
   const exitAdminActionModeAction = vi.fn();
@@ -53,6 +54,7 @@ function renderWorkspace(overrides: Record<string, unknown> = {}, pageNotice?: s
       exitAdminActionModeAction={exitAdminActionModeAction}
       initialCasefile={createCasefile(overrides)}
       pageNotice={pageNotice}
+      renameSpeakerAction={renameSpeakerAction}
       reopenAction={reopenAction}
       requestChangesAction={requestChangesAction}
       saveAction={saveAction}
@@ -63,6 +65,7 @@ function renderWorkspace(overrides: Record<string, unknown> = {}, pageNotice?: s
 
   return {
     approveAction,
+    renameSpeakerAction,
     enterAdminActionModeAction,
     exitAdminActionModeAction,
     reopenAction,
@@ -71,6 +74,7 @@ function renderWorkspace(overrides: Record<string, unknown> = {}, pageNotice?: s
       view.rerender(
         <CasefileWorkspace
           approveAction={approveAction}
+          renameSpeakerAction={renameSpeakerAction}
           enterAdminActionModeAction={enterAdminActionModeAction}
           exitAdminActionModeAction={exitAdminActionModeAction}
           initialCasefile={createCasefile(nextOverrides)}
@@ -629,6 +633,24 @@ describe("CasefileWorkspace", () => {
     expect(screen.queryByRole("button", { name: "Save draft" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Submit for approval" })).not.toBeInTheDocument();
     expect(screen.queryAllByRole("textbox")).toHaveLength(0);
+  });
+
+  it("hides an open speaker rename dialog when phone safety begins", async () => {
+    const user = userEvent.setup();
+    const { renameSpeakerAction, rerenderWorkspace } = renderWorkspace();
+
+    await user.click(screen.getByRole("button", { name: "Rename speaker..." }));
+    expect(
+      screen.getByRole("dialog", { name: "Rename speaker everywhere" }),
+    ).toBeVisible();
+
+    phoneSafetyModeMock.mockReturnValue(true);
+    rerenderWorkspace({});
+
+    expect(
+      screen.queryByRole("dialog", { name: "Rename speaker everywhere" }),
+    ).not.toBeInTheDocument();
+    expect(renameSpeakerAction).not.toHaveBeenCalled();
   });
 
   it("hides the header governance trigger in phone safety mode", () => {

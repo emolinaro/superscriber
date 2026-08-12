@@ -48,6 +48,7 @@ describe("CasefileWorkspace session recovery integration", () => {
     render(
       <CasefileWorkspace
         approveAction={vi.fn()}
+        renameSpeakerAction={vi.fn()}
         enterAdminActionModeAction={vi.fn()}
         exitAdminActionModeAction={vi.fn()}
         initialCasefile={createCasefile({
