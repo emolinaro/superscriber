@@ -165,7 +165,7 @@ export function ExportDialog({
         } else if (response.status === 403) {
           const serverMessage = (await response.text()).trim();
           setError(
-            `${serverMessage ? `${serverMessage} ` : "Export is not allowed under the current authority. "}Administrators: enter the matching action mode first, then retry the download - attribution stays intact.`,
+            `${serverMessage ? `${serverMessage} ` : "Export is not allowed under the current authority. "}Administrators: open Governance on this casefile and choose Enter approver action mode, then retry the download - attribution stays intact.`,
           );
         } else if (response.status === 409) {
           setError("This casefile no longer has an active approved revision.");

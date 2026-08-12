@@ -406,7 +406,14 @@ describe("ExportDialog", () => {
 
     await user.click(screen.getByRole("button", { name: "DOCX" }));
     expect(
-      await screen.findByText(/Administrators: enter the matching action mode first/),
+      await screen.findByText(
+        /Administrators: open Governance on this casefile and choose Enter approver action mode/,
+      ),
+    ).toBeVisible();
+    expect(
+      screen.getByText(
+        /open Governance on this casefile and choose Enter approver action mode, then retry the download - attribution stays intact\./,
+      ),
     ).toBeVisible();
 
     await user.click(screen.getByRole("button", { name: "TXT" }));
