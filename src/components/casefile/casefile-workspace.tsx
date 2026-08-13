@@ -910,13 +910,6 @@ export function CasefileWorkspace({
           ) : (
             <CasefileStatusCards casefile={casefile} />
           )}
-
-          {casefile.access.kind === "admin_oversight" && !phoneSafetyMode ? (
-            <RecordingDangerZone
-              recordingId={casefile.recordingId}
-              title={casefile.title}
-            />
-          ) : null}
         </div>
         <GovernanceDrawer
           actionModeEntryOptions={governanceActionModeEntryOptions}
@@ -932,6 +925,11 @@ export function CasefileWorkspace({
         assignmentLabel={casefile.assignmentLabel}
         canApprove={!unresolved && casefile.capabilities.canApprove}
         canExport={showExportSurface}
+        dangerAction={
+          casefile.access.kind === "admin_oversight" ? (
+            <RecordingDangerZone recordingId={casefile.recordingId} title={casefile.title} />
+          ) : undefined
+        }
         exportLabel={hasApprovedRevision ? "Export approved transcript" : "Export transcript"}
         canReopen={!unresolved && casefile.capabilities.canReopen}
         canRequestChanges={!unresolved && casefile.capabilities.canRequestChanges}

@@ -3,9 +3,11 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
   FOLLOW_SCROLL_PAUSE_KEYS,
+  centeredHorizontalScrollLeft,
   decideFollowScroll,
   findScrollParent,
   isRowInScrollView,
+  isTargetInHorizontalView,
 } from "./follow-scroll";
 
 describe("decideFollowScroll", () => {
@@ -206,5 +208,65 @@ describe("findScrollParent", () => {
     expect(findScrollParent(row)).toBeNull();
 
     outer.remove();
+  });
+});
+
+describe("isTargetInHorizontalView (wave-track scroll sync)", () => {
+  const scrollport = { clientWidth: 400, scrollLeft: 100 };
+
+  it("counts any partial intersection as visible, mirroring the vertical boundary", () => {
+    // Fully inside the view window (100-500).
+    expect(isTargetInHorizontalView(scrollport, { offsetLeft: 200, width: 120 })).toBe(true);
+    // Trailing edge pokes in from the right.
+    expect(isTargetInHorizontalView(scrollport, { offsetLeft: 480, width: 120 })).toBe(true);
+    // Leading edge pokes in from the left.
+    expect(isTargetInHorizontalView(scrollport, { offsetLeft: 20, width: 120 })).toBe(true);
+  });
+
+  it("treats fully out-of-window targets as not visible, edges exclusive", () => {
+    // Entirely to the right.
+    expect(isTargetInHorizontalView(scrollport, { offsetLeft: 520, width: 120 })).toBe(false);
+    // Entirely to the left.
+    expect(isTargetInHorizontalView(scrollport, { offsetLeft: 0, width: 80 })).toBe(false);
+    // Exactly touching the trailing edge does not intersect.
+    expect(isTargetInHorizontalView(scrollport, { offsetLeft: 500, width: 120 })).toBe(false);
+    // Exactly touching the leading edge does not intersect either.
+    expect(isTargetInHorizontalView(scrollport, { offsetLeft: -20, width: 120 })).toBe(false);
+  });
+
+  it("tracks the scrolled position, not the content origin", () => {
+    const target = { offsetLeft: 520, width: 120 };
+    expect(isTargetInHorizontalView({ clientWidth: 400, scrollLeft: 100 }, target)).toBe(false);
+    expect(isTargetInHorizontalView({ clientWidth: 400, scrollLeft: 300 }, target)).toBe(true);
+  });
+});
+
+describe("centeredHorizontalScrollLeft (wave-track scroll sync)", () => {
+  it("centers the target chunk in the scrollport", () => {
+    // Content offset 600, width 100 -> center 650; scrollport 400 wide -> 450.
+    expect(
+      centeredHorizontalScrollLeft(
+        { clientWidth: 400, scrollLeft: 0 },
+        { offsetLeft: 600, width: 100 },
+      ),
+    ).toBe(450);
+  });
+
+  it("clamps at the leading edge (already-near-start chunks center at zero)", () => {
+    expect(
+      centeredHorizontalScrollLeft(
+        { clientWidth: 400, scrollLeft: 300 },
+        { offsetLeft: 100, width: 100 },
+      ),
+    ).toBe(0);
+  });
+
+  it("does not clamp the far end (scrollTo owns the content-length clamp)", () => {
+    expect(
+      centeredHorizontalScrollLeft(
+        { clientWidth: 400, scrollLeft: 0 },
+        { offsetLeft: 5000, width: 100 },
+      ),
+    ).toBe(4850);
   });
 });

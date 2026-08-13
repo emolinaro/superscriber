@@ -762,23 +762,50 @@ describe("CasefileWorkspace", () => {
     ).not.toBeInTheDocument();
   });
 
-  it("mounts the danger zone and the revision navigator only for admin oversight (demo-governance-bringback)", () => {
+  it("pins the governed delete control in the sticky action bar for admin oversight only", () => {
     renderWorkspace(createAdminOversightCasefile());
 
+    const actionBar = screen.getByRole("region", { name: "Case actions" });
     expect(
-      screen.getByRole("heading", { name: "Danger zone" }),
+      within(actionBar).getByRole("button", { name: "Delete recording permanently..." }),
     ).toBeVisible();
 
     cleanup();
     renderWorkspace(createCasefile());
-    expect(screen.queryByRole("heading", { name: "Danger zone" })).toBeNull();
+    expect(
+      screen.queryByRole("button", { name: "Delete recording permanently..." }),
+    ).toBeNull();
   });
 
-  it("hides the danger zone under phone safety (demo-governance-bringback)", () => {
+  it("keeps the pinned delete confirmation flow intact from the action bar", async () => {
+    const user = userEvent.setup();
+    renderWorkspace(createAdminOversightCasefile());
+
+    await user.click(screen.getByRole("button", { name: "Delete recording permanently..." }));
+    const dialog = await screen.findByRole("dialog", {
+      name: "Delete this recording permanently?",
+    });
+    expect(dialog).toBeVisible();
+    expect(
+      within(dialog).getByRole("button", { name: "Delete permanently" }),
+    ).toBeDisabled();
+
+    await user.click(within(dialog).getByRole("button", { name: "Keep the recording" }));
+    expect(
+      screen.queryByRole("dialog", { name: "Delete this recording permanently?" }),
+    ).toBeNull();
+  });
+
+  it("withholds the pinned delete control under phone safety like the other governed actions", () => {
     phoneSafetyModeMock.mockReturnValue(true);
     renderWorkspace(createAdminOversightCasefile());
 
-    expect(screen.queryByRole("heading", { name: "Danger zone" })).toBeNull();
+    expect(
+      screen.queryByRole("button", { name: "Delete recording permanently..." }),
+    ).toBeNull();
+    expect(
+      screen.getByText("Review and decisions require a tablet or desktop."),
+    ).toBeVisible();
   });
 
   it("offers the revision snapshot navigator to admin oversight (demo-governance-bringback)", async () => {

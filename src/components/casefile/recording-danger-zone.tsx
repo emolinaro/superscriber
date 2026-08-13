@@ -7,8 +7,9 @@ import { InlineNotice } from "@/components/ui/inline-notice";
 import { Modal } from "@/components/ui/modal";
 import { appendQueryMessages } from "@/lib/navigation-path";
 
-// demo-recording-remove: admin-only permanent deletion UI, mounted on the
-// casefile only for admin_oversight. The typed-confirm phrase is the exact
+// demo-recording-remove: admin-only permanent deletion, pinned into the
+// casefile's sticky action bar (so the destructive command never scrolls
+// away) for admin_oversight. The typed-confirm phrase is the exact
 // recording title, and the server re-checks it - the gate cannot be skipped
 // with a crafted request. Deletion details (what dies, what survives) are
 // spelled out here so the captain sees the ledger contract up front.
@@ -28,28 +29,19 @@ export function RecordingDangerZone({
   const matches = confirmText.trim() === title;
 
   return (
-    <section aria-labelledby="danger-zone-heading" className="danger-zone">
-      <h2 className="danger-zone__title" id="danger-zone-heading">
-        Danger zone
-      </h2>
-      <p className="danger-zone__note">
-        Permanently deletes this recording and its entire casefile, leaving exactly one
-        deletion record in the audit ledger - this cannot be undone and is admin-only.
-      </p>
-      <div className="button-row">
-        <button
-          className="button button-danger"
-          onClick={() => {
-            setConfirmText("");
-            setError(null);
-            setOpen(true);
-            window.setTimeout(() => inputRef.current?.focus(), 0);
-          }}
-          type="button"
-        >
-          Delete recording permanently...
-        </button>
-      </div>
+    <>
+      <button
+        className="button button-danger"
+        onClick={() => {
+          setConfirmText("");
+          setError(null);
+          setOpen(true);
+          window.setTimeout(() => inputRef.current?.focus(), 0);
+        }}
+        type="button"
+      >
+        Delete recording permanently...
+      </button>
 
       <Modal
         onClose={() => {
@@ -127,6 +119,6 @@ export function RecordingDangerZone({
           </div>
         </div>
       </Modal>
-    </section>
+    </>
   );
 }

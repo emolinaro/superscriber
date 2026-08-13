@@ -9,6 +9,12 @@
  * previous nearest-edge alignment held - or immediately on an explicit
  * seek (segment timestamp click, rail chip, wave marker).
  *
+ * The segment rail inside the pinned transport mirrors this contract on the
+ * horizontal axis (wave-track scroll sync): the same decision matrix, the
+ * same pause-on-user-gesture boundary, applied to the rail's scrollLeft so
+ * the active segment's chip stays centered-ish while the transcript centers
+ * the same segment vertically.
+ *
  * These helpers are pure so the decision logic stays unit-testable without
  * relying on jsdom layout (jsdom reports zero geometry for everything).
  */
@@ -29,6 +35,61 @@ export function decideFollowScroll(
     return "center";
   }
   return activeRowVisible ? "resume" : "skip";
+}
+
+/**
+ * Horizontal follow (wave-track scroll sync): the segment rail inside the
+ * pinned transport is an independent horizontal scrollport that must keep
+ * the active segment's chip visible - the same active segment the
+ * transcript's vertical follow is centering. The non-fighting contract is
+ * axis-agnostic, so the rail runs the exact same decision matrix through
+ * decideFollowScroll; only the geometry changes axis. These helpers take
+ * plain numbers so the sync math stays unit-testable without jsdom layout
+ * (which reports zero geometry for everything).
+ */
+
+/** Geometry of the horizontally scrolling strip scrollport. */
+export type HorizontalScrollport = {
+  clientWidth: number;
+  scrollLeft: number;
+};
+
+/**
+ * Geometry of one target inside the strip's scrollable content, measured
+ * from the content's leading edge (scrollLeft === 0 origin), not from the
+ * scrollport's current left edge.
+ */
+export type HorizontalTarget = {
+  offsetLeft: number;
+  width: number;
+};
+
+/**
+ * True when the target intersects the scrollport's horizontal bounds.
+ * Partial intersection counts - the same visibility boundary the vertical
+ * follow's nearest-edge heritage holds (a paused follow only re-engages
+ * once the user can see any of the active chunk again).
+ */
+export function isTargetInHorizontalView(
+  scrollport: HorizontalScrollport,
+  target: HorizontalTarget,
+): boolean {
+  const viewStart = scrollport.scrollLeft;
+  const viewEnd = scrollport.scrollLeft + scrollport.clientWidth;
+  return target.offsetLeft + target.width > viewStart && target.offsetLeft < viewEnd;
+}
+
+/**
+ * The scrollLeft that centers the target inside the scrollport
+ * ("centered-ish" horizontal tracking, mirroring block: "center" on the
+ * vertical axis). Clamped at zero; Element.scrollTo clamps the overshoot
+ * at the far end itself, so only the leading clamp lives here.
+ */
+export function centeredHorizontalScrollLeft(
+  scrollport: HorizontalScrollport,
+  target: HorizontalTarget,
+): number {
+  return Math.max(0, target.offsetLeft + target.width / 2 - scrollport.clientWidth / 2);
 }
 
 /**

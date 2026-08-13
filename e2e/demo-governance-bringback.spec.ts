@@ -19,8 +19,8 @@ import {
  * demo lane's governance surface onto main - action mode's admin self-
  * approval override (D-4), policy profile editing, version history with
  * any-revision export (D-3 contract delta) and snapshot deep links (D-8
- * read expansion), the recording danger zone and the ledger reset with the
- * D-5 pre-delete export-snapshot compensating control.
+ * read expansion), the pinned recording delete control and the ledger reset
+ * with the D-5 pre-delete export-snapshot compensating control.
  *
  * All assertions run through the app surface (UI or HTTP). The one exception
  * is filesystem-level: the ledger-snapshot directory is plain files, so the
@@ -188,11 +188,16 @@ test.describe.serial("demo governance bring-back", () => {
     await bootstrapAndLogin(page, adminUser);
     const recordingId = await uploadFixture(page, { title: "Governance bring-back record" });
 
-    // Danger zone + export affordance are visible to admin oversight before
-    // any approval exists (D-13: honest empty state instead of no button).
+    // Pinned delete control + export affordance are visible to admin oversight
+    // before any approval exists (D-13: honest empty state instead of no
+    // button). The delete lives in the pinned action bar now, so it never
+    // scrolls away.
     await openCasefile(page, recordingId);
     await waitForReviewerModeEntry(page);
-    await expect(page.getByRole("heading", { name: "Danger zone" })).toBeVisible();
+    const cleanupBar = page.getByRole("region", { name: "Case actions" });
+    await expect(
+      cleanupBar.getByRole("button", { name: "Delete recording permanently..." }),
+    ).toBeVisible();
     await page.getByRole("button", { name: "Export transcript" }).click();
     const emptyExport = page.getByRole("dialog", { name: "Export approved transcript" });
     await expect(emptyExport).toBeVisible();
@@ -301,8 +306,9 @@ test.describe.serial("demo governance bring-back", () => {
     await page.getByRole("button", { name: "Apply policy" }).click();
     await expect(page.getByText("Workspace policy profile updated.")).toBeVisible();
 
-    // Danger zone purge (D-5): typed-title confirm; the casefile disappears,
-    // and the pre-delete export snapshot survives outside the database.
+    // Pinned delete purge (D-5): typed-title confirm; the casefile
+    // disappears, and the pre-delete export snapshot survives outside the
+    // database.
     await page.goto(`/recordings/${recordingId}`);
     await page.getByRole("button", { name: "Delete recording permanently..." }).click();
     const purgeDialog = page.getByRole("dialog", { name: "Delete this recording permanently?" });

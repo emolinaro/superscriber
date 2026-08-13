@@ -180,4 +180,81 @@ describe("StateActionBar", () => {
       screen.getByText("Review and decisions require a tablet or desktop."),
     ).toHaveClass("casefile-action-bar__phone-note");
   });
+
+  it("renders the pinned governed destructive action last in the buttons row", () => {
+    render(
+      <StateActionBar
+        assignmentLabel="Admin oversight"
+        canApprove={false}
+        canExport
+        canReopen={false}
+        canRequestChanges={false}
+        canSave={false}
+        canSubmit={false}
+        canWithdraw={false}
+        dangerAction={<button type="button">Delete recording permanently...</button>}
+        dirty={false}
+        onApprove={vi.fn()}
+        onExport={vi.fn()}
+        onReopen={vi.fn()}
+        onRequestChanges={vi.fn()}
+        onSave={vi.fn()}
+        onSubmit={vi.fn()}
+        onWithdraw={vi.fn()}
+        phoneSafetyMode={false}
+        saving={false}
+        stageLabel="Approved"
+      />,
+    );
+
+    const exportButton = screen.getByRole("button", { name: "Export approved transcript" });
+    const deleteButton = screen.getByRole("button", {
+      name: "Delete recording permanently...",
+    });
+    expect(deleteButton).toBeVisible();
+    // The destructive command trails the workflow actions inside the pinned
+    // bar (DOM order), so it reads as the dangerous outlier, not a peer of
+    // Submit/Approve.
+    expect(
+      exportButton.compareDocumentPosition(deleteButton) &
+        Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+  });
+
+  it("withholds the pinned destructive action under phone safety and still names it", () => {
+    render(
+      <StateActionBar
+        assignmentLabel="Admin oversight"
+        canApprove={false}
+        canExport={false}
+        canReopen={false}
+        canRequestChanges={false}
+        canSave={false}
+        canSubmit={false}
+        canWithdraw={false}
+        dangerAction={<button type="button">Delete recording permanently...</button>}
+        dirty={false}
+        onApprove={vi.fn()}
+        onExport={vi.fn()}
+        onReopen={vi.fn()}
+        onRequestChanges={vi.fn()}
+        onSave={vi.fn()}
+        onSubmit={vi.fn()}
+        onWithdraw={vi.fn()}
+        phoneSafetyMode
+        saving={false}
+        stageLabel="Approved"
+      />,
+    );
+
+    // Even when the destructive action is the ONLY control the bar would
+    // show, phone safety withholds it like the sibling governed dialogs and
+    // the note explains why.
+    expect(
+      screen.queryByRole("button", { name: "Delete recording permanently..." }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.getByText("Review and decisions require a tablet or desktop."),
+    ).toBeVisible();
+  });
 });

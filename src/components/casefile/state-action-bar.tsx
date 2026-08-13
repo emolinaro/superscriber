@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useId, useRef } from "react";
+import type { ReactNode } from "react";
 
 type StateActionBarProps = {
   assignmentLabel: string;
@@ -17,6 +18,14 @@ type StateActionBarProps = {
   exportLabel?: string;
   saving: boolean;
   phoneSafetyMode: boolean;
+  /**
+   * Governed destructive action (recording purge), pinned in the bar for
+   * admin oversight so it never scrolls away. Rendered last in the buttons
+   * row in the loud danger treatment so it never reads as just another
+   * state button; like every governed control it is withheld under phone
+   * safety mode together with the row.
+   */
+  dangerAction?: ReactNode;
   onSave: () => void;
   onSubmit: () => void;
   onWithdraw: () => void;
@@ -41,6 +50,7 @@ export function StateActionBar({
   exportLabel,
   saving,
   phoneSafetyMode,
+  dangerAction,
   onSave,
   onSubmit,
   onWithdraw,
@@ -53,6 +63,9 @@ export function StateActionBar({
   const actionBarRef = useRef<HTMLElement | null>(null);
   const hasGovernedActions =
     canSubmit || canWithdraw || canApprove || canRequestChanges || canReopen || canExport;
+  // The phone-safety note names every withheld governed surface, including a
+  // pinned destructive action when that is the only one on the bar.
+  const hasWithheldControls = hasGovernedActions || Boolean(dangerAction);
 
   useEffect(() => {
     const actionBar = actionBarRef.current;
@@ -108,7 +121,7 @@ export function StateActionBar({
         <span>{assignmentLabel}</span>
         {dirty ? <span className="casefile-action-bar__dirty">Unsaved changes</span> : null}
       </div>
-      {phoneSafetyMode && hasGovernedActions ? (
+      {phoneSafetyMode && hasWithheldControls ? (
         <p className="field-note casefile-action-bar__phone-note">
           Review and decisions require a tablet or desktop.
         </p>
@@ -161,6 +174,7 @@ export function StateActionBar({
               {exportLabel ?? "Export approved transcript"}
             </button>
           ) : null}
+          {dangerAction ?? null}
           {!canSave && !hasGovernedActions ? null : null}
         </div>
       ) : null}
