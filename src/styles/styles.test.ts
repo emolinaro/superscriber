@@ -210,6 +210,15 @@ describe("product css contract", () => {
     );
   });
 
+  it("centers the file-input chooser row with symmetric block padding", () => {
+    const base = readFileSync(resolve(STYLES_DIR, "base.css"), "utf8");
+
+    // base.css owns the browser-layout rationale; this test pins the accepted
+    // shared-rule contract.
+    const rule = base.match(/input\[type="file"\]\s*\{([^}]*)\}/);
+    expect(rule?.[1]).toContain("padding-block: 9px");
+  });
+
   it("keeps the exact responsive, sticky, reduced-motion, and export rules", () => {
     const css = readAllProductCss();
 
