@@ -361,7 +361,7 @@ say_supervisor() {
 }
 
 load_env() {
-  local active_bundle
+  local active_bundle worker_venv
   [[ -f "${INSTANCE_ROOT}/app.env" ]] || {
     echo "missing ${INSTANCE_ROOT}/app.env; run scripts/bootstrap-local.sh first" >&2
     exit 1
@@ -388,6 +388,16 @@ load_env() {
     echo "app.env has no immutable app bundle; re-run scripts/bootstrap-local.sh" >&2
     exit 1
   fi
+  worker_venv="${SUPERSCRIBER_WORKER_VENV:-}"
+  [[ "${worker_venv}" == "${RUNTIME_ROOT}/venv" && \
+     -d "${worker_venv}" && ! -L "${worker_venv}" && \
+     -x "${worker_venv}/bin/python3" ]] || {
+    echo "app.env has no valid generation-owned worker venv; re-run scripts/bootstrap-local.sh" >&2
+    exit 1
+  }
+  reject_worker_venv_symlinks "${worker_venv}" || exit 1
+  SUPERSCRIBER_WORKER_VENV="${worker_venv}"
+  export SUPERSCRIBER_WORKER_VENV
   [[ -f "${INSTANCE_ROOT}/secrets/auth.secret" && ! -L "${INSTANCE_ROOT}/secrets/auth.secret" ]] || exit 1
   [[ -f "${INSTANCE_ROOT}/secrets/engine.secret" && ! -L "${INSTANCE_ROOT}/secrets/engine.secret" ]] || exit 1
   AUTH_SECRET="$(cat "${INSTANCE_ROOT}/secrets/auth.secret")"
@@ -607,7 +617,7 @@ load_env
 cd "${RUNTIME_ROOT}"
 
 APP_SERVER="${RUNTIME_ROOT}/server.js"
-WORKER_PYTHON="${INSTANCE_ROOT}/venv/bin/python3"
+WORKER_PYTHON="${SUPERSCRIBER_WORKER_VENV}/bin/python3"
 if [[ "${SUPERSCRIBER_INSTANCE_TEST_MODE:-0}" == "1" ]]; then
   APP_SERVER="${SUPERSCRIBER_TEST_APP_SERVER:-${APP_SERVER}}"
   WORKER_PYTHON="${SUPERSCRIBER_TEST_WORKER_PYTHON:-${WORKER_PYTHON}}"

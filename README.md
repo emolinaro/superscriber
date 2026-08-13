@@ -55,7 +55,8 @@ The bootstrap is idempotent and safe to re-run. It:
    `Dockerfile:4`, plus npm and Python >= 3.10 with venv/ensurepip support,
    failing loudly with an install hint when anything is missing
 2. Runs `npm ci` and creates the transcription worker's Python virtual
-   environment from `worker/requirements.txt`
+   environment from `worker/requirements.txt` inside the immutable deployment
+   generation, so rollback restores the matching worker dependencies
 3. Initializes the database through the repo migration chain
    (`scripts/ensure-db.ts`) into the instance's durable data directory -
    never `/tmp`
@@ -83,11 +84,14 @@ Instance layout (all under the instance root): `.superscriber-instance`
 (SQLite database, media, uploads), `model-cache/` (model tiers), `logs/`
 (`app.log`, `worker.log`, `supervisor.log`), `pids/`, and immutable `build/`
 bundles selected by the active deployment record. A successful re-run retains
-the active bundle and one rollback bundle. Existing managed directories and
+the active bundle and one rollback bundle, each with its own worker venv.
+Interrupted staging generations are swept under the lifecycle locks before a
+new build starts. Existing managed directories and
 leaf files, including database/WAL files, secrets, logs, PID/readiness files,
 and model-tier directories, must not be symlinks; bootstrap refuses them
-before writing. Standard interpreter symlinks created inside `venv/bin/` are
-allowed, but the `venv` root and nonstandard venv paths must be real paths.
+before writing. Standard interpreter symlinks created inside a generation's
+`venv/bin/` are allowed, but each `venv` root and every nonstandard venv path
+must be real.
 
 Operate the instance:
 

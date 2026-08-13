@@ -58,8 +58,25 @@ require_instance_marker() {
   return 1
 }
 
+reject_worker_venv_symlinks() {
+  local venv="$1" found relative target
+  [[ -d "${venv}" && ! -L "${venv}" ]] || return 0
+  while IFS= read -r found; do
+    relative="${found#"${venv}"/}"
+    if [[ "${relative}" =~ ^bin/python([0-9]+(\.[0-9]+)?)?$ ]]; then
+      continue
+    fi
+    if [[ "${relative}" == "lib64" ]]; then
+      target="$(readlink "${found}")"
+      [[ "${target}" == "lib" ]] && continue
+    fi
+    printf "managed instance path must not be a symlink: %s\n" "${found}" >&2
+    return 1
+  done < <(find "${venv}" -type l -print)
+}
+
 reject_managed_instance_symlinks() {
-  local root="$1" relative path found child target
+  local root="$1" relative path found child child_name
   for relative in \
     "${INSTANCE_MARKER_NAME}" app.env rollback.env activation.pending \
     activation.previous activation.candidate instance.log \
@@ -82,20 +99,7 @@ reject_managed_instance_symlinks() {
   done
 
   path="${root}/venv"
-  if [[ -d "${path}" ]]; then
-    while IFS= read -r found; do
-      relative="${found#"${path}"/}"
-      if [[ "${relative}" =~ ^bin/python([0-9]+(\.[0-9]+)?)?$ ]]; then
-        continue
-      fi
-      if [[ "${relative}" == "lib64" ]]; then
-        target="$(readlink "${found}")"
-        [[ "${target}" == "lib" ]] && continue
-      fi
-      printf "managed instance path must not be a symlink: %s\n" "${found}" >&2
-      return 1
-    done < <(find "${path}" -type l -print)
-  fi
+  reject_worker_venv_symlinks "${path}" || return 1
 
   for path in \
     "${root}/pids/supervisor.lock.reclaim" \
@@ -113,6 +117,15 @@ reject_managed_instance_symlinks() {
       if [[ -L "${child}" ]]; then
         printf "managed instance path must not be a symlink: %s\n" "${child}" >&2
         return 1
+      fi
+      if [[ -d "${child}" && ( -e "${child}/venv" || -L "${child}/venv" ) ]]; then
+        if [[ ! -d "${child}/venv" || -L "${child}/venv" ]]; then
+          printf "managed instance venv must be a real directory: %s\n" "${child}/venv" >&2
+          return 1
+        fi
+        child_name="${child##*/}"
+        [[ "${child_name}" != .staging-* ]] || continue
+        reject_worker_venv_symlinks "${child}/venv" || return 1
       fi
     done
   fi
@@ -372,6 +385,9 @@ resolve_activation_bundle() {
   bundle_id="$(activation_id_from_file "${activation_file}")" || return 1
   bundle="${root}/build/${bundle_id}"
   [[ -d "${bundle}" && ! -L "${root}/build" && ! -L "${bundle}" ]] || return 1
+  [[ ! -e "${bundle}/.incomplete" && ! -L "${bundle}/.incomplete" ]] || return 1
+  [[ -d "${bundle}/venv" && ! -L "${bundle}/venv" && -x "${bundle}/venv/bin/python3" ]] || return 1
+  reject_worker_venv_symlinks "${bundle}/venv" || return 1
   [[ -f "${bundle}/bundle.sha256" && ! -L "${bundle}/bundle.sha256" ]] || return 1
   for relative in server.js scripts/instance-run.sh scripts/instance-paths.sh \
     scripts/run-worker-python.sh worker/main.py; do

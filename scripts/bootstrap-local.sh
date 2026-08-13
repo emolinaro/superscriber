@@ -19,6 +19,7 @@ CHECK_DEPS_ONLY=0
 BUNDLE_ID=""
 BUNDLE_DIR=""
 BUILD_OUTPUT_DIR=""
+WORKER_VENV=""
 REPOSITORY_LOCK_DIR="${REPO_ROOT}/.superscriber-bootstrap-repository.lock"
 REPOSITORY_LOCK_IDENTITY=""
 ACTIVATION_RECORD=""
@@ -212,31 +213,122 @@ install_node_deps() {
   (cd "${REPO_ROOT}" && npm ci --no-audit --no-fund)
 }
 
-install_worker_deps() {
-  local venv="${INSTANCE_ROOT}/venv"
-  reject_managed_instance_symlinks "${INSTANCE_ROOT}" || exit 1
-  if [[ ! -x "${venv}/bin/python3" ]]; then
-    log "creating worker Python venv at ${venv}"
-    python3 -m venv "${venv}"
-  fi
-  validate_worker_python_version
-  log "installing worker dependencies from worker/requirements.txt"
-  "${venv}/bin/pip" install --quiet --disable-pip-version-check -r "${REPO_ROOT}/worker/requirements.txt"
+worker_venv_from_activation() {
+  local activation_file="$1" active_bundle source_venv
+  [[ -f "${activation_file}" && ! -L "${activation_file}" ]] || return 1
+  active_bundle="$(resolve_activation_bundle "${INSTANCE_ROOT}" "${activation_file}")" || return 1
+  source_venv="$(
+    set -u
+    SUPERSCRIBER_WORKER_VENV=""
+    # shellcheck disable=SC1090
+    . "${activation_file}"
+    [[ -n "${SUPERSCRIBER_WORKER_VENV}" ]] || return 1
+    printf '%s\n' "${SUPERSCRIBER_WORKER_VENV}"
+  )" || return 1
+  [[ "${source_venv}" == "${active_bundle}/venv" ]] || return 1
+  printf '%s\n' "${source_venv}"
 }
 
 validate_worker_python_version() {
-  local python="${INSTANCE_ROOT}/venv/bin/python3"
-  [[ -x "${python}" ]] || fail "worker venv is missing at ${INSTANCE_ROOT}/venv. Re-run without --skip-worker-deps to create it."
+  local venv="$1" python="${1}/bin/python3"
+  [[ -d "${venv}" && ! -L "${venv}" && -x "${python}" ]] || \
+    fail "worker venv is missing or unsafe at ${venv}. Re-run without --skip-worker-deps to create it."
   "${python}" -c 'import sys; raise SystemExit(0 if sys.version_info >= (3, 10) else 1)' >/dev/null 2>&1 || \
-    fail "worker venv Python must be >= 3.10. Remove ${INSTANCE_ROOT}/venv and re-run without --skip-worker-deps."
+    fail "worker venv Python must be >= 3.10 at ${venv}. Re-run without --skip-worker-deps."
 }
 
 validate_worker_venv() {
-  local python="${INSTANCE_ROOT}/venv/bin/python3"
+  local venv="$1" python="${1}/bin/python3"
   reject_managed_instance_symlinks "${INSTANCE_ROOT}" || exit 1
-  validate_worker_python_version
+  reject_worker_venv_symlinks "${venv}" || exit 1
+  validate_worker_python_version "${venv}"
   "${python}" -c 'import faster_whisper' >/dev/null 2>&1 || \
-    fail "worker venv is missing faster-whisper. Re-run without --skip-worker-deps to install worker/requirements.txt."
+    fail "worker venv at ${venv} is missing faster-whisper. Re-run without --skip-worker-deps to install worker/requirements.txt."
+}
+
+allocate_bundle_generation() {
+  local revision token staging incomplete
+  revision="$(git -C "${REPO_ROOT}" rev-parse --verify HEAD)"
+  [[ "${revision}" =~ ^[0-9a-f]{40}$ ]] || fail "could not determine an immutable source revision for the production bundle"
+  token="$(instance_random_token)"
+  BUNDLE_ID="${revision}-${token}"
+  BUNDLE_DIR="${INSTANCE_ROOT}/build/${BUNDLE_ID}"
+  staging="${INSTANCE_ROOT}/build/.staging-${BUNDLE_ID}"
+  [[ ! -e "${BUNDLE_DIR}" && ! -L "${BUNDLE_DIR}" && ! -e "${staging}" && ! -L "${staging}" ]] || \
+    fail "refusing to overwrite an existing production bundle target"
+  mkdir "${staging}"
+  incomplete="${staging}/.incomplete"
+  printf 'superscriber-build-generation-v1\n' > "${incomplete}"
+  chmod 600 "${incomplete}"
+  fsync_file_path "${incomplete}"
+  fsync_directory_path "${staging}"
+  mv "${staging}" "${BUNDLE_DIR}"
+  fsync_directory_path "${INSTANCE_ROOT}/build"
+  WORKER_VENV="${BUNDLE_DIR}/venv"
+}
+
+relocate_worker_venv() {
+  local source_venv="$1" target_venv="$2"
+  node -e '
+    const fs = require("node:fs");
+    const path = require("node:path");
+    const source = process.argv[1];
+    const target = process.argv[2];
+    const rewrite = (file, requireShebang = false) => {
+      let stat;
+      try { stat = fs.lstatSync(file); } catch { return; }
+      if (!stat.isFile() || stat.isSymbolicLink()) return;
+      const before = fs.readFileSync(file, "utf8");
+      if (requireShebang && !before.startsWith("#!")) return;
+      const after = before.split(source).join(target);
+      if (after !== before) fs.writeFileSync(file, after);
+    };
+    const bin = path.join(target, "bin");
+    for (const entry of fs.readdirSync(bin)) {
+      rewrite(path.join(bin, entry), !entry.toLowerCase().startsWith("activate"));
+    }
+    rewrite(path.join(target, "pyvenv.cfg"));
+    const visitPth = (directory) => {
+      let directoryStat;
+      let entries;
+      try {
+        directoryStat = fs.lstatSync(directory);
+        if (!directoryStat.isDirectory() || directoryStat.isSymbolicLink()) return;
+        entries = fs.readdirSync(directory, { withFileTypes: true });
+      } catch { return; }
+      for (const entry of entries) {
+        const candidate = path.join(directory, entry.name);
+        if (entry.isDirectory()) visitPth(candidate);
+        else if (entry.isFile() && entry.name.endsWith(".pth")) rewrite(candidate);
+      }
+    };
+    visitPth(path.join(target, "lib"));
+    visitPth(path.join(target, "lib64"));
+  ' "${source_venv}" "${target_venv}"
+}
+
+prepare_worker_venv() {
+  local source_venv=""
+  reject_managed_instance_symlinks "${INSTANCE_ROOT}" || exit 1
+  [[ -n "${WORKER_VENV}" && "${WORKER_VENV}" == "${BUNDLE_DIR}/venv" && \
+     -f "${BUNDLE_DIR}/.incomplete" && ! -L "${BUNDLE_DIR}/.incomplete" ]] || \
+    fail "worker venv generation was not allocated"
+  if [[ "${SKIP_WORKER_DEPS}" -eq 1 ]]; then
+    source_venv="$(worker_venv_from_activation "${INSTANCE_ROOT}/app.env" 2>/dev/null || true)"
+    [[ -n "${source_venv}" ]] || source_venv="${INSTANCE_ROOT}/venv"
+    validate_worker_venv "${source_venv}"
+    log "copying the existing worker venv into deployment generation ${BUNDLE_ID}"
+    mkdir "${WORKER_VENV}"
+    cp -R "${source_venv}/." "${WORKER_VENV}/"
+    relocate_worker_venv "${source_venv}" "${WORKER_VENV}"
+  else
+    log "creating worker Python venv for deployment generation ${BUNDLE_ID}"
+    python3 -m venv "${WORKER_VENV}"
+    validate_worker_python_version "${WORKER_VENV}"
+    log "installing worker dependencies from worker/requirements.txt"
+    "${WORKER_VENV}/bin/pip" install --quiet --disable-pip-version-check -r "${REPO_ROOT}/worker/requirements.txt"
+  fi
+  validate_worker_venv "${WORKER_VENV}"
 }
 
 previous_model_tier() {
@@ -462,6 +554,40 @@ cleanup_build_output() {
   BUILD_OUTPUT_DIR=""
 }
 
+cleanup_interrupted_builds() {
+  local path name changed=0 active_id rollback_id="" repository_output="${REPO_ROOT}/.superscriber-build-output"
+  [[ -d "${INSTANCE_ROOT}/build" && ! -L "${INSTANCE_ROOT}/build" ]] || \
+    fail "instance build root must be a real directory: ${INSTANCE_ROOT}/build"
+  for path in "${INSTANCE_ROOT}/build"/.staging-*; do
+    [[ -e "${path}" || -L "${path}" ]] || continue
+    [[ ! -L "${path}" ]] || fail "interrupted bundle staging path must not be a symlink: ${path}"
+    rm -rf -- "${path}"
+    changed=1
+  done
+  active_id="$(activation_id_from_file "${INSTANCE_ROOT}/app.env" 2>/dev/null || true)"
+  rollback_id="$(activation_id_from_file "${INSTANCE_ROOT}/rollback.env" 2>/dev/null || true)"
+  for path in "${INSTANCE_ROOT}/build"/*; do
+    [[ -d "${path}" && ! -L "${path}" ]] || continue
+    name="${path##*/}"
+    [[ "${name}" =~ ^[0-9a-f]{40}-[0-9a-f]{48}$ ]] || continue
+    [[ -e "${path}/.incomplete" || -L "${path}/.incomplete" ]] || continue
+    [[ -f "${path}/.incomplete" && ! -L "${path}/.incomplete" ]] || \
+      fail "incomplete bundle marker must be a regular file: ${path}/.incomplete"
+    [[ "${name}" != "${active_id}" && "${name}" != "${rollback_id}" ]] || \
+      fail "active or rollback activation references an incomplete bundle: ${name}"
+    rm -rf -- "${path}"
+    changed=1
+  done
+  [[ "${changed}" -eq 0 ]] || fsync_directory_path "${INSTANCE_ROOT}/build"
+
+  if [[ -e "${repository_output}" || -L "${repository_output}" ]]; then
+    [[ -d "${repository_output}" && ! -L "${repository_output}" ]] || \
+      fail "repository build output must be a real directory: ${repository_output}"
+    rm -rf -- "${repository_output}"
+    fsync_directory_path "${REPO_ROOT}"
+  fi
+}
+
 cleanup_bundle_staging() {
   local path
   [[ -n "${BUNDLE_ID}" ]] || return 0
@@ -566,7 +692,7 @@ recover_pending_activation() {
   if [[ "${was_running}" == "1" ]]; then
     SUPERSCRIBER_MAINTENANCE_IDENTITY="${MAINTENANCE_IDENTITY}" \
       bash "${SCRIPT_DIR}/instance-run.sh" "${INSTANCE_ROOT}" >/dev/null 2>&1 || return 1
-    bash "${SCRIPT_DIR}/instance-run.sh" "${INSTANCE_ROOT}" --status >/dev/null 2>&1 || return 1
+    wait_for_instance_readiness || return 1
   fi
   durable_remove_paths "${INSTANCE_ROOT}" "${ACTIVATION_RECORD}" "${ACTIVATION_BACKUP}"
   ACTIVATION_PENDING=0
@@ -574,17 +700,48 @@ recover_pending_activation() {
   log "recovered the previous activation after an interrupted bootstrap"
 }
 
+wait_for_instance_readiness() {
+  local attempts=0 app_ready worker_ready worker_status
+  while [[ "${attempts}" -lt 120 ]]; do
+    app_ready=0
+    worker_ready=0
+    bash "${SCRIPT_DIR}/instance-run.sh" "${INSTANCE_ROOT}" --status >/dev/null 2>&1 || return 1
+    if bash "${SCRIPT_DIR}/instance-run.sh" "${INSTANCE_ROOT}" --app-running >/dev/null 2>&1 && \
+       python3 "${REPO_ROOT}/scripts/http_probe.py" "http://127.0.0.1:${PORT}/api/health" >/dev/null 2>&1; then
+      app_ready=1
+    fi
+    worker_status=1
+    if bash "${SCRIPT_DIR}/instance-run.sh" "${INSTANCE_ROOT}" --worker-ready >/dev/null 2>&1; then
+      worker_ready=1
+      worker_status=0
+    else
+      worker_status=$?
+    fi
+    [[ "${worker_status}" -ne 2 ]] || return 1
+    if [[ "${app_ready}" -eq 1 && "${worker_ready}" -eq 1 ]]; then
+      return 0
+    fi
+    attempts=$((attempts + 1))
+    sleep 1
+  done
+  return 1
+}
+
 restart_quiesced_instance() {
   [[ "${INSTANCE_WAS_RUNNING}" -eq 1 && "${INSTANCE_RESTORED}" -eq 0 ]] || return 0
   if ! bash "${SCRIPT_DIR}/instance-run.sh" "${INSTANCE_ROOT}" --status >/dev/null 2>&1; then
-    if SUPERSCRIBER_MAINTENANCE_IDENTITY="${MAINTENANCE_IDENTITY}" \
+    if ! SUPERSCRIBER_MAINTENANCE_IDENTITY="${MAINTENANCE_IDENTITY}" \
       bash "${SCRIPT_DIR}/instance-run.sh" "${INSTANCE_ROOT}" >/dev/null 2>&1; then
-      log "restored the previously running instance"
-    else
       printf '[bootstrap] ERROR: could not restart the previous instance; inspect %s/logs/supervisor.log\n' "${INSTANCE_ROOT}" >&2
+      return 0
     fi
   fi
-  INSTANCE_RESTORED=1
+  if wait_for_instance_readiness; then
+    INSTANCE_RESTORED=1
+    log "restored the previously running app and worker"
+  else
+    printf '[bootstrap] ERROR: the previous app and worker did not both become ready; inspect %s/logs/\n' "${INSTANCE_ROOT}" >&2
+  fi
 }
 
 restore_previous_activation() {
@@ -642,6 +799,7 @@ write_app_env() {
   write_env_assignment "${env_file}" SUPERSCRIBER_TRANSCRIBE_OFFLINE 1
   write_env_assignment "${env_file}" SUPERSCRIBER_TRANSCRIBE_ALLOW_RUNTIME_DOWNLOAD 0
   write_env_assignment "${env_file}" SUPERSCRIBER_APP_BUNDLE "${BUNDLE_DIR}"
+  write_env_assignment "${env_file}" SUPERSCRIBER_WORKER_VENV "${BUNDLE_DIR}/venv"
   write_env_assignment "${env_file}" PORT "${PORT}"
   write_env_assignment "${env_file}" HOSTNAME 127.0.0.1
   chmod 600 "${env_file}"
@@ -721,18 +879,17 @@ init_database() {
 }
 
 build_app() {
-  local revision token dist_relative staging bundle_hash_file relative checksum
-  revision="$(git -C "${REPO_ROOT}" rev-parse --verify HEAD)"
-  [[ "${revision}" =~ ^[0-9a-f]{40}$ ]] || fail "could not determine an immutable source revision for the production bundle"
-  token="$(instance_random_token)"
-  BUNDLE_ID="${revision}-${token}"
-  BUNDLE_DIR="${INSTANCE_ROOT}/build/${BUNDLE_ID}"
+  local dist_relative staging bundle_hash_file relative checksum
   staging="${INSTANCE_ROOT}/build/.staging-${BUNDLE_ID}"
   dist_relative=".superscriber-build-output/${BUNDLE_ID}"
   BUILD_OUTPUT_DIR="${REPO_ROOT}/${dist_relative}"
   reject_managed_instance_symlinks "${INSTANCE_ROOT}" || exit 1
-  [[ ! -e "${BUNDLE_DIR}" && ! -L "${BUNDLE_DIR}" && ! -e "${staging}" && ! -L "${staging}" ]] || \
-    fail "refusing to overwrite an existing production bundle target"
+  [[ -n "${BUNDLE_ID}" && ! -e "${staging}" && ! -L "${staging}" && \
+     -d "${BUNDLE_DIR}" && ! -L "${BUNDLE_DIR}" && \
+     -f "${BUNDLE_DIR}/.incomplete" && ! -L "${BUNDLE_DIR}/.incomplete" && \
+     "${WORKER_VENV}" == "${BUNDLE_DIR}/venv" && -d "${WORKER_VENV}" && ! -L "${WORKER_VENV}" ]] || \
+    fail "deployment generation and worker venv were not prepared"
+  mkdir "${staging}"
   log "building production bundle (next build, standalone output)"
   (cd "${REPO_ROOT}" && \
     NEXT_TELEMETRY_DISABLED=1 SUPERSCRIBER_NEXT_DIST_DIR="${dist_relative}" npm run build)
@@ -747,19 +904,21 @@ build_app() {
     "${REPO_ROOT}/scripts/instance-stop.sh" \
     "${REPO_ROOT}/scripts/run-worker-python.sh" \
     "${staging}/scripts/"
-  bundle_hash_file="${staging}/bundle.sha256"
+  cp -RL "${staging}/." "${BUNDLE_DIR}/"
+  bundle_hash_file="${BUNDLE_DIR}/bundle.sha256"
   : > "${bundle_hash_file}"
   for relative in server.js scripts/instance-run.sh scripts/instance-paths.sh \
     scripts/run-worker-python.sh worker/main.py; do
-    checksum="$(node -e 'process.stdout.write(require("node:crypto").createHash("sha256").update(require("node:fs").readFileSync(process.argv[1])).digest("hex"))' "${staging}/${relative}")"
+    checksum="$(node -e 'process.stdout.write(require("node:crypto").createHash("sha256").update(require("node:fs").readFileSync(process.argv[1])).digest("hex"))' "${BUNDLE_DIR}/${relative}")"
     printf '%s %s\n' "${checksum}" "${relative}" >> "${bundle_hash_file}"
   done
-  chmod 700 "${staging}/scripts/instance-run.sh" \
-    "${staging}/scripts/instance-stop.sh" \
-    "${staging}/scripts/run-worker-python.sh"
-  chmod -R go-rwx "${staging}"
-  fsync_tree_path "${staging}"
-  mv "${staging}" "${BUNDLE_DIR}"
+  chmod 700 "${BUNDLE_DIR}/scripts/instance-run.sh" \
+    "${BUNDLE_DIR}/scripts/instance-stop.sh" \
+    "${BUNDLE_DIR}/scripts/run-worker-python.sh"
+  chmod -R go-rwx "${BUNDLE_DIR}"
+  fsync_tree_path "${BUNDLE_DIR}"
+  durable_remove_paths "${BUNDLE_DIR}" "${BUNDLE_DIR}/.incomplete"
+  rm -rf -- "${staging}"
   fsync_directory_path "${INSTANCE_ROOT}/build"
   reject_managed_instance_symlinks "${INSTANCE_ROOT}" || exit 1
   cleanup_build_output
@@ -843,11 +1002,10 @@ main() {
   log_dependencies
   prepare_instance_root
   quiesce_instance
-  if [[ "${SKIP_WORKER_DEPS}" -eq 0 ]]; then
-    install_worker_deps
-  fi
-  validate_worker_venv
   acquire_repository_lock
+  cleanup_interrupted_builds
+  allocate_bundle_generation
+  prepare_worker_venv
   install_node_deps
   choose_model_tier
   provision_model

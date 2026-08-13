@@ -665,6 +665,107 @@ describe("local deployment bootstrap scripts", () => {
   );
 
   it(
+    "sweeps interrupted build generations while holding lifecycle locks",
+    { timeout: 20_000 },
+    () => {
+      testRoot = worktreeTestRoot();
+      const instance = join(testRoot, "instance");
+      const staleInstanceBuild = join(
+        instance,
+        "build",
+        ".staging-interrupted",
+      );
+      const staleRepositoryBuild = join(
+        REPO_ROOT,
+        ".superscriber-build-output",
+        "interrupted",
+      );
+      const incompleteBundle = join(
+        instance,
+        "build",
+        `${"f".repeat(40)}-${"e".repeat(48)}`,
+      );
+      const outside = join(testRoot, "outside");
+      const observed = join(testRoot, "stale-builds-cleared");
+      markInstanceRoot(instance);
+      mkdirSync(staleInstanceBuild, { recursive: true });
+      mkdirSync(staleRepositoryBuild, { recursive: true });
+      mkdirSync(incompleteBundle, { recursive: true });
+      writeFileSync(join(staleInstanceBuild, "partial"), "partial");
+      writeFileSync(join(staleRepositoryBuild, "partial"), "partial");
+      writeFileSync(
+        join(incompleteBundle, ".incomplete"),
+        "superscriber-build-generation-v1\n",
+      );
+      writeFileSync(outside, "outside");
+      symlinkSync(outside, join(staleInstanceBuild, "outside-link"));
+      const modelDir = join(instance, "model-cache", "medium");
+      mkdirSync(modelDir, { recursive: true });
+      writeModelTier(modelDir, "txt");
+      prepareWorkingVenv(instance);
+      const env = stubNpxEnv(testRoot);
+      writeFileSync(
+        join(testRoot, "bin", "npm"),
+        `#!/bin/sh
+if [ "\${1:-}" = "--version" ]; then echo 11.19.0; exit 0; fi
+if [ "\${1:-}" = "ci" ]; then
+  [ ! -e "$STALE_INSTANCE_BUILD" ] || exit 93
+  [ ! -e "$STALE_REPOSITORY_BUILD" ] || exit 94
+  [ ! -e "$INCOMPLETE_BUNDLE" ] || exit 97
+  [ -d "$MAINTENANCE_LOCK" ] || exit 95
+  [ -d "$REPOSITORY_LOCK" ] || exit 96
+  : > "$SWEEP_OBSERVED"
+  exit 0
+fi
+if [ "\${1:-}" = "run" ]; then exit 1; fi
+exit 0
+`,
+      );
+      chmodSync(join(testRoot, "bin", "npm"), 0o700);
+
+      try {
+        const result = runScript(
+          BOOTSTRAP,
+          [
+            "--instance-root",
+            instance,
+            "--port",
+            freePort(),
+            "--model-tier",
+            "medium",
+            "--skip-model-download",
+            "--skip-worker-deps",
+          ],
+          {
+            ...env,
+            STALE_INSTANCE_BUILD: staleInstanceBuild,
+            STALE_REPOSITORY_BUILD: staleRepositoryBuild,
+            INCOMPLETE_BUNDLE: incompleteBundle,
+            SWEEP_OBSERVED: observed,
+            MAINTENANCE_LOCK: join(instance, "pids", "maintenance.lock"),
+            REPOSITORY_LOCK: join(
+              REPO_ROOT,
+              ".superscriber-bootstrap-repository.lock",
+            ),
+          },
+        );
+
+        expect(result.status).not.toBe(0);
+        expect(existsSync(observed)).toBe(true);
+        expect(existsSync(staleInstanceBuild)).toBe(false);
+        expect(existsSync(staleRepositoryBuild)).toBe(false);
+        expect(existsSync(incompleteBundle)).toBe(false);
+        expect(readFileSync(outside, "utf8")).toBe("outside");
+      } finally {
+        rmSync(join(REPO_ROOT, ".superscriber-build-output"), {
+          recursive: true,
+          force: true,
+        });
+      }
+    },
+  );
+
+  it(
     "bootstrap writes app.env without embedding secret values",
     { timeout: 20_000 },
     () => {
@@ -936,10 +1037,24 @@ describe("local deployment bootstrap scripts", () => {
 
       expect(result.status, result.stderr + result.stdout).toBe(0);
       const activeId = activationIdFrom(instance);
+      const activeBundle = join(instance, "build", activeId);
       expect(activeId).not.toBe(oldId);
+      expect(readFileSync(join(instance, "app.env"), "utf8")).toContain(
+        `SUPERSCRIBER_WORKER_VENV=${activeBundle}/venv`,
+      );
+      expect(existsSync(join(activeBundle, "venv", "bin", "python3"))).toBe(
+        true,
+      );
+      expect(
+        readFileSync(join(activeBundle, "venv", "bin", "fixture-tool"), "utf8"),
+      ).toContain(`#!${activeBundle}/venv/bin/python3`);
       expect(readFileSync(join(instance, "rollback.env"), "utf8")).toContain(
         `SUPERSCRIBER_ACTIVATION_ID=${oldId}`,
       );
+      expect(readFileSync(join(instance, "rollback.env"), "utf8")).toContain(
+        `SUPERSCRIBER_WORKER_VENV=${shellQuote(join(instance, "build", oldId, "venv"))}`,
+      );
+      expect(existsSync(join(instance, "build", oldId, "venv"))).toBe(true);
       expect(existsSync(join(instance, "active-bundle"))).toBe(false);
       const generations = readdirSync(join(instance, "build")).filter((name) =>
         /^[0-9a-f]{40}-[0-9a-f]{48}$/.test(name),
@@ -950,18 +1065,22 @@ describe("local deployment bootstrap scripts", () => {
 
   it(
     "restores and restarts the previous activation when a candidate fails",
-    { timeout: 30_000 },
+    { timeout: 60_000 },
     async () => {
       testRoot = worktreeTestRoot();
       const instance = join(testRoot, "instance");
       const port = freePort();
       const oldServer = join(testRoot, "old-server.js");
       const oldWorker = join(testRoot, "old-worker");
-      writeFileSync(oldServer, "setTimeout(()=>{},30000)\n");
-      writeFileSync(oldWorker, "#!/bin/sh\nexec sleep 30\n");
+      writeFileSync(oldServer, healthyServerSource());
+      writeFileSync(oldWorker, readyWorkerScript());
       chmodSync(oldWorker, 0o700);
       prepareRunnableInstance(instance, port, oldServer, oldWorker);
       const previousActivation = readFileSync(join(instance, "app.env"), "utf8");
+      const previousId = activationIdFrom(instance);
+      expect(previousActivation).toContain(
+        join(instance, "build", previousId, "venv"),
+      );
       runningInstances.add(instance);
       const oldStart = runScript(RUN, [instance]);
       expect(oldStart.status, oldStart.stderr + oldStart.stdout).toBe(0);
@@ -971,7 +1090,7 @@ describe("local deployment bootstrap scripts", () => {
       const modelDir = join(instance, "model-cache", "medium");
       mkdirSync(modelDir, { recursive: true });
       writeModelTier(modelDir, "txt");
-      prepareBootstrapVenv(instance, false);
+      prepareActiveBundleVenv(instance, false);
 
       const result = runScript(
         BOOTSTRAP,
@@ -996,20 +1115,75 @@ describe("local deployment bootstrap scripts", () => {
         () => runScript(RUN, [instance, "--app-running"]).status === 0,
         15_000,
       );
+      await waitForCondition(
+        () => runScript(RUN, [instance, "--worker-ready"]).status === 0,
+        15_000,
+      );
+    },
+  );
+
+  it(
+    "keeps rollback pending until the previous app and worker are ready",
+    { timeout: 75_000 },
+    () => {
+      testRoot = worktreeTestRoot();
+      const instance = join(testRoot, "instance");
+      const port = freePort();
+      const oldServer = join(testRoot, "old-server.js");
+      const oldWorker = join(testRoot, "old-worker");
+      writeFileSync(oldServer, healthyServerSource());
+      writeFileSync(
+        oldWorker,
+        "#!/bin/sh\necho '[worker] startup failed: previous fixture' >&2\nexit 1\n",
+      );
+      chmodSync(oldWorker, 0o700);
+      prepareRunnableInstance(instance, port, oldServer, oldWorker);
+      const previousActivation = readFileSync(join(instance, "app.env"), "utf8");
+      runningInstances.add(instance);
+      const oldStart = runScript(RUN, [instance]);
+      expect(oldStart.status, oldStart.stderr + oldStart.stdout).toBe(0);
+      const modelDir = join(instance, "model-cache", "medium");
+      mkdirSync(modelDir, { recursive: true });
+      writeModelTier(modelDir, "txt");
+      prepareActiveBundleVenv(instance, false);
+
+      const result = runScript(
+        BOOTSTRAP,
+        [
+          "--instance-root",
+          instance,
+          "--port",
+          port,
+          "--model-tier",
+          "medium",
+          "--skip-model-download",
+          "--skip-worker-deps",
+        ],
+        stubSuccessfulBuildEnv(testRoot, healthyServerSource()),
+      );
+
+      expect(result.status).toBe(1);
+      expect(result.stderr).toContain(
+        "restoring the previous activation also failed",
+      );
+      expect(readFileSync(join(instance, "app.env"), "utf8")).toBe(
+        previousActivation,
+      );
+      expect(existsSync(join(instance, "activation.pending"))).toBe(true);
     },
   );
 
   it(
     "recovers a persisted interrupted activation before the next build",
-    { timeout: 30_000 },
+    { timeout: 60_000 },
     async () => {
       testRoot = worktreeTestRoot();
       const instance = join(testRoot, "instance");
       const port = freePort();
       const oldServer = join(testRoot, "old-server.js");
       const oldWorker = join(testRoot, "old-worker");
-      writeFileSync(oldServer, "setInterval(()=>{},30000)\n");
-      writeFileSync(oldWorker, "#!/bin/sh\nexec sleep 30\n");
+      writeFileSync(oldServer, healthyServerSource());
+      writeFileSync(oldWorker, readyWorkerScript());
       chmodSync(oldWorker, 0o700);
       prepareRunnableInstance(instance, port, oldServer, oldWorker);
       const previousEnv = readFileSync(join(instance, "app.env"), "utf8");
@@ -1020,7 +1194,7 @@ describe("local deployment bootstrap scripts", () => {
       cpSync(previousBundle, candidateBundle, { recursive: true });
       const candidateEnv = previousEnv
         .replace(previousId, candidateId)
-        .replace(previousBundle, candidateBundle);
+        .replaceAll(previousBundle, candidateBundle);
       writeFileSync(join(instance, "activation.previous"), previousEnv);
       writeFileSync(join(instance, "app.env"), candidateEnv);
       const modelDir = join(instance, "model-cache", "medium");
@@ -1035,6 +1209,12 @@ describe("local deployment bootstrap scripts", () => {
       ).toBe(0);
       await waitForCondition(
         () => runScript(RUN, [instance, "--status"]).status === 0,
+      );
+      await waitForCondition(
+        () => runScript(RUN, [instance, "--app-running"]).status === 0,
+      );
+      await waitForCondition(
+        () => runScript(RUN, [instance, "--worker-ready"]).status === 0,
       );
       writeFileSync(
         join(instance, "activation.pending"),
@@ -1069,6 +1249,12 @@ describe("local deployment bootstrap scripts", () => {
       expect(existsSync(candidateBundle)).toBe(false);
       await waitForCondition(
         () => runScript(RUN, [instance, "--status"]).status === 0,
+      );
+      await waitForCondition(
+        () => runScript(RUN, [instance, "--app-running"]).status === 0,
+      );
+      await waitForCondition(
+        () => runScript(RUN, [instance, "--worker-ready"]).status === 0,
       );
     },
   );
@@ -1107,15 +1293,15 @@ describe("local deployment bootstrap scripts", () => {
 
   it(
     "restarts a verified live instance when preparation fails before activation",
-    { timeout: 20_000 },
+    { timeout: 40_000 },
     async () => {
       testRoot = worktreeTestRoot();
       const instance = join(testRoot, "instance");
       const port = freePort();
       const appServer = join(testRoot, "server.js");
       const workerPython = join(testRoot, "worker-python");
-      writeFileSync(appServer, "setTimeout(()=>{},30000)\n");
-      writeFileSync(workerPython, "#!/bin/sh\nset -eu\nexec sleep 30\n");
+      writeFileSync(appServer, healthyServerSource());
+      writeFileSync(workerPython, readyWorkerScript());
       chmodSync(workerPython, 0o700);
       prepareRunnableInstance(instance, port, appServer, workerPython);
       const modelDir = join(instance, "model-cache", "medium");
@@ -1127,6 +1313,12 @@ describe("local deployment bootstrap scripts", () => {
       expect(start.status, start.stderr + start.stdout).toBe(0);
       await waitForCondition(
         () => runScript(RUN, [instance, "--status"]).status === 0,
+      );
+      await waitForCondition(
+        () => runScript(RUN, [instance, "--app-running"]).status === 0,
+      );
+      await waitForCondition(
+        () => runScript(RUN, [instance, "--worker-ready"]).status === 0,
       );
 
       const bootstrap = runScript(
@@ -1146,6 +1338,12 @@ describe("local deployment bootstrap scripts", () => {
       expect(bootstrap.status).not.toBe(0);
       await waitForCondition(
         () => runScript(RUN, [instance, "--status"]).status === 0,
+      );
+      await waitForCondition(
+        () => runScript(RUN, [instance, "--app-running"]).status === 0,
+      );
+      await waitForCondition(
+        () => runScript(RUN, [instance, "--worker-ready"]).status === 0,
       );
     },
   );
@@ -1267,6 +1465,7 @@ function prepareRunnableInstance(
   mkdirSync(join(instance, "secrets"), { recursive: true });
   mkdirSync(join(bundle, "scripts"), { recursive: true });
   mkdirSync(join(bundle, "worker"), { recursive: true });
+  mkdirSync(join(bundle, "venv", "bin"), { recursive: true });
   writeFileSync(join(bundle, "server.js"), bundleServerSource);
   writeFileSync(
     join(bundle, "scripts", "instance-run.sh"),
@@ -1281,6 +1480,16 @@ function prepareRunnableInstance(
     readFileSync(join(REPO_ROOT, "scripts", "run-worker-python.sh"), "utf8"),
   );
   writeFileSync(join(bundle, "worker", "main.py"), "");
+  writeFileSync(
+    join(bundle, "venv", "bin", "python3"),
+    "#!/bin/sh\nif [ \"\${1:-}\" = \"-c\" ]; then exit 0; fi\nchild=\ntrap 'test -z \"$child\" || kill \"$child\" 2>/dev/null; exit 0' TERM INT\nsleep 1 & child=$!; wait \"$child\"\necho '[worker] ready with offline model fixture'\nwhile :; do sleep 30 & child=$!; wait \"$child\"; done\n",
+  );
+  chmodSync(join(bundle, "venv", "bin", "python3"), 0o700);
+  writeFileSync(
+    join(bundle, "venv", "bin", "fixture-tool"),
+    `#!${bundle}/venv/bin/python3\n`,
+  );
+  chmodSync(join(bundle, "venv", "bin", "fixture-tool"), 0o700);
   const manifest = [
     "server.js",
     "scripts/instance-run.sh",
@@ -1305,6 +1514,7 @@ function prepareRunnableInstance(
       "HOSTNAME=127.0.0.1",
       `SUPERSCRIBER_ACTIVATION_ID=${bundleId}`,
       `SUPERSCRIBER_APP_BUNDLE=${shellQuote(bundle)}`,
+      `SUPERSCRIBER_WORKER_VENV=${shellQuote(join(bundle, "venv"))}`,
       "SUPERSCRIBER_INSTANCE_TEST_MODE=1",
       `SUPERSCRIBER_TEST_APP_SERVER=${shellQuote(appServer)}`,
       `SUPERSCRIBER_TEST_WORKER_PYTHON=${shellQuote(workerPython)}`,
@@ -1347,7 +1557,18 @@ function prepareWorkingVenv(instance: string) {
 }
 
 function prepareBootstrapVenv(instance: string, ready: boolean) {
-  const bin = join(instance, "venv", "bin");
+  writeBootstrapWorkerPython(join(instance, "venv"), ready);
+}
+
+function prepareActiveBundleVenv(instance: string, ready: boolean) {
+  writeBootstrapWorkerPython(
+    join(instance, "build", activationIdFrom(instance), "venv"),
+    ready,
+  );
+}
+
+function writeBootstrapWorkerPython(venv: string, ready: boolean) {
+  const bin = join(venv, "bin");
   mkdirSync(bin, { recursive: true });
   const python = join(bin, "python3");
   writeFileSync(
@@ -1357,6 +1578,10 @@ function prepareBootstrapVenv(instance: string, ready: boolean) {
       : "#!/bin/sh\nif [ \"${1:-}\" = \"-c\" ]; then exit 0; fi\nsleep 1\necho '[worker] startup failed: fixture' >&2\nexit 1\n",
   );
   chmodSync(python, 0o700);
+}
+
+function readyWorkerScript() {
+  return "#!/bin/sh\nchild=\ntrap 'test -z \"$child\" || kill \"$child\" 2>/dev/null; exit 0' TERM INT\nsleep 1 & child=$!; wait \"$child\"\necho '[worker] ready with offline model fixture'\nwhile :; do sleep 30 & child=$!; wait \"$child\"; done\n";
 }
 
 async function waitForCondition(condition: () => boolean, timeoutMs = 10_000) {
