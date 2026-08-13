@@ -371,7 +371,7 @@ function acquireProvisioningLock(
 ): ProvisioningLockOwner {
   const path = lockPath(root);
   for (let attempt = 0; attempt < 5; attempt += 1) {
-    let createdLock = false;
+    let privatePath = "";
     try {
       if (existsSync(reclaimPath(root)) || pathIsSymbolicLink(reclaimPath(root))) {
         const reclaimOwner = readReclaimOwner(root);
@@ -384,12 +384,8 @@ function acquireProvisioningLock(
         error.code = "EEXIST";
         throw error;
       }
-      mkdirSync(path, { mode: 0o700 });
-      createdLock = true;
-      if (existsSync(reclaimPath(root)) || pathIsSymbolicLink(reclaimPath(root))) {
-        rmdirSync(path);
-        createdLock = false;
-        const error = new Error("provisioning lock reclamation is in progress") as NodeJS.ErrnoException;
+      if (existsSync(path) || pathIsSymbolicLink(path)) {
+        const error = new Error("provisioning lock already exists") as NodeJS.ErrnoException;
         error.code = "EEXIST";
         throw error;
       }
@@ -404,17 +400,29 @@ function acquireProvisioningLock(
         token: randomBytes(24).toString("hex"),
         createdAt: new Date().toISOString(),
       };
-      writeFileSync(lockOwnerPath(root), JSON.stringify(owner), {
-        encoding: "utf8",
-        mode: 0o600,
-      });
+      privatePath = `${path}.pending.${owner.pid}.${owner.token}`;
+      mkdirSync(privatePath, { mode: 0o700 });
+      writeFileSync(
+        join(privatePath, LOCK_OWNER_FILE_NAME),
+        JSON.stringify(owner),
+        {
+          encoding: "utf8",
+          mode: 0o600,
+          flag: "wx",
+        },
+      );
+      if (existsSync(path) || pathIsSymbolicLink(path)) {
+        const error = new Error("provisioning lock already exists") as NodeJS.ErrnoException;
+        error.code = "EEXIST";
+        throw error;
+      }
+      renameSync(privatePath, path);
+      privatePath = "";
       return owner;
     } catch (error) {
-      if (createdLock) {
-        rmSync(path, { recursive: true, force: true });
-      }
+      if (privatePath) rmSync(privatePath, { recursive: true, force: true });
       const code = (error as NodeJS.ErrnoException).code;
-      if (code !== "EEXIST") {
+      if (code !== "EEXIST" && code !== "ENOTEMPTY") {
         throw new ProvisioningError(
           500,
           "model_root_unwritable",

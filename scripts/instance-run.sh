@@ -250,17 +250,12 @@ start_instance() {
       sleep 0.05
       continue
     fi
-    if mkdir "${LOCK_DIR}" 2>/dev/null; then
-      if [[ -e "${LOCK_DIR}.reclaim" || -L "${LOCK_DIR}.reclaim" ]]; then
-        rmdir "${LOCK_DIR}" 2>/dev/null || true
-        sleep 0.05
-        continue
-      fi
-      token="$(random_token)"
-      printf '%s\n' "${token}" > "${TOKEN_FILE}"
-      : > "${LOCK_DIR}/started"
-      printf '2147483647 %s\n' "${token}" > "${IDENTITY_FILE}.initializing.$$"
-      mv "${IDENTITY_FILE}.initializing.$$" "${IDENTITY_FILE}"
+    token="$(random_token)"
+    if publish_process_lock_directory \
+      "${LOCK_DIR}" \
+      identity "2147483647 ${token}" \
+      token "${token}" \
+      started ""; then
       if maintenance_blocks_start; then
         remove_owned_supervisor_lock "${token}"
         echo "refusing to start while bootstrap maintenance is in progress for ${INSTANCE_ROOT}" >&2
@@ -462,22 +457,21 @@ run_role() {
   trap - EXIT INT TERM
   local role="$1"
   shift
-  local log consecutive=0 child_pid="" role_token=""
+  local log consecutive=0 child_pid="" role_token="" role_stop_requested=0
   if [[ "${role}" == "app" ]]; then log="${LOG_DIR}/app.log"; else log="${LOG_DIR}/worker.log"; fi
 
-  trap 'trap - INT TERM
+  trap 'role_stop_requested=1
     if [[ -n "${child_pid}" ]]; then
       kill "${child_pid}" 2>/dev/null || true
-      wait "${child_pid}" 2>/dev/null || true
-    fi
-    if [[ -n "${role_token}" ]]; then
-      rm -f "${PID_DIR}/${role}.identity.tmp.$$" "${PID_DIR}/${role}.pid.tmp.$$"
-      clear_role_state "${role}" "${role_token}"
-    fi
-    exit 0' INT TERM
+    fi' INT TERM
 
   while true; do
     local started status ended wait_s ready_tmp failed_tmp was_ready identity_failed identity_failure_tmp identity_status process_state
+    if [[ "${role_stop_requested}" -eq 1 ]]; then
+      rm -f "${PID_DIR}/${role}.identity.tmp.$$" "${PID_DIR}/${role}.pid.tmp.$$"
+      [[ -z "${role_token}" ]] || clear_role_state "${role}" "${role_token}"
+      exit 0
+    fi
     started="$(date +%s)"
     role_token="$(random_token)"
     say_supervisor "${role} starting: $*"
@@ -496,6 +490,15 @@ run_role() {
       done
     ) 2>&1 &
     child_pid=$!
+    if [[ "${role_stop_requested}" -eq 1 ]]; then
+      kill "${child_pid}" 2>/dev/null || true
+      wait "${child_pid}" 2>/dev/null || true
+      child_pid=""
+      rm -f "${PID_DIR}/${role}.identity.tmp.$$" "${PID_DIR}/${role}.pid.tmp.$$"
+      clear_role_state "${role}" "${role_token}"
+      set -e
+      exit 0
+    fi
     identity_failed=0
     if write_role_identity "${role}" "${child_pid}" "${role_token}"; then
       rm -f "${PID_DIR}/${role}.identity-failed"
@@ -523,6 +526,11 @@ run_role() {
       fi
     fi
     set -e
+    if [[ "${role_stop_requested}" -eq 1 ]]; then
+      rm -f "${PID_DIR}/${role}.identity.tmp.$$" "${PID_DIR}/${role}.pid.tmp.$$"
+      clear_role_state "${role}" "${role_token}"
+      exit 0
+    fi
     was_ready=0
     if [[ "${role}" == "worker" && "$(cat "${PID_DIR}/worker.ready" 2>/dev/null || true)" == "${role_token}" ]]; then
       was_ready=1
@@ -594,7 +602,6 @@ shutdown() {
 }
 
 trap cleanup_identity EXIT
-trap shutdown INT TERM
 unset SUPERSCRIBER_MAINTENANCE_IDENTITY
 load_env
 cd "${RUNTIME_ROOT}"
@@ -606,14 +613,25 @@ if [[ "${SUPERSCRIBER_INSTANCE_TEST_MODE:-0}" == "1" ]]; then
   WORKER_PYTHON="${SUPERSCRIBER_TEST_WORKER_PYTHON:-${WORKER_PYTHON}}"
 fi
 
+STARTUP_STOP_REQUESTED=0
+trap 'STARTUP_STOP_REQUESTED=1' INT TERM
 run_role app node "${APP_SERVER}" &
 APP_LOOP_PID=$!
+if [[ "${STARTUP_STOP_REQUESTED}" -eq 1 ]]; then
+  trap shutdown INT TERM
+  shutdown
+fi
 
 if [[ "${SUPERSCRIBER_ENGINE_MODE:-internal}" == "internal" ]]; then
   run_role worker env PYTHONUNBUFFERED=1 \
     SUPERSCRIBER_WORKER_PYTHON="${WORKER_PYTHON}" \
     bash "${RUNTIME_ROOT}/scripts/run-worker-python.sh" "${RUNTIME_ROOT}/worker/main.py" &
   WORKER_LOOP_PID=$!
+fi
+
+trap shutdown INT TERM
+if [[ "${STARTUP_STOP_REQUESTED}" -eq 1 ]]; then
+  shutdown
 fi
 
 say_supervisor "supervising app=${APP_LOOP_PID} worker=${WORKER_LOOP_PID:-none} at http://127.0.0.1:${PORT}"

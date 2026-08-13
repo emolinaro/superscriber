@@ -126,6 +126,38 @@ instance_random_token() {
   node -e 'process.stdout.write(require("node:crypto").randomBytes(24).toString("hex"))'
 }
 
+publish_process_lock_directory() {
+  local lock_dir="$1" private name value
+  shift
+  [[ ! -e "${lock_dir}" && ! -L "${lock_dir}" ]] || return 1
+  private="${lock_dir}.pending.$$.$(instance_random_token)"
+  [[ ! -e "${private}" && ! -L "${private}" ]] || return 1
+  mkdir "${private}" || return 1
+  chmod 700 "${private}"
+  while [[ "$#" -gt 0 ]]; do
+    [[ "$#" -ge 2 ]] || {
+      rm -rf -- "${private}"
+      return 1
+    }
+    name="$1"
+    value="$2"
+    shift 2
+    [[ "${name}" =~ ^[a-zA-Z0-9._-]+$ ]] || {
+      rm -rf -- "${private}"
+      return 1
+    }
+    printf '%s\n' "${value}" > "${private}/${name}"
+    chmod 600 "${private}/${name}"
+  done
+  if [[ ! -e "${lock_dir}" && ! -L "${lock_dir}" ]] && \
+    node -e 'require("node:fs").renameSync(process.argv[1], process.argv[2])' \
+    "${private}" "${lock_dir}" 2>/dev/null; then
+    return 0
+  fi
+  rm -rf -- "${private}"
+  return 1
+}
+
 process_start_fingerprint() {
   local pid="$1" started
   process_is_live "${pid}" || return 1

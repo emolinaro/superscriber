@@ -22,6 +22,7 @@ const fsFaults = vi.hoisted(() => ({
     source: string;
     destination: string;
     sourceWasDirectory: boolean;
+    sourceOwnerExisted: boolean;
     destinationExisted: boolean;
   }>,
 }));
@@ -36,6 +37,9 @@ vi.mock("node:fs", async (importOriginal) => {
         source: String(source),
         destination: String(destination),
         sourceWasDirectory: actual.statSync(source).isDirectory(),
+        sourceOwnerExisted: actual.existsSync(
+          join(String(source), "owner.json"),
+        ),
         destinationExisted: actual.existsSync(destination),
       });
       return actual.renameSync(...args);
@@ -271,6 +275,30 @@ describe("model provisioning service (model-tier-provisioning)", () => {
       ),
     );
     expect(existsSync(join(modelRoot, "tiny", "stale.txt"))).toBe(false);
+  });
+
+  it("publishes fully initialized primary lock ownership atomically", async () => {
+    startTierDownload("tiny", {
+      transportFor: () => fakeTransport(),
+      probeDiskSpace: unlimitedDisk,
+    });
+    await waitForTierDownload("tiny");
+
+    const lockRenames = fsFaults.renameSnapshots.filter(
+      (snapshot) =>
+        snapshot.destination === join(modelRoot, ".provisioning.lock"),
+    );
+    expect(lockRenames).toHaveLength(1);
+    expect(lockRenames[0]).toMatchObject({
+      sourceWasDirectory: true,
+      sourceOwnerExisted: true,
+      destinationExisted: false,
+    });
+    const prefix = join(modelRoot, ".provisioning.lock.pending.");
+    expect(lockRenames[0].source.startsWith(prefix)).toBe(true);
+    expect(lockRenames[0].source.slice(prefix.length)).toMatch(
+      /^\d+\.[0-9a-f]{48}$/,
+    );
   });
 
   it("marks a failed download honestly and keeps the tier unprovisioned", async () => {

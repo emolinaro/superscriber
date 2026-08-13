@@ -47,6 +47,58 @@ EOF
 log() { printf '[bootstrap] %s\n' "$*"; }
 fail() { printf '[bootstrap] ERROR: %s\n' "$*" >&2; exit 1; }
 
+fsync_file_path() {
+  node -e '
+    const fs = require("node:fs");
+    const fd = fs.openSync(process.argv[1], "r");
+    try { fs.fsyncSync(fd); } finally { fs.closeSync(fd); }
+  ' "$1"
+}
+
+fsync_directory_path() {
+  node -e '
+    const fs = require("node:fs");
+    const fd = fs.openSync(process.argv[1], "r");
+    try { fs.fsyncSync(fd); } finally { fs.closeSync(fd); }
+  ' "$1"
+}
+
+fsync_tree_path() {
+  node -e '
+    const fs = require("node:fs");
+    const path = require("node:path");
+    const sync = (target) => {
+      const stat = fs.lstatSync(target);
+      if (stat.isSymbolicLink()) return;
+      if (stat.isDirectory()) {
+        for (const entry of fs.readdirSync(target)) sync(path.join(target, entry));
+      }
+      const fd = fs.openSync(target, "r");
+      try { fs.fsyncSync(fd); } finally { fs.closeSync(fd); }
+    };
+    sync(process.argv[1]);
+  ' "$1"
+}
+
+durable_replace_file() {
+  local source="$1" destination="$2" directory="$3"
+  fsync_file_path "${source}"
+  mv "${source}" "${destination}"
+  fsync_directory_path "${directory}"
+}
+
+durable_remove_paths() {
+  local directory="$1" path changed=0
+  shift
+  for path in "$@"; do
+    if [[ -e "${path}" || -L "${path}" ]]; then
+      rm -f -- "${path}"
+      changed=1
+    fi
+  done
+  [[ "${changed}" -eq 0 ]] || fsync_directory_path "${directory}"
+}
+
 require_option_value() {
   [[ $# -ge 2 && -n "${2:-}" ]] || fail "${1} requires a value"
 }
@@ -308,7 +360,7 @@ release_maintenance_lock() {
 }
 
 acquire_maintenance_lock() {
-  local attempts=0 token started observed age identity_tmp
+  local attempts=0 token started observed age
   MAINTENANCE_LOCK_DIR="$(maintenance_lock_dir "${INSTANCE_ROOT}")"
   while [[ "${attempts}" -lt 50 ]]; do
     if lock_reclaim_is_blocking "${MAINTENANCE_LOCK_DIR}"; then
@@ -316,25 +368,16 @@ acquire_maintenance_lock() {
       sleep 0.1
       continue
     fi
-    if mkdir "${MAINTENANCE_LOCK_DIR}" 2>/dev/null; then
-      if [[ -e "${MAINTENANCE_LOCK_DIR}.reclaim" || -L "${MAINTENANCE_LOCK_DIR}.reclaim" ]]; then
-        rmdir "${MAINTENANCE_LOCK_DIR}" 2>/dev/null || true
-        attempts=$((attempts + 1))
-        sleep 0.1
-        continue
-      fi
-      token="$(node -e 'process.stdout.write(require("node:crypto").randomBytes(24).toString("hex"))')"
-      started="$(process_start_fingerprint "$$")" || {
-        rmdir "${MAINTENANCE_LOCK_DIR}" 2>/dev/null || true
-        fail "could not identify the bootstrap process for maintenance ownership"
-      }
-      MAINTENANCE_IDENTITY="$$ ${token} ${started}"
-      identity_tmp="${MAINTENANCE_LOCK_DIR}/identity.tmp.$$"
-      printf '%s\n' "${MAINTENANCE_IDENTITY}" > "${identity_tmp}"
-      mv "${identity_tmp}" "${MAINTENANCE_LOCK_DIR}/identity"
+    token="$(instance_random_token)"
+    started="$(process_start_fingerprint "$$")" || \
+      fail "could not identify the bootstrap process for maintenance ownership"
+    MAINTENANCE_IDENTITY="$$ ${token} ${started}"
+    if publish_process_lock_directory \
+      "${MAINTENANCE_LOCK_DIR}" identity "${MAINTENANCE_IDENTITY}"; then
       trap cleanup_bootstrap_state EXIT
       return 0
     fi
+    MAINTENANCE_IDENTITY=""
     if maintenance_lock_is_active "${INSTANCE_ROOT}"; then
       fail "another bootstrap is maintaining ${INSTANCE_ROOT}; wait for it to finish before re-running"
     fi
@@ -374,32 +417,23 @@ release_repository_lock() {
 }
 
 acquire_repository_lock() {
-  local attempts=0 token started identity_tmp observed age
+  local attempts=0 token started observed age
   while [[ "${attempts}" -lt 50 ]]; do
     if lock_reclaim_is_blocking "${REPOSITORY_LOCK_DIR}"; then
       attempts=$((attempts + 1))
       sleep 0.1
       continue
     fi
-    if mkdir "${REPOSITORY_LOCK_DIR}" 2>/dev/null; then
-      if [[ -e "${REPOSITORY_LOCK_DIR}.reclaim" || -L "${REPOSITORY_LOCK_DIR}.reclaim" ]]; then
-        rmdir "${REPOSITORY_LOCK_DIR}" 2>/dev/null || true
-        attempts=$((attempts + 1))
-        sleep 0.1
-        continue
-      fi
-      token="$(instance_random_token)"
-      started="$(process_start_fingerprint "$$")" || {
-        rmdir "${REPOSITORY_LOCK_DIR}" 2>/dev/null || true
-        fail "could not identify the bootstrap process for repository ownership"
-      }
-      REPOSITORY_LOCK_IDENTITY="$$ ${token} ${started}"
-      identity_tmp="${REPOSITORY_LOCK_DIR}/identity.tmp.$$"
-      printf '%s\n' "${REPOSITORY_LOCK_IDENTITY}" > "${identity_tmp}"
-      mv "${identity_tmp}" "${REPOSITORY_LOCK_DIR}/identity"
+    token="$(instance_random_token)"
+    started="$(process_start_fingerprint "$$")" || \
+      fail "could not identify the bootstrap process for repository ownership"
+    REPOSITORY_LOCK_IDENTITY="$$ ${token} ${started}"
+    if publish_process_lock_directory \
+      "${REPOSITORY_LOCK_DIR}" identity "${REPOSITORY_LOCK_IDENTITY}"; then
       trap cleanup_bootstrap_state EXIT
       return 0
     fi
+    REPOSITORY_LOCK_IDENTITY=""
     if [[ -L "${REPOSITORY_LOCK_DIR}" ]]; then
       fail "repository operation lock must not be a symlink: ${REPOSITORY_LOCK_DIR}"
     fi
@@ -434,6 +468,7 @@ cleanup_bundle_staging() {
   path="${INSTANCE_ROOT}/build/.staging-${BUNDLE_ID}"
   if [[ -d "${path}" && ! -L "${path}" ]]; then
     rm -rf -- "${path}"
+    fsync_directory_path "${INSTANCE_ROOT}/build"
   fi
 }
 
@@ -453,6 +488,7 @@ remove_inactive_bundle_generation() {
   [[ "${active_id}" != "${bundle_id}" ]] || return 0
   if [[ -d "${path}" && ! -L "${path}" ]]; then
     rm -rf -- "${path}"
+    fsync_directory_path "${INSTANCE_ROOT}/build"
   fi
 }
 
@@ -483,7 +519,7 @@ write_activation_record() {
     printf 'PREVIOUS_WAS_RUNNING=%s\n' "${was_running}"
   } > "${tmp}"
   chmod 600 "${tmp}"
-  mv "${tmp}" "${ACTIVATION_RECORD}"
+  durable_replace_file "${tmp}" "${ACTIVATION_RECORD}" "${INSTANCE_ROOT}"
 }
 
 recover_pending_activation() {
@@ -514,25 +550,25 @@ recover_pending_activation() {
   fi
 
   if [[ "${previous}" == "none" ]]; then
-    rm -f -- "${INSTANCE_ROOT}/app.env"
+    durable_remove_paths "${INSTANCE_ROOT}" "${INSTANCE_ROOT}/app.env"
   elif [[ "${source}" != "${INSTANCE_ROOT}/app.env" ]]; then
     restored_tmp="${INSTANCE_ROOT}/app.env.recovered.$$"
     cp "${source}" "${restored_tmp}"
     chmod 600 "${restored_tmp}"
-    mv "${restored_tmp}" "${INSTANCE_ROOT}/app.env"
+    durable_replace_file "${restored_tmp}" "${INSTANCE_ROOT}/app.env" "${INSTANCE_ROOT}"
   fi
   if [[ "${previous}" != "none" ]]; then
     resolve_active_bundle "${INSTANCE_ROOT}" >/dev/null 2>&1 || return 1
   fi
 
   remove_inactive_bundle_generation "${candidate}"
-  rm -f -- "${ACTIVATION_CANDIDATE}"
+  durable_remove_paths "${INSTANCE_ROOT}" "${ACTIVATION_CANDIDATE}"
   if [[ "${was_running}" == "1" ]]; then
     SUPERSCRIBER_MAINTENANCE_IDENTITY="${MAINTENANCE_IDENTITY}" \
       bash "${SCRIPT_DIR}/instance-run.sh" "${INSTANCE_ROOT}" >/dev/null 2>&1 || return 1
     bash "${SCRIPT_DIR}/instance-run.sh" "${INSTANCE_ROOT}" --status >/dev/null 2>&1 || return 1
   fi
-  rm -f -- "${ACTIVATION_RECORD}" "${ACTIVATION_BACKUP}"
+  durable_remove_paths "${INSTANCE_ROOT}" "${ACTIVATION_RECORD}" "${ACTIVATION_BACKUP}"
   ACTIVATION_PENDING=0
   INSTANCE_RESTORED=1
   log "recovered the previous activation after an interrupted bootstrap"
@@ -569,7 +605,7 @@ cleanup_bootstrap_state() {
   fi
   remove_bundle_generation "${BUNDLE_ID}"
   if [[ ! -e "${ACTIVATION_RECORD}" && ! -L "${ACTIVATION_RECORD}" ]]; then
-    rm -f -- "${ACTIVATION_BACKUP}" "${ACTIVATION_CANDIDATE}"
+    durable_remove_paths "${INSTANCE_ROOT}" "${ACTIVATION_BACKUP}" "${ACTIVATION_CANDIDATE}"
   fi
   release_maintenance_lock
 }
@@ -586,10 +622,10 @@ write_app_env() {
     [[ ! -e "${backup_tmp}" && ! -L "${backup_tmp}" ]] || fail "refusing to overwrite an activation backup staging file"
     cp "${INSTANCE_ROOT}/app.env" "${backup_tmp}"
     chmod 600 "${backup_tmp}"
-    mv "${backup_tmp}" "${ACTIVATION_BACKUP}"
+    durable_replace_file "${backup_tmp}" "${ACTIVATION_BACKUP}" "${INSTANCE_ROOT}"
     activation_id_from_file "${ACTIVATION_BACKUP}" >/dev/null
   else
-    rm -f -- "${ACTIVATION_BACKUP}"
+    durable_remove_paths "${INSTANCE_ROOT}" "${ACTIVATION_BACKUP}"
   fi
   : > "${env_file}"
   write_env_assignment "${env_file}" SUPERSCRIBER_ACTIVATION_ID "${BUNDLE_ID}"
@@ -609,15 +645,16 @@ write_app_env() {
   write_env_assignment "${env_file}" PORT "${PORT}"
   write_env_assignment "${env_file}" HOSTNAME 127.0.0.1
   chmod 600 "${env_file}"
+  fsync_file_path "${env_file}"
   write_activation_record "${BUNDLE_ID}" "${previous_id}" "${INSTANCE_WAS_RUNNING}"
   ACTIVATION_PENDING=1
-  mv "${env_file}" "${INSTANCE_ROOT}/app.env"
-  rm -f "${INSTANCE_ROOT}/active-bundle"
+  durable_replace_file "${env_file}" "${INSTANCE_ROOT}/app.env" "${INSTANCE_ROOT}"
+  durable_remove_paths "${INSTANCE_ROOT}" "${INSTANCE_ROOT}/active-bundle"
   log "instance root ready at ${INSTANCE_ROOT} (db: data/superscriber.db, models: model-cache/, logs: logs/)"
 }
 
 prune_inactive_bundles() {
-  local active_id rollback_id="" path name
+  local active_id rollback_id="" path name changed=0
   active_id="$(activation_id_from_file "${INSTANCE_ROOT}/app.env")" || return 1
   if [[ -f "${INSTANCE_ROOT}/rollback.env" && ! -L "${INSTANCE_ROOT}/rollback.env" ]]; then
     rollback_id="$(activation_id_from_file "${INSTANCE_ROOT}/rollback.env" 2>/dev/null || true)"
@@ -629,7 +666,9 @@ prune_inactive_bundles() {
     [[ "${name}" == "${active_id}" || "${name}" == "${rollback_id}" ]] && continue
     [[ -d "${path}" && ! -L "${path}" ]] || continue
     rm -rf -- "${path}"
+    changed=1
   done
+  [[ "${changed}" -eq 0 ]] || fsync_directory_path "${INSTANCE_ROOT}/build"
 }
 
 commit_activation() {
@@ -642,11 +681,11 @@ commit_activation() {
   if [[ "${previous}" != "none" ]]; then
     [[ "$(activation_id_from_file "${ACTIVATION_BACKUP}" 2>/dev/null || true)" == "${previous}" ]] || \
       fail "pending activation lost its previous generation"
-    mv "${ACTIVATION_BACKUP}" "${INSTANCE_ROOT}/rollback.env"
+    durable_replace_file "${ACTIVATION_BACKUP}" "${INSTANCE_ROOT}/rollback.env" "${INSTANCE_ROOT}"
   else
-    rm -f -- "${INSTANCE_ROOT}/rollback.env" "${ACTIVATION_BACKUP}"
+    durable_remove_paths "${INSTANCE_ROOT}" "${INSTANCE_ROOT}/rollback.env" "${ACTIVATION_BACKUP}"
   fi
-  rm -f -- "${ACTIVATION_RECORD}" "${ACTIVATION_CANDIDATE}"
+  durable_remove_paths "${INSTANCE_ROOT}" "${ACTIVATION_RECORD}" "${ACTIVATION_CANDIDATE}"
   ACTIVATION_PENDING=0
   INSTANCE_RESTORED=1
   prune_inactive_bundles
@@ -719,7 +758,9 @@ build_app() {
     "${staging}/scripts/instance-stop.sh" \
     "${staging}/scripts/run-worker-python.sh"
   chmod -R go-rwx "${staging}"
+  fsync_tree_path "${staging}"
   mv "${staging}" "${BUNDLE_DIR}"
+  fsync_directory_path "${INSTANCE_ROOT}/build"
   reject_managed_instance_symlinks "${INSTANCE_ROOT}" || exit 1
   cleanup_build_output
 }

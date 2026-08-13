@@ -1,4 +1,10 @@
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import {
+  mkdirSync,
+  mkdtempSync,
+  rmSync,
+  truncateSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -80,10 +86,9 @@ describe("ingest session route (demo-model-tier-picker)", () => {
     const dir = join(modelRoot, tierId);
     mkdirSync(dir, { recursive: true });
     for (const file of TIER_DOWNLOADS[tierId].files) {
-      writeFileSync(
-        join(dir, file),
-        file === "config.json" ? "{}" : "artifact",
-      );
+      const artifact = join(dir, file);
+      writeFileSync(artifact, "");
+      truncateSync(artifact, TIER_DOWNLOADS[tierId].fileSizeBytes[file]);
     }
   }
 
