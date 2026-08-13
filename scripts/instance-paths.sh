@@ -59,14 +59,63 @@ require_instance_marker() {
 }
 
 reject_managed_instance_symlinks() {
-  local root="$1" relative path
-  for relative in data data/media data/uploads model-cache logs pids secrets venv; do
+  local root="$1" relative path found child
+  for relative in \
+    "${INSTANCE_MARKER_NAME}" app.env active-bundle instance.log \
+    data data/media data/uploads model-cache logs pids secrets venv build; do
     path="${root}/${relative}"
     if [[ -L "${path}" ]]; then
       printf "managed instance path must not be a symlink: %s\n" "${path}" >&2
       return 1
     fi
   done
+
+  for relative in data model-cache logs pids secrets; do
+    path="${root}/${relative}"
+    [[ -d "${path}" ]] || continue
+    found="$(find "${path}" -type l -print -quit)"
+    if [[ -n "${found}" ]]; then
+      printf "managed instance path must not be a symlink: %s\n" "${found}" >&2
+      return 1
+    fi
+  done
+
+  path="${root}/venv"
+  if [[ -d "${path}" ]]; then
+    found="$(find "${path}" -type l -print -quit)"
+    if [[ -n "${found}" ]]; then
+      printf "managed instance path must not be a symlink: %s\n" "${found}" >&2
+      return 1
+    fi
+  fi
+
+  for path in \
+    "${root}/pids/supervisor.lock.reclaim" \
+    "${root}/pids/maintenance.lock.reclaim"; do
+    if [[ -L "${path}" ]]; then
+      printf "managed instance path must not be a symlink: %s\n" "${path}" >&2
+      return 1
+    fi
+  done
+
+  path="${root}/build"
+  if [[ -d "${path}" ]]; then
+    for child in "${path}"/* "${path}"/.[!.]* "${path}"/..?*; do
+      [[ -e "${child}" || -L "${child}" ]] || continue
+      if [[ -L "${child}" ]]; then
+        printf "managed instance path must not be a symlink: %s\n" "${child}" >&2
+        return 1
+      fi
+    done
+  fi
+}
+
+path_age_ms() {
+  node -e 'process.stdout.write(String(Date.now() - require("node:fs").statSync(process.argv[1]).mtimeMs))' "$1"
+}
+
+instance_random_token() {
+  node -e 'process.stdout.write(require("node:crypto").randomBytes(24).toString("hex"))'
 }
 
 process_start_fingerprint() {
@@ -98,6 +147,141 @@ process_matches_role_identity() {
   [[ "${current_command}" == "${command}" ]]
 }
 
+read_process_lock_identity_file() {
+  local identity_file="$1" pid token started
+  [[ -f "${identity_file}" && ! -L "${identity_file}" ]] || return 1
+  read -r pid token started < "${identity_file}" || return 1
+  [[ "${pid}" =~ ^[0-9]+$ && "${token}" =~ ^[0-9a-f]{48}$ && "${started}" =~ ^[0-9]+-[0-9]+$ ]] || return 1
+  printf '%s %s %s\n' "${pid}" "${token}" "${started}"
+}
+
+process_lock_identity_is_active_file() {
+  local identity pid token started
+  identity="$(read_process_lock_identity_file "$1")" || return 1
+  read -r pid token started <<< "${identity}"
+  process_matches_start_fingerprint "${pid}" "${started}"
+}
+
+supervisor_lock_is_active() {
+  local lock_dir="$1" identity pid token started args
+  identity="$(cat "${lock_dir}/identity" 2>/dev/null || true)"
+  read -r pid token <<< "${identity}"
+  [[ "${pid}" =~ ^[0-9]+$ && "${token}" =~ ^[0-9a-f]{48}$ ]] || return 1
+  started="$(cat "${lock_dir}/started" 2>/dev/null || true)"
+  process_matches_start_fingerprint "${pid}" "${started}" || return 1
+  args="$(ps -ww -p "${pid}" -o args= 2>/dev/null || true)"
+  [[ "${args}" == *"instance-run.sh"* && "${args}" == *"--supervise ${token}"* ]]
+}
+
+reclaim_slot_is_owned() {
+  local lock_dir="$1" expected="$2" current pid token started
+  current="$(cat "${lock_dir}.reclaim/identity" 2>/dev/null || true)"
+  [[ "${current}" == "${expected}" ]] || return 1
+  read -r pid token started <<< "${current}"
+  [[ "${pid}" =~ ^[0-9]+$ && "${token}" =~ ^[0-9a-f]{48}$ && "${started}" =~ ^[0-9]+-[0-9]+$ ]] || return 1
+  process_matches_start_fingerprint "${pid}" "${started}"
+}
+
+release_reclaim_slot() {
+  local lock_dir="$1" expected="$2" slot stale
+  slot="${lock_dir}.reclaim"
+  reclaim_slot_is_owned "${lock_dir}" "${expected}" || return 0
+  stale="${slot}.released.$$.$RANDOM"
+  if mv "${slot}" "${stale}" 2>/dev/null; then
+    rm -rf -- "${stale}"
+  fi
+}
+
+acquire_reclaim_slot() {
+  local lock_dir="$1" slot attempts=0 token started identity identity_tmp
+  local observed age stale moved
+  slot="${lock_dir}.reclaim"
+  while [[ "${attempts}" -lt 20 ]]; do
+    if mkdir "${slot}" 2>/dev/null; then
+      token="$(instance_random_token)"
+      started="$(process_start_fingerprint "$$")" || {
+        rmdir "${slot}" 2>/dev/null || true
+        return 1
+      }
+      identity="$$ ${token} ${started}"
+      identity_tmp="${slot}/identity.tmp.$$"
+      printf '%s\n' "${identity}" > "${identity_tmp}"
+      mv "${identity_tmp}" "${slot}/identity"
+      printf '%s\n' "${identity}"
+      return 0
+    fi
+
+    if [[ -L "${slot}" ]]; then
+      printf 'lock reclaim path must not be a symlink: %s\n' "${slot}" >&2
+      return 1
+    fi
+    observed="$(cat "${slot}/identity" 2>/dev/null || true)"
+    if [[ -n "${observed}" ]] && ! read_process_lock_identity_file "${slot}/identity" >/dev/null; then
+      printf 'lock reclaim path has invalid ownership metadata: %s\n' "${slot}" >&2
+      return 1
+    fi
+    if process_lock_identity_is_active_file "${slot}/identity"; then
+      return 1
+    fi
+    age="$(path_age_ms "${slot}" 2>/dev/null || echo 0)"
+    if [[ ! "${age}" =~ ^[0-9]+$ || "${age}" -lt 5000 ]]; then
+      return 1
+    fi
+
+    stale="${slot}.stale.$$.$RANDOM"
+    if mv "${slot}" "${stale}" 2>/dev/null; then
+      moved="$(cat "${stale}/identity" 2>/dev/null || true)"
+      if [[ "${moved}" == "${observed}" ]] && \
+         ! process_lock_identity_is_active_file "${stale}/identity"; then
+        rm -rf -- "${stale}"
+      elif [[ ! -e "${slot}" && ! -L "${slot}" ]]; then
+        mv "${stale}" "${slot}" 2>/dev/null || true
+      fi
+    fi
+    attempts=$((attempts + 1))
+    sleep 0.05
+  done
+  return 1
+}
+
+lock_reclaim_is_blocking() {
+  local lock_dir="$1" slot claim
+  slot="${lock_dir}.reclaim"
+  [[ -e "${slot}" || -L "${slot}" ]] || return 1
+  claim="$(acquire_reclaim_slot "${lock_dir}")" || return 0
+  release_reclaim_slot "${lock_dir}" "${claim}"
+  return 1
+}
+
+reclaim_stale_owned_lock() {
+  local lock_dir="$1" observed="$2" active_check="$3" claim current stale
+  shift 3
+  claim="$(acquire_reclaim_slot "${lock_dir}")" || return 1
+
+  current="$(cat "${lock_dir}/identity" 2>/dev/null || true)"
+  if [[ "${current}" != "${observed}" ]] || "${active_check}" "$@" || \
+     ! reclaim_slot_is_owned "${lock_dir}" "${claim}"; then
+    release_reclaim_slot "${lock_dir}" "${claim}"
+    return 1
+  fi
+
+  current="$(cat "${lock_dir}/identity" 2>/dev/null || true)"
+  if [[ "${current}" != "${observed}" ]] || "${active_check}" "$@"; then
+    release_reclaim_slot "${lock_dir}" "${claim}"
+    return 1
+  fi
+  reclaim_slot_is_owned "${lock_dir}" "${claim}" || return 1
+
+  stale="${lock_dir}.stale.$$.$RANDOM"
+  if mv "${lock_dir}" "${stale}" 2>/dev/null; then
+    rm -rf -- "${stale}"
+    release_reclaim_slot "${lock_dir}" "${claim}"
+    return 0
+  fi
+  release_reclaim_slot "${lock_dir}" "${claim}"
+  return 1
+}
+
 maintenance_lock_dir() {
   printf '%s/pids/maintenance.lock\n' "$1"
 }
@@ -105,7 +289,7 @@ maintenance_lock_dir() {
 read_maintenance_identity() {
   local root="$1" identity pid token started
   identity="$(maintenance_lock_dir "${root}")/identity"
-  [[ -f "${identity}" ]] || return 1
+  [[ -f "${identity}" && ! -L "${identity}" ]] || return 1
   read -r pid token started < "${identity}" || return 1
   [[ "${pid}" =~ ^[0-9]+$ && "${token}" =~ ^[0-9a-f]{48}$ && "${started}" =~ ^[0-9]+-[0-9]+$ ]] || return 1
   printf '%s %s %s\n' "${pid}" "${token}" "${started}"
@@ -118,4 +302,24 @@ maintenance_lock_is_active() {
   process_matches_start_fingerprint "${pid}" "${started}" || return 1
   args="$(ps -ww -p "${pid}" -o args= 2>/dev/null || true)"
   [[ "${args}" == *"bootstrap-local.sh"* ]]
+}
+
+resolve_active_bundle() {
+  local root="$1" active_file bundle_id bundle relative expected actual
+  active_file="${root}/active-bundle"
+  [[ -f "${active_file}" && ! -L "${active_file}" ]] || return 1
+  IFS= read -r bundle_id < "${active_file}" || return 1
+  [[ "${bundle_id}" =~ ^[0-9a-f]{40}-[0-9a-f]{48}$ ]] || return 1
+  bundle="${root}/build/${bundle_id}"
+  [[ -d "${bundle}" && ! -L "${root}/build" && ! -L "${bundle}" ]] || return 1
+  [[ -f "${bundle}/bundle.sha256" && ! -L "${bundle}/bundle.sha256" ]] || return 1
+  for relative in server.js scripts/instance-run.sh scripts/instance-paths.sh \
+    scripts/run-worker-python.sh worker/main.py; do
+    [[ -f "${bundle}/${relative}" && ! -L "${bundle}/${relative}" ]] || return 1
+    expected="$(awk -v wanted="${relative}" '$2 == wanted { print $1 }' "${bundle}/bundle.sha256")"
+    [[ "${expected}" =~ ^[0-9a-f]{64}$ ]] || return 1
+    actual="$(node -e 'process.stdout.write(require("node:crypto").createHash("sha256").update(require("node:fs").readFileSync(process.argv[1])).digest("hex"))' "${bundle}/${relative}")"
+    [[ "${actual}" == "${expected}" ]] || return 1
+  done
+  printf '%s\n' "${bundle}"
 }

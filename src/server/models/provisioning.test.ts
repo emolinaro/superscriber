@@ -5,10 +5,13 @@ import {
   mkdtempSync,
   readFileSync,
   rmSync,
+  symlinkSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { createHash } from "node:crypto";
+import { execFileSync } from "node:child_process";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const fsFaults = vi.hoisted(() => ({
@@ -111,6 +114,15 @@ describe("model provisioning service (model-tier-provisioning)", () => {
     return { freeBytes: Number.MAX_SAFE_INTEGER };
   }
 
+  function processStartIdentityForTest() {
+    const identity = execFileSync(
+      "ps",
+      ["-ww", "-p", String(process.pid), "-o", "lstart=", "-o", "args="],
+      { encoding: "utf8" },
+    ).trim();
+    return createHash("sha256").update(identity).digest("hex");
+  }
+
   function writeProvisionedTier(tierId: string) {
     const dir = join(modelRoot, tierId);
     mkdirSync(dir, { recursive: true });
@@ -146,6 +158,20 @@ describe("model provisioning service (model-tier-provisioning)", () => {
       expect(provisioningError.httpStatus).toBe(409);
       expect(provisioningError.code).toBe("tier_already_provisioned");
     }
+  });
+
+  it("refuses a symlinked model tier before deleting or downloading", () => {
+    const outside = mkdtempSync(join(tmpdir(), "superscriber-model-outside-"));
+    symlinkSync(outside, join(modelRoot, "tiny"));
+
+    try {
+      startTierDownload("tiny", { probeDiskSpace: unlimitedDisk });
+      expect.unreachable();
+    } catch (error) {
+      expect((error as ProvisioningError).code).toBe("unsafe_model_path");
+    }
+    expect(existsSync(join(modelRoot, ".provisioning.lock"))).toBe(false);
+    rmSync(outside, { recursive: true, force: true });
   });
 
   it("checks disk space before starting and refuses with an honest 507", () => {
@@ -442,6 +468,29 @@ describe("model provisioning service (model-tier-provisioning)", () => {
 
     expect(isModelProvisioned("tiny")).toBe(true);
     expect(existsSync(join(modelRoot, ".provisioning.lock"))).toBe(false);
+  });
+
+  it("does not remove a live reclaim slot", () => {
+    const reclaim = join(modelRoot, ".provisioning.lock.reclaim");
+    mkdirSync(reclaim);
+    writeFileSync(
+      join(reclaim, "owner.json"),
+      JSON.stringify({
+        pid: process.pid,
+        processStart: processStartIdentityForTest(),
+        tierId: "tiny",
+        token: "d".repeat(48),
+        createdAt: new Date(0).toISOString(),
+      }),
+    );
+
+    try {
+      startTierDownload("tiny", { probeDiskSpace: unlimitedDisk });
+      expect.unreachable();
+    } catch (error) {
+      expect((error as ProvisioningError).code).toBe("download_in_progress");
+    }
+    expect(existsSync(reclaim)).toBe(true);
   });
 
   it("serializes downloads with a 409 while another tier is in flight", async () => {

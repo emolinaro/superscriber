@@ -16,6 +16,11 @@ RESOLVED_MODEL_TIER=""
 SKIP_MODEL_DOWNLOAD=0
 SKIP_WORKER_DEPS=0
 CHECK_DEPS_ONLY=0
+BUNDLE_ID=""
+BUNDLE_DIR=""
+BUILD_OUTPUT_DIR=""
+REPOSITORY_LOCK_DIR="${REPO_ROOT}/.superscriber-bootstrap-repository.lock"
+REPOSITORY_LOCK_IDENTITY=""
 
 usage() {
   cat <<'EOF'
@@ -148,6 +153,7 @@ install_node_deps() {
 
 install_worker_deps() {
   local venv="${INSTANCE_ROOT}/venv"
+  reject_managed_instance_symlinks "${INSTANCE_ROOT}" || exit 1
   if [[ ! -x "${venv}/bin/python3" ]]; then
     log "creating worker Python venv at ${venv}"
     python3 -m venv "${venv}"
@@ -166,6 +172,7 @@ validate_worker_python_version() {
 
 validate_worker_venv() {
   local python="${INSTANCE_ROOT}/venv/bin/python3"
+  reject_managed_instance_symlinks "${INSTANCE_ROOT}" || exit 1
   validate_worker_python_version
   "${python}" -c 'import faster_whisper' >/dev/null 2>&1 || \
     fail "worker venv is missing faster-whisper. Re-run without --skip-worker-deps to install worker/requirements.txt."
@@ -207,15 +214,18 @@ write_env_assignment() {
 }
 
 normalize_runtime_permissions() {
+  reject_managed_instance_symlinks "${INSTANCE_ROOT}" || exit 1
   chmod 700 "${INSTANCE_ROOT}" "${INSTANCE_ROOT}/data" "${INSTANCE_ROOT}/data/media" \
     "${INSTANCE_ROOT}/data/uploads" "${INSTANCE_ROOT}/model-cache" \
-    "${INSTANCE_ROOT}/logs" "${INSTANCE_ROOT}/pids" "${INSTANCE_ROOT}/secrets"
+    "${INSTANCE_ROOT}/logs" "${INSTANCE_ROOT}/pids" "${INSTANCE_ROOT}/secrets" \
+    "${INSTANCE_ROOT}/build"
   find "${INSTANCE_ROOT}/data" "${INSTANCE_ROOT}/model-cache" "${INSTANCE_ROOT}/logs" \
     "${INSTANCE_ROOT}/pids" "${INSTANCE_ROOT}/secrets" -type d -exec chmod 700 {} +
   find "${INSTANCE_ROOT}/data" "${INSTANCE_ROOT}/model-cache" "${INSTANCE_ROOT}/logs" \
     "${INSTANCE_ROOT}/pids" "${INSTANCE_ROOT}/secrets" -type f -exec chmod 600 {} +
   [[ ! -f "${INSTANCE_ROOT}/instance.log" ]] || chmod 600 "${INSTANCE_ROOT}/instance.log"
   [[ ! -f "${INSTANCE_ROOT}/app.env" ]] || chmod 600 "${INSTANCE_ROOT}/app.env"
+  [[ ! -f "${INSTANCE_ROOT}/active-bundle" ]] || chmod 600 "${INSTANCE_ROOT}/active-bundle"
   chmod 600 "${INSTANCE_ROOT}/${INSTANCE_MARKER_NAME}"
 }
 
@@ -235,7 +245,8 @@ prepare_instance_root() {
     "${INSTANCE_ROOT}/model-cache" \
     "${INSTANCE_ROOT}/logs" \
     "${INSTANCE_ROOT}/pids" \
-    "${INSTANCE_ROOT}/secrets"
+    "${INSTANCE_ROOT}/secrets" \
+    "${INSTANCE_ROOT}/build"
   acquire_maintenance_lock
   normalize_runtime_permissions
 
@@ -253,48 +264,46 @@ prepare_instance_root() {
 MAINTENANCE_LOCK_DIR=""
 MAINTENANCE_IDENTITY=""
 
-maintenance_lock_age_ms() {
-  node -e 'process.stdout.write(String(Date.now() - require("node:fs").statSync(process.argv[1]).mtimeMs))' "$1"
-}
-
 reclaim_stale_maintenance_lock() {
-  local observed="$1" current stale reclaim_dir reclaim_age
-  reclaim_dir="${MAINTENANCE_LOCK_DIR}/.reclaim"
-  if ! mkdir "${reclaim_dir}" 2>/dev/null; then
-    reclaim_age="$(maintenance_lock_age_ms "${reclaim_dir}" 2>/dev/null || echo 0)"
-    if [[ "${reclaim_age}" =~ ^[0-9]+$ && "${reclaim_age}" -ge 5000 ]]; then
-      rm -rf -- "${reclaim_dir}"
-    fi
-    return 1
-  fi
-  current="$(cat "${MAINTENANCE_LOCK_DIR}/identity" 2>/dev/null || true)"
-  if [[ "${current}" != "${observed}" ]] || maintenance_lock_is_active "${INSTANCE_ROOT}"; then
-    rmdir "${reclaim_dir}" 2>/dev/null || true
-    return 1
-  fi
-  stale="${MAINTENANCE_LOCK_DIR}.stale.$$.$RANDOM"
-  if mv "${MAINTENANCE_LOCK_DIR}" "${stale}" 2>/dev/null; then
-    rm -rf -- "${stale}"
-    return 0
-  fi
-  rmdir "${reclaim_dir}" 2>/dev/null || true
-  return 1
+  reclaim_stale_owned_lock \
+    "${MAINTENANCE_LOCK_DIR}" "$1" maintenance_lock_is_active "${INSTANCE_ROOT}"
 }
 
 release_maintenance_lock() {
-  local current
+  local current stale claim observed
   [[ -n "${MAINTENANCE_LOCK_DIR}" && -d "${MAINTENANCE_LOCK_DIR}" ]] || return 0
   current="$(cat "${MAINTENANCE_LOCK_DIR}/identity" 2>/dev/null || true)"
   [[ "${current}" == "${MAINTENANCE_IDENTITY}" ]] || return 0
-  rm -f "${MAINTENANCE_LOCK_DIR}/identity"
-  rmdir "${MAINTENANCE_LOCK_DIR}" 2>/dev/null || true
+  observed="${current}"
+  claim="$(acquire_reclaim_slot "${MAINTENANCE_LOCK_DIR}")" || return 0
+  [[ "$(cat "${MAINTENANCE_LOCK_DIR}/identity" 2>/dev/null || true)" == "${observed}" ]] || {
+    release_reclaim_slot "${MAINTENANCE_LOCK_DIR}" "${claim}"
+    return 0
+  }
+  reclaim_slot_is_owned "${MAINTENANCE_LOCK_DIR}" "${claim}" || return 0
+  stale="${MAINTENANCE_LOCK_DIR}.released.$$.$RANDOM"
+  if mv "${MAINTENANCE_LOCK_DIR}" "${stale}" 2>/dev/null; then
+    rm -rf -- "${stale}"
+  fi
+  release_reclaim_slot "${MAINTENANCE_LOCK_DIR}" "${claim}"
 }
 
 acquire_maintenance_lock() {
   local attempts=0 token started observed age identity_tmp
   MAINTENANCE_LOCK_DIR="$(maintenance_lock_dir "${INSTANCE_ROOT}")"
   while [[ "${attempts}" -lt 50 ]]; do
+    if lock_reclaim_is_blocking "${MAINTENANCE_LOCK_DIR}"; then
+      attempts=$((attempts + 1))
+      sleep 0.1
+      continue
+    fi
     if mkdir "${MAINTENANCE_LOCK_DIR}" 2>/dev/null; then
+      if [[ -d "${MAINTENANCE_LOCK_DIR}.reclaim" || -L "${MAINTENANCE_LOCK_DIR}.reclaim" ]]; then
+        rmdir "${MAINTENANCE_LOCK_DIR}" 2>/dev/null || true
+        attempts=$((attempts + 1))
+        sleep 0.1
+        continue
+      fi
       token="$(node -e 'process.stdout.write(require("node:crypto").randomBytes(24).toString("hex"))')"
       started="$(process_start_fingerprint "$$")" || {
         rmdir "${MAINTENANCE_LOCK_DIR}" 2>/dev/null || true
@@ -304,14 +313,14 @@ acquire_maintenance_lock() {
       identity_tmp="${MAINTENANCE_LOCK_DIR}/identity.tmp.$$"
       printf '%s\n' "${MAINTENANCE_IDENTITY}" > "${identity_tmp}"
       mv "${identity_tmp}" "${MAINTENANCE_LOCK_DIR}/identity"
-      trap release_maintenance_lock EXIT
+      trap cleanup_bootstrap_state EXIT
       return 0
     fi
     if maintenance_lock_is_active "${INSTANCE_ROOT}"; then
       fail "another bootstrap is maintaining ${INSTANCE_ROOT}; wait for it to finish before re-running"
     fi
     observed="$(cat "${MAINTENANCE_LOCK_DIR}/identity" 2>/dev/null || true)"
-    age="$(maintenance_lock_age_ms "${MAINTENANCE_LOCK_DIR}" 2>/dev/null || echo 0)"
+    age="$(path_age_ms "${MAINTENANCE_LOCK_DIR}" 2>/dev/null || echo 0)"
     if [[ "${age}" =~ ^[0-9]+$ && "${age}" -ge 5000 ]]; then
       reclaim_stale_maintenance_lock "${observed}" || true
     fi
@@ -321,8 +330,105 @@ acquire_maintenance_lock() {
   fail "could not acquire maintenance ownership for ${INSTANCE_ROOT}; another bootstrap may be starting"
 }
 
+repository_lock_is_active() {
+  process_lock_identity_is_active_file "${REPOSITORY_LOCK_DIR}/identity"
+}
+
+release_repository_lock() {
+  local current stale claim observed
+  [[ -n "${REPOSITORY_LOCK_IDENTITY}" && -d "${REPOSITORY_LOCK_DIR}" ]] || return 0
+  current="$(cat "${REPOSITORY_LOCK_DIR}/identity" 2>/dev/null || true)"
+  [[ "${current}" == "${REPOSITORY_LOCK_IDENTITY}" ]] || return 0
+  observed="${current}"
+  claim="$(acquire_reclaim_slot "${REPOSITORY_LOCK_DIR}")" || return 0
+  [[ "$(cat "${REPOSITORY_LOCK_DIR}/identity" 2>/dev/null || true)" == "${observed}" ]] || {
+    release_reclaim_slot "${REPOSITORY_LOCK_DIR}" "${claim}"
+    return 0
+  }
+  reclaim_slot_is_owned "${REPOSITORY_LOCK_DIR}" "${claim}" || return 0
+  stale="${REPOSITORY_LOCK_DIR}.released.$$.$RANDOM"
+  if mv "${REPOSITORY_LOCK_DIR}" "${stale}" 2>/dev/null; then
+    rm -rf -- "${stale}"
+  fi
+  release_reclaim_slot "${REPOSITORY_LOCK_DIR}" "${claim}"
+  REPOSITORY_LOCK_IDENTITY=""
+}
+
+acquire_repository_lock() {
+  local attempts=0 token started identity_tmp observed age
+  while [[ "${attempts}" -lt 50 ]]; do
+    if lock_reclaim_is_blocking "${REPOSITORY_LOCK_DIR}"; then
+      attempts=$((attempts + 1))
+      sleep 0.1
+      continue
+    fi
+    if mkdir "${REPOSITORY_LOCK_DIR}" 2>/dev/null; then
+      if [[ -d "${REPOSITORY_LOCK_DIR}.reclaim" || -L "${REPOSITORY_LOCK_DIR}.reclaim" ]]; then
+        rmdir "${REPOSITORY_LOCK_DIR}" 2>/dev/null || true
+        attempts=$((attempts + 1))
+        sleep 0.1
+        continue
+      fi
+      token="$(instance_random_token)"
+      started="$(process_start_fingerprint "$$")" || {
+        rmdir "${REPOSITORY_LOCK_DIR}" 2>/dev/null || true
+        fail "could not identify the bootstrap process for repository ownership"
+      }
+      REPOSITORY_LOCK_IDENTITY="$$ ${token} ${started}"
+      identity_tmp="${REPOSITORY_LOCK_DIR}/identity.tmp.$$"
+      printf '%s\n' "${REPOSITORY_LOCK_IDENTITY}" > "${identity_tmp}"
+      mv "${identity_tmp}" "${REPOSITORY_LOCK_DIR}/identity"
+      trap cleanup_bootstrap_state EXIT
+      return 0
+    fi
+    if [[ -L "${REPOSITORY_LOCK_DIR}" ]]; then
+      fail "repository operation lock must not be a symlink: ${REPOSITORY_LOCK_DIR}"
+    fi
+    if repository_lock_is_active; then
+      fail "another local bootstrap is using this repository's dependencies; wait for it to finish before re-running"
+    fi
+    observed="$(cat "${REPOSITORY_LOCK_DIR}/identity" 2>/dev/null || true)"
+    age="$(path_age_ms "${REPOSITORY_LOCK_DIR}" 2>/dev/null || echo 0)"
+    if [[ "${age}" =~ ^[0-9]+$ && "${age}" -ge 5000 ]]; then
+      reclaim_stale_owned_lock \
+        "${REPOSITORY_LOCK_DIR}" "${observed}" repository_lock_is_active || true
+    fi
+    attempts=$((attempts + 1))
+    sleep 0.1
+  done
+  fail "could not acquire repository dependency ownership; another bootstrap may be starting"
+}
+
+cleanup_build_output() {
+  if [[ -n "${BUILD_OUTPUT_DIR}" && -d "${BUILD_OUTPUT_DIR}" ]]; then
+    case "${BUILD_OUTPUT_DIR}" in
+      "${REPO_ROOT}/.superscriber-build-output/"*) rm -rf -- "${BUILD_OUTPUT_DIR}" ;;
+    esac
+  fi
+  rmdir "${REPO_ROOT}/.superscriber-build-output" 2>/dev/null || true
+  BUILD_OUTPUT_DIR=""
+}
+
+cleanup_bundle_staging() {
+  local path
+  [[ -n "${BUNDLE_ID}" ]] || return 0
+  path="${INSTANCE_ROOT}/build/.staging-${BUNDLE_ID}"
+  if [[ -d "${path}" && ! -L "${path}" ]]; then
+    rm -rf -- "${path}"
+  fi
+}
+
+cleanup_bootstrap_state() {
+  cleanup_build_output
+  cleanup_bundle_staging
+  release_repository_lock
+  release_maintenance_lock
+}
+
 write_app_env() {
-  local env_file="${INSTANCE_ROOT}/app.env.tmp.$$"
+  local env_file="${INSTANCE_ROOT}/app.env.tmp.$$" active_file
+  reject_managed_instance_symlinks "${INSTANCE_ROOT}" || exit 1
+  [[ -n "${BUNDLE_ID}" && -n "${BUNDLE_DIR}" ]] || fail "production bundle was not published"
   : > "${env_file}"
   write_env_assignment "${env_file}" SUPERSCRIBER_AUTH_MODE local
   write_env_assignment "${env_file}" SUPERSCRIBER_DEPLOYMENT_PROFILE no-mail
@@ -337,14 +443,20 @@ write_app_env() {
   write_env_assignment "${env_file}" SUPERSCRIBER_TRANSCRIBE_OFFLINE 1
   write_env_assignment "${env_file}" SUPERSCRIBER_TRANSCRIBE_ALLOW_RUNTIME_DOWNLOAD 0
   write_env_assignment "${env_file}" SUPERSCRIBER_WORKER_PYTHON "${INSTANCE_ROOT}/venv/bin/python3"
+  write_env_assignment "${env_file}" SUPERSCRIBER_APP_BUNDLE "${BUNDLE_DIR}"
   write_env_assignment "${env_file}" PORT "${PORT}"
   write_env_assignment "${env_file}" HOSTNAME 127.0.0.1
   chmod 600 "${env_file}"
   mv "${env_file}" "${INSTANCE_ROOT}/app.env"
+  active_file="${INSTANCE_ROOT}/active-bundle.tmp.$$"
+  printf '%s\n' "${BUNDLE_ID}" > "${active_file}"
+  chmod 600 "${active_file}"
+  mv "${active_file}" "${INSTANCE_ROOT}/active-bundle"
   log "instance root ready at ${INSTANCE_ROOT} (db: data/superscriber.db, models: model-cache/, logs: logs/)"
 }
 
 provision_model() {
+  reject_managed_instance_symlinks "${INSTANCE_ROOT}" || exit 1
   if [[ "${SKIP_MODEL_DOWNLOAD}" -eq 1 ]]; then
     log "verifying cached model tier '${RESOLVED_MODEL_TIER}' (--skip-model-download)"
     (cd "${REPO_ROOT}" && SUPERSCRIBER_TRANSCRIBE_MODEL_DIR="${INSTANCE_ROOT}/model-cache" \
@@ -365,18 +477,53 @@ quiesce_instance() {
 }
 
 init_database() {
+  reject_managed_instance_symlinks "${INSTANCE_ROOT}" || exit 1
   log "initializing database (idempotent migrations)"
   (cd "${REPO_ROOT}" && SUPERSCRIBER_DB_PATH="${INSTANCE_ROOT}/data/superscriber.db" \
     npx tsx scripts/ensure-db.ts)
 }
 
 build_app() {
+  local revision token dist_relative staging bundle_hash_file relative checksum
+  revision="$(git -C "${REPO_ROOT}" rev-parse --verify HEAD)"
+  [[ "${revision}" =~ ^[0-9a-f]{40}$ ]] || fail "could not determine an immutable source revision for the production bundle"
+  token="$(instance_random_token)"
+  BUNDLE_ID="${revision}-${token}"
+  BUNDLE_DIR="${INSTANCE_ROOT}/build/${BUNDLE_ID}"
+  staging="${INSTANCE_ROOT}/build/.staging-${BUNDLE_ID}"
+  dist_relative=".superscriber-build-output/${BUNDLE_ID}"
+  BUILD_OUTPUT_DIR="${REPO_ROOT}/${dist_relative}"
+  reject_managed_instance_symlinks "${INSTANCE_ROOT}" || exit 1
+  [[ ! -e "${BUNDLE_DIR}" && ! -L "${BUNDLE_DIR}" && ! -e "${staging}" && ! -L "${staging}" ]] || \
+    fail "refusing to overwrite an existing production bundle target"
   log "building production bundle (next build, standalone output)"
-  (cd "${REPO_ROOT}" && NEXT_TELEMETRY_DISABLED=1 npm run build)
-  rm -rf "${REPO_ROOT}/.next/standalone/.next/static"
-  cp -R "${REPO_ROOT}/.next/static" "${REPO_ROOT}/.next/standalone/.next/static"
-  rm -rf "${REPO_ROOT}/.next/standalone/public"
-  cp -R "${REPO_ROOT}/public" "${REPO_ROOT}/.next/standalone/public"
+  (cd "${REPO_ROOT}" && \
+    NEXT_TELEMETRY_DISABLED=1 SUPERSCRIBER_NEXT_DIST_DIR="${dist_relative}" npm run build)
+  [[ -f "${BUILD_OUTPUT_DIR}/standalone/server.js" ]] || fail "Next standalone build did not produce server.js"
+  mkdir -p "${staging}/.next/static" "${staging}/public" "${staging}/scripts"
+  cp -RL "${BUILD_OUTPUT_DIR}/standalone/." "${staging}/"
+  cp -RL "${BUILD_OUTPUT_DIR}/static/." "${staging}/.next/static/"
+  cp -RL "${REPO_ROOT}/public/." "${staging}/public/"
+  cp -RL "${REPO_ROOT}/worker" "${staging}/worker"
+  cp "${REPO_ROOT}/scripts/instance-run.sh" \
+    "${REPO_ROOT}/scripts/instance-paths.sh" \
+    "${REPO_ROOT}/scripts/instance-stop.sh" \
+    "${REPO_ROOT}/scripts/run-worker-python.sh" \
+    "${staging}/scripts/"
+  bundle_hash_file="${staging}/bundle.sha256"
+  : > "${bundle_hash_file}"
+  for relative in server.js scripts/instance-run.sh scripts/instance-paths.sh \
+    scripts/run-worker-python.sh worker/main.py; do
+    checksum="$(node -e 'process.stdout.write(require("node:crypto").createHash("sha256").update(require("node:fs").readFileSync(process.argv[1])).digest("hex"))' "${staging}/${relative}")"
+    printf '%s %s\n' "${checksum}" "${relative}" >> "${bundle_hash_file}"
+  done
+  chmod 700 "${staging}/scripts/instance-run.sh" \
+    "${staging}/scripts/instance-stop.sh" \
+    "${staging}/scripts/run-worker-python.sh"
+  chmod -R go-rwx "${staging}"
+  mv "${staging}" "${BUNDLE_DIR}"
+  reject_managed_instance_symlinks "${INSTANCE_ROOT}" || exit 1
+  cleanup_build_output
 }
 
 launch_failure() {
@@ -457,16 +604,18 @@ main() {
   log_dependencies
   prepare_instance_root
   quiesce_instance
-  install_node_deps
-  choose_model_tier
-  provision_model
-  write_app_env
   if [[ "${SKIP_WORKER_DEPS}" -eq 0 ]]; then
     install_worker_deps
   fi
   validate_worker_venv
-  init_database
+  choose_model_tier
+  acquire_repository_lock
+  install_node_deps
   build_app
+  release_repository_lock
+  provision_model
+  init_database
+  write_app_env
   launch_instance
   release_maintenance_lock
   trap - EXIT

@@ -2,6 +2,7 @@ import {
   createReadStream,
   createWriteStream,
   existsSync,
+  lstatSync,
   mkdirSync,
   readFileSync,
   renameSync,
@@ -104,6 +105,14 @@ function lockOwnerPath(root: string) {
   return join(lockPath(root), LOCK_OWNER_FILE_NAME);
 }
 
+function reclaimPath(root: string) {
+  return `${lockPath(root)}.reclaim`;
+}
+
+function reclaimOwnerPath(root: string) {
+  return join(reclaimPath(root), LOCK_OWNER_FILE_NAME);
+}
+
 function processStartIdentity(pid: number) {
   try {
     const identity = execFileSync(
@@ -118,10 +127,11 @@ function processStartIdentity(pid: number) {
   }
 }
 
-function readLockOwner(root: string): ProvisioningLockOwner | null {
+function readOwnerFile(path: string): ProvisioningLockOwner | null {
   try {
+    if (lstatSync(path).isSymbolicLink()) return null;
     const parsed = JSON.parse(
-      readFileSync(lockOwnerPath(root), "utf8"),
+      readFileSync(path, "utf8"),
     ) as Partial<ProvisioningLockOwner>;
     if (
       typeof parsed.pid !== "number" ||
@@ -141,6 +151,16 @@ function readLockOwner(root: string): ProvisioningLockOwner | null {
   } catch {
     return null;
   }
+}
+
+function readLockOwner(root: string) {
+  if (pathIsSymbolicLink(lockPath(root))) return null;
+  return readOwnerFile(lockOwnerPath(root));
+}
+
+function readReclaimOwner(root: string) {
+  if (pathIsSymbolicLink(reclaimPath(root))) return null;
+  return readOwnerFile(reclaimOwnerPath(root));
 }
 
 function processIsAlive(pid: number) {
@@ -166,7 +186,11 @@ function liveLockOwner(root: string) {
 
 function releaseProvisioningLock(root: string, owner: ProvisioningLockOwner) {
   const current = readLockOwner(root);
-  if (current?.token === owner.token) {
+  if (
+    current?.token === owner.token &&
+    current.pid === owner.pid &&
+    current.processStart === owner.processStart
+  ) {
     const stalePath = `${lockPath(root)}.released.${owner.pid}.${owner.token}`;
     try {
       renameSync(lockPath(root), stalePath);
@@ -185,46 +209,145 @@ function lockGenerationSnapshot(root: string) {
   }
 }
 
-function removeReclaimSlot(root: string) {
+function pathGenerationSnapshot(path: string) {
   try {
-    rmdirSync(join(lockPath(root), ".reclaim"));
-  } catch {}
+    return readFileSync(path, "utf8");
+  } catch {
+    return "";
+  }
 }
 
-function reclaimStaleProvisioningLock(root: string, observed: string) {
-  const path = lockPath(root);
-  const reclaimPath = join(path, ".reclaim");
+function reclaimSlotIsOwned(root: string, owner: ProvisioningLockOwner) {
+  const current = readReclaimOwner(root);
+  return (
+    current?.token === owner.token &&
+    current.pid === owner.pid &&
+    current.processStart === owner.processStart &&
+    processOwnsLock(current)
+  );
+}
+
+function releaseReclaimSlot(root: string, owner: ProvisioningLockOwner) {
+  if (!reclaimSlotIsOwned(root, owner)) return;
+  const path = reclaimPath(root);
+  const releasedPath = `${path}.released.${owner.pid}.${owner.token}`;
   try {
-    mkdirSync(reclaimPath, { mode: 0o700 });
+    renameSync(path, releasedPath);
+    rmSync(releasedPath, { recursive: true, force: true });
   } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === "EEXIST") {
-      try {
-        if (
-          Date.now() - statSync(reclaimPath).mtimeMs >=
-          LOCK_INITIALIZATION_GRACE_MS
-        ) {
-          rmSync(reclaimPath, { recursive: true, force: true });
-        }
-      } catch {}
-      return false;
-    }
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+  }
+}
+
+function staleReclaimSlotCanBeMoved(root: string) {
+  const path = reclaimPath(root);
+  const owner = readReclaimOwner(root);
+  if (owner && processOwnsLock(owner)) return false;
+  try {
+    if (!owner && existsSync(reclaimOwnerPath(root))) return false;
+    return Date.now() - statSync(path).mtimeMs >= LOCK_INITIALIZATION_GRACE_MS;
+  } catch {
+    return true;
+  }
+}
+
+function moveStaleReclaimSlot(root: string) {
+  const path = reclaimPath(root);
+  if (!staleReclaimSlotCanBeMoved(root)) return false;
+  const observed = pathGenerationSnapshot(reclaimOwnerPath(root));
+  const stalePath = `${path}.stale.${process.pid}.${randomBytes(8).toString("hex")}`;
+  try {
+    renameSync(path, stalePath);
+  } catch (error) {
     if ((error as NodeJS.ErrnoException).code === "ENOENT") return true;
     throw error;
   }
 
+  const movedOwnerPath = join(stalePath, LOCK_OWNER_FILE_NAME);
+  const moved = pathGenerationSnapshot(movedOwnerPath);
+  const movedOwner = readOwnerFile(movedOwnerPath);
+  if (moved === observed && (!movedOwner || !processOwnsLock(movedOwner))) {
+    rmSync(stalePath, { recursive: true, force: true });
+    return true;
+  }
+  if (!existsSync(path)) {
+    try {
+      renameSync(stalePath, path);
+    } catch {}
+  }
+  return false;
+}
+
+function acquireReclaimSlot(root: string, tierId: string) {
+  const path = reclaimPath(root);
+  for (let attempt = 0; attempt < 5; attempt += 1) {
+    let created = false;
+    try {
+      if (pathIsSymbolicLink(path)) {
+        throw new Error(`Provisioning reclaim path is a symlink: ${path}`);
+      }
+      mkdirSync(path, { mode: 0o700 });
+      created = true;
+      const processStart = processStartIdentity(process.pid);
+      if (!processStart) throw new Error("could not identify the reclaim process");
+      const owner: ProvisioningLockOwner = {
+        pid: process.pid,
+        processStart,
+        tierId,
+        token: randomBytes(24).toString("hex"),
+        createdAt: new Date().toISOString(),
+      };
+      writeFileSync(reclaimOwnerPath(root), JSON.stringify(owner), {
+        encoding: "utf8",
+        mode: 0o600,
+      });
+      return owner;
+    } catch (error) {
+      if (created) rmSync(path, { recursive: true, force: true });
+      if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
+      const owner = readReclaimOwner(root);
+      if (owner && processOwnsLock(owner)) return null;
+      if (!moveStaleReclaimSlot(root)) return null;
+    }
+  }
+  return null;
+}
+
+function reclaimStaleProvisioningLock(
+  root: string,
+  observed: string,
+  tierId: string,
+) {
+  const path = lockPath(root);
+  const reclaimOwner = acquireReclaimSlot(root, tierId);
+  if (!reclaimOwner) return false;
+
   const current = lockGenerationSnapshot(root);
-  if (current !== observed || liveLockOwner(root)) {
-    removeReclaimSlot(root);
+  if (
+    current !== observed ||
+    liveLockOwner(root) ||
+    !reclaimSlotIsOwned(root, reclaimOwner)
+  ) {
+    releaseReclaimSlot(root, reclaimOwner);
     return false;
   }
 
+  if (
+    lockGenerationSnapshot(root) !== observed ||
+    liveLockOwner(root) ||
+    !reclaimSlotIsOwned(root, reclaimOwner)
+  ) {
+    releaseReclaimSlot(root, reclaimOwner);
+    return false;
+  }
   const stalePath = `${path}.stale.${process.pid}.${randomBytes(8).toString("hex")}`;
   try {
     renameSync(path, stalePath);
     rmSync(stalePath, { recursive: true, force: true });
+    releaseReclaimSlot(root, reclaimOwner);
     return true;
   } catch (error) {
-    removeReclaimSlot(root);
+    releaseReclaimSlot(root, reclaimOwner);
     if ((error as NodeJS.ErrnoException).code === "ENOENT") return true;
     throw error;
   }
@@ -238,8 +361,26 @@ function acquireProvisioningLock(
   for (let attempt = 0; attempt < 5; attempt += 1) {
     let createdLock = false;
     try {
+      if (existsSync(reclaimPath(root)) || pathIsSymbolicLink(reclaimPath(root))) {
+        const reclaimOwner = readReclaimOwner(root);
+        if (!reclaimOwner || !processOwnsLock(reclaimOwner)) {
+          moveStaleReclaimSlot(root);
+        }
+      }
+      if (existsSync(reclaimPath(root)) || pathIsSymbolicLink(reclaimPath(root))) {
+        const error = new Error("provisioning lock reclamation is in progress") as NodeJS.ErrnoException;
+        error.code = "EEXIST";
+        throw error;
+      }
       mkdirSync(path, { mode: 0o700 });
       createdLock = true;
+      if (existsSync(reclaimPath(root)) || pathIsSymbolicLink(reclaimPath(root))) {
+        rmdirSync(path);
+        createdLock = false;
+        const error = new Error("provisioning lock reclamation is in progress") as NodeJS.ErrnoException;
+        error.code = "EEXIST";
+        throw error;
+      }
       const processStart = processStartIdentity(process.pid);
       if (!processStart) {
         throw new Error("could not identify the provisioning process");
@@ -299,7 +440,7 @@ function acquireProvisioningLock(
       }
 
       const observed = lockGenerationSnapshot(root);
-      reclaimStaleProvisioningLock(root, observed);
+      reclaimStaleProvisioningLock(root, observed, tierId);
     }
   }
   throw new ProvisioningError(
@@ -340,6 +481,48 @@ function modelRoot() {
     process.env.SUPERSCRIBER_TRANSCRIBE_MODEL_DIR?.trim() ||
     join(process.cwd(), "models")
   );
+}
+
+function pathIsSymbolicLink(path: string) {
+  try {
+    return lstatSync(path).isSymbolicLink();
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return false;
+    throw error;
+  }
+}
+
+function assertSafeModelPaths(root: string, tierId: string) {
+  const protectedPaths = [
+    root,
+    join(root, tierId),
+    join(root, ".provisioning"),
+    lockPath(root),
+    reclaimPath(root),
+    ...TIER_DOWNLOADS[tierId].files.map((file) => join(root, tierId, file)),
+  ];
+  const unsafe = protectedPaths.find(pathIsSymbolicLink);
+  if (unsafe) {
+    throw new ProvisioningError(
+      409,
+      "unsafe_model_path",
+      `Model provisioning refuses the symbolic link at ${unsafe}. Replace it with storage inside the configured model directory.`,
+      { modelRoot: root, unsafePath: unsafe },
+    );
+  }
+  try {
+    if (!lstatSync(root).isDirectory()) {
+      throw new ProvisioningError(
+        409,
+        "unsafe_model_path",
+        `Model provisioning requires a real directory at ${root}.`,
+        { modelRoot: root, unsafePath: root },
+      );
+    }
+  } catch (error) {
+    if (error instanceof ProvisioningError) throw error;
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+  }
 }
 
 function defaultDiskSpaceProbe(path: string) {
@@ -579,8 +762,11 @@ async function runDownload(
   );
   const targetDir = join(root, tierId);
   const transportFor = deps.transportFor ?? defaultTransportFor;
+  let publishedTarget = false;
+  let publishedIdentity: { dev: bigint; ino: bigint } | null = null;
 
   try {
+    assertSafeModelPaths(root, tierId);
     removeDirectory(join(root, ".provisioning"));
     mkdirSync(stagingDir, { recursive: true });
 
@@ -616,8 +802,23 @@ async function runDownload(
       return;
     }
 
-    rmSync(targetDir, { recursive: true, force: true });
+    assertSafeModelPaths(root, tierId);
+    if (existsSync(targetDir)) {
+      const targetIdentity = lstatSync(targetDir, { bigint: true });
+      if (!targetIdentity.isDirectory()) {
+        throw new ProvisioningError(
+          409,
+          "unsafe_model_path",
+          `Model provisioning refuses the non-directory target at ${targetDir}.`,
+          { modelRoot: root, unsafePath: targetDir },
+        );
+      }
+      rmSync(targetDir, { recursive: true, force: true });
+    }
     renameSync(stagingDir, targetDir);
+    publishedTarget = true;
+    const targetIdentity = lstatSync(targetDir, { bigint: true });
+    publishedIdentity = { dev: targetIdentity.dev, ino: targetIdentity.ino };
     clearStaging(root, stagingDir);
 
     if (!isModelProvisioned(tierId)) {
@@ -642,8 +843,16 @@ async function runDownload(
       finishedAt: (deps.now ?? (() => new Date()))().toISOString(),
     });
     clearStaging(root, stagingDir);
-    if (!isModelProvisioned(tierId)) {
-      removeDirectory(targetDir);
+    if (publishedTarget && publishedIdentity && !pathIsSymbolicLink(targetDir)) {
+      try {
+        const current = lstatSync(targetDir, { bigint: true });
+        if (
+          current.dev === publishedIdentity.dev &&
+          current.ino === publishedIdentity.ino
+        ) {
+          removeDirectory(targetDir);
+        }
+      } catch {}
     }
     console.error(`Model download for tier '${tierId}' failed: ${message}`);
   } finally {
@@ -663,6 +872,19 @@ export function startTierDownload(
     );
   }
 
+  const root = modelRoot();
+  try {
+    mkdirSync(root, { recursive: true });
+  } catch (error) {
+    throw new ProvisioningError(
+      500,
+      "model_root_unwritable",
+      `The model directory ${root} cannot be created or written: ${error instanceof Error ? error.message : String(error)}`,
+      { modelRoot: root },
+    );
+  }
+  assertSafeModelPaths(root, tierId);
+
   if (isModelProvisioned(tierId)) {
     throw new ProvisioningError(
       409,
@@ -681,17 +903,6 @@ export function startTierDownload(
     );
   }
 
-  const root = modelRoot();
-  try {
-    mkdirSync(root, { recursive: true });
-  } catch (error) {
-    throw new ProvisioningError(
-      500,
-      "model_root_unwritable",
-      `The model directory ${root} cannot be created or written: ${error instanceof Error ? error.message : String(error)}`,
-      { modelRoot: root },
-    );
-  }
   const lockOwner = acquireProvisioningLock(root, tierId);
   if (isModelProvisioned(tierId)) {
     releaseProvisioningLock(root, lockOwner);

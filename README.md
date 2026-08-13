@@ -66,8 +66,9 @@ The bootstrap is idempotent and safe to re-run. It:
    menu (default: the catalog default `small`); `--skip-model-download`
    preserves an explicit or previously configured tier and verifies its cache,
    so re-runs work offline without silently changing models
-5. Builds the standalone production bundle and launches app + worker under a
-   SIGTERM-stoppable crash-restart supervisor with per-role logs and bounded
+5. Builds and atomically publishes an immutable standalone production bundle
+   under the instance root, then launches app + worker from that bundle under
+   a SIGTERM-stoppable crash-restart supervisor with per-role logs and bounded
    backoff (`scripts/instance-run.sh`). Bootstrap waits for both app health and
    the worker's offline-model readiness signal before reporting success
 
@@ -79,7 +80,11 @@ Instance layout (all under the instance root): `.superscriber-instance`
 (bootstrap ownership marker), `app.env` (non-secret config), `secrets/`
 (auth + engine secrets, mode `0600`, never printed), `data/`
 (SQLite database, media, uploads), `model-cache/` (model tiers), `logs/`
-(`app.log`, `worker.log`, `supervisor.log`), `pids/`.
+(`app.log`, `worker.log`, `supervisor.log`), `pids/`, and immutable `build/`
+bundles selected through `active-bundle`. Existing managed directories and
+leaf files, including database/WAL files, secrets, logs, PID/readiness files,
+and model-tier directories, must not be symlinks; bootstrap refuses them
+before writing.
 
 Operate the instance:
 

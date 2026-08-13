@@ -1,4 +1,10 @@
-import { mkdtempSync, mkdirSync, writeFileSync } from "node:fs";
+import {
+  mkdtempSync,
+  mkdirSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -98,6 +104,18 @@ describe("model catalog (demo-model-tier-picker)", () => {
       }
     }
     expect(isModelProvisioned("tiny")).toBe(false);
+  });
+
+  it("rejects a symlinked model tier directory", () => {
+    snapshotEnv();
+    const root = mkdtempSync(join(tmpdir(), "model-catalog-symlink-"));
+    const outside = mkdtempSync(join(tmpdir(), "model-catalog-outside-"));
+    provision(outside, "small");
+    symlinkSync(join(outside, "small"), join(root, "small"));
+    process.env.SUPERSCRIBER_TRANSCRIBE_MODEL_DIR = root;
+
+    expect(isModelProvisioned("small")).toBe(false);
+    rmSync(outside, { recursive: true, force: true });
   });
 
   it("marks provisioned tiers available and defaults to best provisioned quality", () => {

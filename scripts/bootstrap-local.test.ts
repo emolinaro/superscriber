@@ -17,6 +17,7 @@ import {
 import { spawn, spawnSync, type ChildProcess } from "node:child_process";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
+import { createHash } from "node:crypto";
 import { afterEach, describe, expect, it } from "vitest";
 
 const REPO_ROOT = resolve(__dirname, "..");
@@ -346,6 +347,47 @@ describe("local deployment bootstrap scripts", () => {
     expect(existsSync(join(instance, "app.env"))).toBe(false);
   });
 
+  it.each([
+    ["database", join("data", "superscriber.db")],
+    ["database wal", join("data", "superscriber.db-wal")],
+    ["auth secret", join("secrets", "auth.secret")],
+    ["app log", join("logs", "app.log")],
+    ["role identity", join("pids", "worker.identity")],
+    ["model tier", join("model-cache", "small")],
+  ])("rejects a symlinked managed %s leaf", (_label, relative) => {
+    testRoot = worktreeTestRoot();
+    const instance = join(testRoot, "instance");
+    const outside = join(testRoot, "outside");
+    markInstanceRoot(instance);
+    mkdirSync(resolve(instance, relative, ".."), { recursive: true });
+    if (relative === join("model-cache", "small")) {
+      mkdirSync(outside);
+      symlinkSync(outside, join(instance, relative));
+    } else {
+      writeFileSync(outside, "outside");
+      symlinkSync(outside, join(instance, relative));
+    }
+
+    const result = runScript(
+      BOOTSTRAP,
+      [
+        "--instance-root",
+        instance,
+        "--port",
+        freePort(),
+        "--skip-model-download",
+        "--skip-worker-deps",
+      ],
+      stubNpxEnv(testRoot),
+    );
+
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain("managed instance path must not be a symlink");
+    if (relative !== join("model-cache", "small")) {
+      expect(readFileSync(outside, "utf8")).toBe("outside");
+    }
+  });
+
   it("instance-run refuses a foreign process on the instance port", async () => {
     testRoot = mkdtempSync(join(tmpdir(), "superscriber-bootstrap-test-"));
     const instance = join(testRoot, "instance");
@@ -604,13 +646,9 @@ describe("local deployment bootstrap scripts", () => {
         },
       );
       // The stubbed build fails, so bootstrap stops before launch - but the
-      // instance files it already wrote are the assertion target.
+      // instance directories and secrets it already wrote are the assertion target.
       expect(result.status).not.toBe(0);
-      const envContent = readFileSync(join(instance, "app.env"), "utf8");
-      expect(envContent).toContain("SUPERSCRIBER_AUTH_MODE=local");
-      expect(envContent).toContain(`PORT=${port}`);
-      expect(envContent).toContain("SUPERSCRIBER_TRANSCRIBE_MODEL=medium");
-      expect(envContent).not.toContain("AUTH_SECRET=");
+      expect(existsSync(join(instance, "app.env"))).toBe(false);
       const authSecret = readFileSync(
         join(instance, "secrets", "auth.secret"),
         "utf8",
@@ -621,21 +659,8 @@ describe("local deployment bootstrap scripts", () => {
       );
       expect(authSecret.trim()).toMatch(/^[0-9a-f]{96}$/);
       expect(engineSecret.trim()).toMatch(/^[0-9a-f]{64}$/);
-      expect(envContent).not.toContain(authSecret.trim());
-      expect(envContent).not.toContain(engineSecret.trim());
       expect(existsSync(join(instance, "data"))).toBe(true);
-      const sourced = spawnSync(
-        "bash",
-        [
-          "-c",
-          `. ${shellQuote(join(instance, "app.env"))}; printf '%s' "$SUPERSCRIBER_DB_PATH"`,
-        ],
-        { encoding: "utf8" },
-      );
-      expect(sourced.status, sourced.stderr).toBe(0);
-      expect(sourced.stdout).toBe(join(instance, "data", "superscriber.db"));
       expect(statSync(instance).mode & 0o777).toBe(0o700);
-      expect(statSync(join(instance, "app.env")).mode & 0o777).toBe(0o600);
       expect(statSync(join(instance, "data")).mode & 0o777).toBe(0o700);
       expect(statSync(join(instance, "logs")).mode & 0o777).toBe(0o700);
       expect(statSync(join(instance, "data", "existing.db")).mode & 0o777).toBe(
@@ -675,11 +700,56 @@ describe("local deployment bootstrap scripts", () => {
         stubNpxEnv(testRoot),
       );
       expect(result.status).not.toBe(0);
-      expect(readFileSync(join(instance, "app.env"), "utf8")).toContain(
-        "SUPERSCRIBER_TRANSCRIBE_MODEL=medium",
+      expect(readFileSync(join(instance, "app.env"), "utf8")).toBe(
+        "SUPERSCRIBER_TRANSCRIBE_MODEL=medium\n",
       );
     },
   );
+
+  it("publishes immutable per-instance bundles and configures their path", () => {
+    const source = readFileSync(BOOTSTRAP, "utf8");
+    expect(source).toContain('BUNDLE_DIR="${INSTANCE_ROOT}/build/${BUNDLE_ID}"');
+    expect(source).toContain('mv "${staging}" "${BUNDLE_DIR}"');
+    expect(source).toContain("write_env_assignment \"${env_file}\" SUPERSCRIBER_APP_BUNDLE");
+    expect(source).toContain('SUPERSCRIBER_NEXT_DIST_DIR="${dist_relative}"');
+    expect(source).toContain("acquire_repository_lock");
+  });
+
+  it("revalidates maintenance ownership in the supervisor child", () => {
+    const source = readFileSync(RUN, "utf8");
+    const superviseCase = source.indexOf('[[ "${SUPERVISOR_TOKEN}" =~');
+    const revalidation = source.indexOf("valid_maintenance_authorization ||", superviseCase);
+    const identityPublish = source.indexOf('mv "${identity_tmp}" "${IDENTITY_FILE}"');
+    expect(superviseCase).toBeGreaterThan(-1);
+    expect(revalidation).toBeGreaterThan(superviseCase);
+    expect(identityPublish).toBeGreaterThan(revalidation);
+  });
+
+  it("terminates a role child when identity publication fails", () => {
+    const source = readFileSync(RUN, "utf8");
+    expect(source).toContain('if ! write_role_identity "${role}" "${child_pid}" "${role_token}"; then');
+    expect(source).toContain('kill "${child_pid}" 2>/dev/null || true');
+    expect(source).toContain('wait "${child_pid}" 2>/dev/null || true');
+  });
+
+  it("launches only a hash-verified active bundle", () => {
+    testRoot = worktreeTestRoot();
+    const instance = join(testRoot, "instance");
+    const appServer = join(testRoot, "server.js");
+    const workerPython = join(testRoot, "worker-python");
+    writeFileSync(appServer, "setTimeout(()=>{},30000)\n");
+    writeFileSync(workerPython, "#!/bin/sh\nexec sleep 30\n");
+    chmodSync(workerPython, 0o700);
+    prepareRunnableInstance(instance, freePort(), appServer, workerPython);
+    const bundleId = readFileSync(join(instance, "active-bundle"), "utf8").trim();
+    writeFileSync(join(instance, "build", bundleId, "server.js"), "tampered\n");
+
+    const result = runScript(RUN, [instance]);
+
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain("valid immutable instance bundle");
+    expect(runScript(RUN, [instance, "--status"]).status).toBe(1);
+  });
 
   it(
     "reports a worker startup failure instead of app-only readiness",
@@ -821,10 +891,44 @@ function prepareRunnableInstance(
   appServer: string,
   workerPython: string,
 ) {
+  const bundleId = `${"a".repeat(40)}-${"b".repeat(48)}`;
+  const bundle = join(instance, "build", bundleId);
   markInstanceRoot(instance);
   mkdirSync(join(instance, "pids"), { recursive: true });
   mkdirSync(join(instance, "logs"), { recursive: true });
   mkdirSync(join(instance, "secrets"), { recursive: true });
+  mkdirSync(join(bundle, "scripts"), { recursive: true });
+  mkdirSync(join(bundle, "worker"), { recursive: true });
+  writeFileSync(join(bundle, "server.js"), "");
+  writeFileSync(
+    join(bundle, "scripts", "instance-run.sh"),
+    readFileSync(RUN, "utf8"),
+  );
+  writeFileSync(
+    join(bundle, "scripts", "instance-paths.sh"),
+    readFileSync(INSTANCE_PATHS, "utf8"),
+  );
+  writeFileSync(
+    join(bundle, "scripts", "run-worker-python.sh"),
+    readFileSync(join(REPO_ROOT, "scripts", "run-worker-python.sh"), "utf8"),
+  );
+  writeFileSync(join(bundle, "worker", "main.py"), "");
+  const manifest = [
+    "server.js",
+    "scripts/instance-run.sh",
+    "scripts/instance-paths.sh",
+    "scripts/run-worker-python.sh",
+    "worker/main.py",
+  ]
+    .map((relative) => {
+      const checksum = createHash("sha256")
+        .update(readFileSync(join(bundle, relative)))
+        .digest("hex");
+      return `${checksum} ${relative}`;
+    })
+    .join("\n");
+  writeFileSync(join(bundle, "bundle.sha256"), `${manifest}\n`);
+  writeFileSync(join(instance, "active-bundle"), `${bundleId}\n`);
   writeFileSync(join(instance, "secrets", "auth.secret"), "auth");
   writeFileSync(join(instance, "secrets", "engine.secret"), "engine");
   writeFileSync(
@@ -833,6 +937,7 @@ function prepareRunnableInstance(
       `PORT=${port}`,
       "HOSTNAME=127.0.0.1",
       `SUPERSCRIBER_APP_SERVER=${shellQuote(appServer)}`,
+      `SUPERSCRIBER_APP_BUNDLE=${shellQuote(bundle)}`,
       `SUPERSCRIBER_WORKER_PYTHON=${shellQuote(workerPython)}`,
       "SUPERSCRIBER_ENGINE_MODE=internal",
       "",

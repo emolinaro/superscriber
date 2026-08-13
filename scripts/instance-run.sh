@@ -20,7 +20,7 @@ reject_managed_instance_symlinks "${INSTANCE_ROOT}" || exit 1
 MODE="${2:---start}"
 SUPERVISOR_TOKEN="${3:-}"
 
-REPO="$(cd "${SCRIPT_DIR}/.." && pwd)"
+RUNTIME_ROOT=""
 LOG_DIR="${INSTANCE_ROOT}/logs"
 PID_DIR="${INSTANCE_ROOT}/pids"
 LOCK_DIR="${PID_DIR}/supervisor.lock"
@@ -33,12 +33,12 @@ PORT=""
 timestamp() { date -u +%Y-%m-%dT%H:%M:%SZ; }
 
 random_token() {
-  node -e 'process.stdout.write(require("node:crypto").randomBytes(24).toString("hex"))'
+  instance_random_token
 }
 
 read_identity() {
   local pid token
-  [[ -f "${IDENTITY_FILE}" ]] || return 1
+  [[ -f "${IDENTITY_FILE}" && ! -L "${IDENTITY_FILE}" ]] || return 1
   read -r pid token < "${IDENTITY_FILE}" || return 1
   [[ "${pid}" =~ ^[0-9]+$ && "${token}" =~ ^[0-9a-f]{48}$ ]] || return 1
   printf '%s %s\n' "${pid}" "${token}"
@@ -46,7 +46,7 @@ read_identity() {
 
 process_matches_identity() {
   local pid="$1" token="$2" args
-  kill -0 "${pid}" 2>/dev/null || return 1
+  process_matches_start_fingerprint "${pid}" "$(cat "${LOCK_DIR}/started" 2>/dev/null || true)" || return 1
   args="$(ps -ww -p "${pid}" -o args= 2>/dev/null || true)"
   [[ "${args}" == *"instance-run.sh"* && "${args}" == *"--supervise ${token}"* ]]
 }
@@ -69,40 +69,15 @@ wait_for_valid_identity() {
 }
 
 reclaim_stale_lock() {
-  local observed current stale reclaim_dir reclaim_age
+  local observed
   [[ -d "${LOCK_DIR}" ]] || return 0
   valid_identity && return 1
-  observed="$(lock_generation_snapshot)"
-  reclaim_dir="${LOCK_DIR}/.reclaim"
-  if ! mkdir "${reclaim_dir}" 2>/dev/null; then
-    reclaim_age="$(node -e 'process.stdout.write(String(Date.now() - require("node:fs").statSync(process.argv[1]).mtimeMs))' "${reclaim_dir}" 2>/dev/null || echo 0)"
-    if [[ "${reclaim_age}" =~ ^[0-9]+$ && "${reclaim_age}" -ge 5000 ]]; then
-      rm -rf -- "${reclaim_dir}"
-    fi
-    return 1
-  fi
-  current="$(lock_generation_snapshot)"
-  if [[ "${current}" != "${observed}" ]] || valid_identity; then
-    rmdir "${reclaim_dir}" 2>/dev/null || true
-    return 1
-  fi
-  stale="${LOCK_DIR}.stale.$$.$RANDOM"
-  if mv "${LOCK_DIR}" "${stale}" 2>/dev/null; then
-    rm -rf -- "${stale}"
-    return 0
-  fi
-  rmdir "${reclaim_dir}" 2>/dev/null || true
-  return 1
-}
-
-lock_generation_snapshot() {
-  printf 'token=%s\nidentity=%s\n' \
-    "$(cat "${TOKEN_FILE}" 2>/dev/null || true)" \
-    "$(cat "${IDENTITY_FILE}" 2>/dev/null || true)"
+  observed="$(cat "${IDENTITY_FILE}" 2>/dev/null || true)"
+  reclaim_stale_owned_lock "${LOCK_DIR}" "${observed}" supervisor_lock_is_active "${LOCK_DIR}"
 }
 
 remove_owned_supervisor_lock() {
-  local token="$1" identity identity_token stale
+  local token="$1" identity identity_token stale current claim observed
   [[ -d "${LOCK_DIR}" && -f "${TOKEN_FILE}" ]] || return 0
   [[ "$(cat "${TOKEN_FILE}" 2>/dev/null || true)" == "${token}" ]] || return 0
   identity="$(read_identity 2>/dev/null || true)"
@@ -110,15 +85,25 @@ remove_owned_supervisor_lock() {
     read -r _ identity_token <<< "${identity}"
     [[ "${identity_token}" == "${token}" ]] || return 0
   fi
+  current="$(cat "${TOKEN_FILE}" 2>/dev/null || true) $(cat "${IDENTITY_FILE}" 2>/dev/null || true)"
+  [[ "${current}" == "${token} ${identity}" ]] || return 0
+  observed="$(cat "${IDENTITY_FILE}" 2>/dev/null || true)"
+  claim="$(acquire_reclaim_slot "${LOCK_DIR}")" || return 0
+  [[ "$(cat "${IDENTITY_FILE}" 2>/dev/null || true)" == "${observed}" ]] || {
+    release_reclaim_slot "${LOCK_DIR}" "${claim}"
+    return 0
+  }
+  reclaim_slot_is_owned "${LOCK_DIR}" "${claim}" || return 0
   stale="${LOCK_DIR}.stale.$$.$RANDOM"
   if mv "${LOCK_DIR}" "${stale}" 2>/dev/null; then
     rm -rf -- "${stale}"
   fi
+  release_reclaim_slot "${LOCK_DIR}" "${claim}"
 }
 
 port_of_instance() {
   local port
-  [[ -f "${INSTANCE_ROOT}/app.env" ]] || {
+  [[ -f "${INSTANCE_ROOT}/app.env" && ! -L "${INSTANCE_ROOT}/app.env" ]] || {
     echo "missing ${INSTANCE_ROOT}/app.env; run scripts/bootstrap-local.sh first" >&2
     return 1
   }
@@ -218,17 +203,27 @@ prepare_runtime_files() {
   chmod 600 "${INSTANCE_LOG}" "${LOG_DIR}/supervisor.log" "${LOG_DIR}/app.log" "${LOG_DIR}/worker.log"
 }
 
+valid_maintenance_authorization() {
+  local current
+  [[ -n "${SUPERSCRIBER_MAINTENANCE_IDENTITY:-}" ]] || return 1
+  current="$(cat "$(maintenance_lock_dir "${INSTANCE_ROOT}")/identity" 2>/dev/null || true)"
+  [[ "${current}" == "${SUPERSCRIBER_MAINTENANCE_IDENTITY}" ]] || return 1
+  maintenance_lock_is_active "${INSTANCE_ROOT}"
+}
+
 maintenance_blocks_start() {
   local lock_dir current
   lock_dir="$(maintenance_lock_dir "${INSTANCE_ROOT}")"
   [[ -d "${lock_dir}" ]] || return 1
   current="$(cat "${lock_dir}/identity" 2>/dev/null || true)"
-  [[ -n "${SUPERSCRIBER_MAINTENANCE_IDENTITY:-}" && "${current}" == "${SUPERSCRIBER_MAINTENANCE_IDENTITY}" ]] && return 1
+  if valid_maintenance_authorization; then
+    return 1
+  fi
   return 0
 }
 
 start_instance() {
-  local token expected_pid port attempts
+  local token expected_pid port attempts supervisor_script active_bundle
   if maintenance_blocks_start; then
     if maintenance_lock_is_active "${INSTANCE_ROOT}"; then
       echo "refusing to start while bootstrap maintenance is in progress for ${INSTANCE_ROOT}" >&2
@@ -239,9 +234,21 @@ start_instance() {
   fi
   prepare_runtime_files
   while true; do
+    if lock_reclaim_is_blocking "${LOCK_DIR}"; then
+      sleep 0.05
+      continue
+    fi
     if mkdir "${LOCK_DIR}" 2>/dev/null; then
+      if [[ -d "${LOCK_DIR}.reclaim" || -L "${LOCK_DIR}.reclaim" ]]; then
+        rmdir "${LOCK_DIR}" 2>/dev/null || true
+        sleep 0.05
+        continue
+      fi
       token="$(random_token)"
       printf '%s\n' "${token}" > "${TOKEN_FILE}"
+      : > "${LOCK_DIR}/started"
+      printf '2147483647 %s\n' "${token}" > "${IDENTITY_FILE}.initializing.$$"
+      mv "${IDENTITY_FILE}.initializing.$$" "${IDENTITY_FILE}"
       if maintenance_blocks_start; then
         remove_owned_supervisor_lock "${token}"
         echo "refusing to start while bootstrap maintenance is in progress for ${INSTANCE_ROOT}" >&2
@@ -256,7 +263,13 @@ start_instance() {
         echo "refusing to start with port ${port} occupied by a foreign process" >&2
         return 1
       fi
-      nohup bash "${SCRIPT_DIR}/instance-run.sh" "${INSTANCE_ROOT}" --supervise "${token}" >>"${INSTANCE_LOG}" 2>&1 &
+      active_bundle="$(resolve_active_bundle "${INSTANCE_ROOT}" 2>/dev/null)" || {
+        remove_owned_supervisor_lock "${token}"
+        echo "refusing to start without a valid immutable instance bundle; re-run scripts/bootstrap-local.sh" >&2
+        return 1
+      }
+      supervisor_script="${active_bundle}/scripts/instance-run.sh"
+      nohup bash "${supervisor_script}" "${INSTANCE_ROOT}" --supervise "${token}" >>"${INSTANCE_LOG}" 2>&1 &
       expected_pid=$!
       attempts=0
       while [[ "${attempts}" -lt 50 ]]; do
@@ -296,12 +309,24 @@ case "${MODE}" in
 esac
 
 [[ "${SUPERVISOR_TOKEN}" =~ ^[0-9a-f]{48}$ ]] || exit 1
-[[ -f "${TOKEN_FILE}" && "$(cat "${TOKEN_FILE}")" == "${SUPERVISOR_TOKEN}" ]] || exit 1
+[[ -f "${TOKEN_FILE}" && ! -L "${TOKEN_FILE}" && "$(cat "${TOKEN_FILE}")" == "${SUPERVISOR_TOKEN}" ]] || exit 1
+[[ "$(awk '{ print $2 }' "${IDENTITY_FILE}" 2>/dev/null || true)" == "${SUPERVISOR_TOKEN}" ]] || exit 1
+if [[ -n "${SUPERSCRIBER_MAINTENANCE_IDENTITY:-}" ]]; then
+  valid_maintenance_authorization || {
+    echo "refusing supervisor ownership without matching bootstrap maintenance authorization" >&2
+    exit 1
+  }
+elif maintenance_blocks_start; then
+  echo "refusing supervisor ownership while bootstrap maintenance is in progress for ${INSTANCE_ROOT}" >&2
+  exit 1
+fi
 prepare_runtime_files
 SUPERVISOR_PID="$$"
 rm -f "${SUPERVISOR_PID_FILE}" "${PID_DIR}/app.pid" "${PID_DIR}/worker.pid" \
   "${PID_DIR}/app.identity" "${PID_DIR}/worker.identity" \
   "${PID_DIR}/worker.ready" "${PID_DIR}/worker.failed"
+printf '%s\n' "$(process_start_fingerprint "$$")" > "${LOCK_DIR}/started.tmp.$$"
+mv "${LOCK_DIR}/started.tmp.$$" "${LOCK_DIR}/started"
 identity_tmp="${IDENTITY_FILE}.$$"
 printf '%s %s\n' "${SUPERVISOR_PID}" "${SUPERVISOR_TOKEN}" > "${identity_tmp}"
 mv "${identity_tmp}" "${IDENTITY_FILE}"
@@ -314,6 +339,7 @@ say_supervisor() {
 }
 
 load_env() {
+  local active_bundle
   [[ -f "${INSTANCE_ROOT}/app.env" ]] || {
     echo "missing ${INSTANCE_ROOT}/app.env; run scripts/bootstrap-local.sh first" >&2
     exit 1
@@ -322,6 +348,22 @@ load_env() {
   # shellcheck disable=SC1090,SC1091
   . "${INSTANCE_ROOT}/app.env"
   set +a
+  if [[ -n "${SUPERSCRIBER_APP_BUNDLE:-}" ]]; then
+    active_bundle="$(resolve_active_bundle "${INSTANCE_ROOT}")" || {
+      echo "active instance bundle is missing or unsafe; re-run scripts/bootstrap-local.sh" >&2
+      exit 1
+    }
+    [[ "${SUPERSCRIBER_APP_BUNDLE}" == "${active_bundle}" ]] || {
+      echo "app.env does not match the active instance bundle; re-run scripts/bootstrap-local.sh" >&2
+      exit 1
+    }
+    RUNTIME_ROOT="${active_bundle}"
+  else
+    echo "app.env has no immutable app bundle; re-run scripts/bootstrap-local.sh" >&2
+    exit 1
+  fi
+  [[ -f "${INSTANCE_ROOT}/secrets/auth.secret" && ! -L "${INSTANCE_ROOT}/secrets/auth.secret" ]] || exit 1
+  [[ -f "${INSTANCE_ROOT}/secrets/engine.secret" && ! -L "${INSTANCE_ROOT}/secrets/engine.secret" ]] || exit 1
   AUTH_SECRET="$(cat "${INSTANCE_ROOT}/secrets/auth.secret")"
   NEXTAUTH_SECRET="${AUTH_SECRET}"
   SUPERSCRIBER_ENGINE_SHARED_SECRET="$(cat "${INSTANCE_ROOT}/secrets/engine.secret")"
@@ -401,7 +443,15 @@ run_role() {
       done
     ) 2>&1 &
     child_pid=$!
-    write_role_identity "${role}" "${child_pid}" "${role_token}" || true
+    if ! write_role_identity "${role}" "${child_pid}" "${role_token}"; then
+      if kill -0 "${child_pid}" 2>/dev/null; then
+        kill "${child_pid}" 2>/dev/null || true
+        wait "${child_pid}" 2>/dev/null || true
+        set -e
+        say_supervisor "${role} identity publication failed; child terminated"
+        return 1
+      fi
+    fi
     wait "${child_pid}"
     status=$?
     set -e
@@ -447,7 +497,7 @@ cleanup_identity() {
   read -r pid token <<< "${identity}"
   [[ "${pid}" == "${SUPERVISOR_PID}" && "${token}" == "${SUPERVISOR_TOKEN}" ]] || return
   terminate_children
-  rm -f "${IDENTITY_FILE}" "${TOKEN_FILE}" "${SUPERVISOR_PID_FILE}" \
+  rm -f "${IDENTITY_FILE}" "${TOKEN_FILE}" "${LOCK_DIR}/started" "${SUPERVISOR_PID_FILE}" \
     "${PID_DIR}/app.pid" "${PID_DIR}/worker.pid" \
     "${PID_DIR}/app.identity" "${PID_DIR}/worker.identity" \
     "${PID_DIR}/worker.ready" "${PID_DIR}/worker.failed"
@@ -471,15 +521,15 @@ trap cleanup_identity EXIT
 trap shutdown INT TERM
 unset SUPERSCRIBER_MAINTENANCE_IDENTITY
 load_env
-cd "${REPO}"
+cd "${RUNTIME_ROOT}"
 
-run_role app node "${SUPERSCRIBER_APP_SERVER:-${REPO}/.next/standalone/server.js}" &
+run_role app node "${SUPERSCRIBER_APP_SERVER:-${RUNTIME_ROOT}/server.js}" &
 APP_LOOP_PID=$!
 
 if [[ "${SUPERSCRIBER_ENGINE_MODE:-internal}" == "internal" ]]; then
   run_role worker env PYTHONUNBUFFERED=1 \
     SUPERSCRIBER_WORKER_PYTHON="${SUPERSCRIBER_WORKER_PYTHON:-${INSTANCE_ROOT}/venv/bin/python3}" \
-    bash "${REPO}/scripts/run-worker-python.sh" "${REPO}/worker/main.py" &
+    bash "${RUNTIME_ROOT}/scripts/run-worker-python.sh" "${RUNTIME_ROOT}/worker/main.py" &
   WORKER_LOOP_PID=$!
 fi
 

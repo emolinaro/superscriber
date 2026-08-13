@@ -98,6 +98,14 @@ export function isModelProvisioned(tierId: string): boolean {
     return false;
   }
   const dir = join(modelRoot(), tierId);
+  try {
+    const tierDirectory = lstatSync(dir);
+    if (!tierDirectory.isDirectory() || tierDirectory.isSymbolicLink()) {
+      return false;
+    }
+  } catch {
+    return false;
+  }
   return TIER_DOWNLOADS[tierId].files.every((file) => {
     try {
       const artifact = lstatSync(join(dir, file));
