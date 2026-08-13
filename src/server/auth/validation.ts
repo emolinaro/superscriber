@@ -11,8 +11,9 @@ export const loginCredentialsSchema = z.object({
 });
 
 export const PASSWORD_MISMATCH_MESSAGE = "Passwords must match.";
+export const CONFIRM_PASSWORD_REQUIRED_MESSAGE = "Confirm the password.";
 
-const confirmPasswordField = z.string().min(1, "Confirm the password.");
+const confirmPasswordField = z.string().min(1, CONFIRM_PASSWORD_REQUIRED_MESSAGE);
 
 function requirePasswordMatch(
   value: { password: string; confirmPassword: string },

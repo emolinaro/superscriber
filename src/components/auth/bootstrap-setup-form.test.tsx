@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { BootstrapFormState } from "@/lib/auth-forms";
@@ -163,7 +163,13 @@ describe("BootstrapSetupForm", () => {
     if (!form) {
       throw new Error("Expected the bootstrap form to render.");
     }
-    fireEvent.submit(form);
+    await act(async () => {
+      fireEvent.submit(form);
+    });
+    const summary = screen.getByRole("alert", { name: "There is a problem" });
+    expect(
+      within(summary).getByText("Confirm password - Passwords must match."),
+    ).toBeVisible();
     await waitFor(() => {
       expect(confirmInput).toHaveFocus();
     });
@@ -180,5 +186,29 @@ describe("BootstrapSetupForm", () => {
     expect(action).toHaveBeenCalledTimes(1);
     const formData = vi.mocked(action).mock.calls[0]?.[1];
     expect(formData?.get("confirmPassword")).toBe("correct horse battery staple");
+  });
+
+  it("blocks a blank password confirmation through the field and error summary", async () => {
+    const user = userEvent.setup();
+    const action: (state: BootstrapFormState, formData: FormData) => Promise<BootstrapFormState> =
+      vi.fn(async () => ({ values: {} }));
+
+    render(<BootstrapSetupForm action={action} readiness={READY_READINESS} />);
+
+    await user.type(screen.getByLabelText("Password"), "correct horse battery staple");
+    const confirmInput = screen.getByLabelText("Confirm password");
+    await user.click(screen.getByRole("button", { name: "Create admin" }));
+
+    expect(action).not.toHaveBeenCalled();
+    expect(confirmInput).toHaveAttribute("aria-invalid", "true");
+    expect(confirmInput).toHaveAttribute("aria-describedby", "confirmPassword-error");
+    expect(screen.getByText("Confirm the password.")).toBeVisible();
+    const summary = screen.getByRole("alert", { name: "There is a problem" });
+    expect(
+      within(summary).getByText("Confirm password - Confirm the password."),
+    ).toBeVisible();
+    await waitFor(() => {
+      expect(confirmInput).toHaveFocus();
+    });
   });
 });

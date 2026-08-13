@@ -303,6 +303,9 @@ describe("AccountsSection", () => {
     expect(
       within(summary).getByText("Confirm password - Passwords must match."),
     ).toBeVisible();
+    await waitFor(() => {
+      expect(confirmInput).toHaveFocus();
+    });
 
     await user.clear(confirmInput);
     await user.type(confirmInput, "correct horse battery staple");

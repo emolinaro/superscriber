@@ -3,7 +3,10 @@
 import { useActionState, useEffect, useMemo, useRef, useState } from "react";
 import { ErrorSummary } from "@/components/ui/error-summary";
 import { claimRecoveryAdminAction } from "@/server/actions/auth-actions";
-import { PASSWORD_MISMATCH_MESSAGE } from "@/server/auth/validation";
+import {
+  CONFIRM_PASSWORD_REQUIRED_MESSAGE,
+  PASSWORD_MISMATCH_MESSAGE,
+} from "@/server/auth/validation";
 import {
   EMPTY_RECOVERY_CLAIM_FORM_STATE,
   type RecoveryClaimFieldName,
@@ -55,16 +58,28 @@ export function RecoveryClaimForm({
   // Live match check before any submit attempt; the confirm value reaches the
   // server only as match-validation input, never as stored data.
   const [credentials, setCredentials] = useState({ password: "", confirmPassword: "" });
+  const [submittedConfirmPasswordError, setSubmittedConfirmPasswordError] = useState<
+    string | undefined
+  >();
   const passwordsMismatch =
     credentials.confirmPassword.length > 0 &&
     credentials.password !== credentials.confirmPassword;
+  const effectiveFieldErrors = useMemo(
+    () => ({
+      ...(state.fieldErrors ?? {}),
+      ...(submittedConfirmPasswordError
+        ? { confirmPassword: submittedConfirmPasswordError }
+        : {}),
+    }),
+    [state.fieldErrors, submittedConfirmPasswordError],
+  );
   const confirmPasswordError = passwordsMismatch
     ? PASSWORD_MISMATCH_MESSAGE
-    : state.fieldErrors?.confirmPassword;
+    : effectiveFieldErrors.confirmPassword;
 
   const summaryErrors = useMemo(
     () =>
-      (Object.entries(state.fieldErrors ?? {}) as Array<
+      (Object.entries(effectiveFieldErrors) as Array<
         [RecoveryClaimFieldName, string | undefined]
       >)
         .filter(([, message]) => typeof message === "string" && Boolean(message))
@@ -73,11 +88,11 @@ export function RecoveryClaimForm({
           label: FIELD_CONFIG[field].label,
           message: message!,
         })),
-    [state.fieldErrors],
+    [effectiveFieldErrors],
   );
 
   useEffect(() => {
-    if (!state.formError && summaryErrors.length === 0) {
+    if (!state.formError && Object.keys(state.fieldErrors ?? {}).length === 0) {
       return;
     }
 
@@ -90,10 +105,22 @@ export function RecoveryClaimForm({
       confirmPasswordRef.current.value = "";
     }
     setCredentials({ password: "", confirmPassword: "" });
-  }, [state.formError, summaryErrors.length]);
+    setSubmittedConfirmPasswordError(undefined);
+  }, [state]);
+
+  useEffect(() => {
+    if (submittedConfirmPasswordError) {
+      confirmPasswordRef.current?.focus();
+    }
+  }, [submittedConfirmPasswordError]);
+
+  function updateCredential(field: "password" | "confirmPassword", value: string) {
+    setCredentials((current) => ({ ...current, [field]: value }));
+    setSubmittedConfirmPasswordError(undefined);
+  }
 
   function errorFor(field: RecoveryClaimFieldName) {
-    return state.fieldErrors?.[field];
+    return effectiveFieldErrors[field];
   }
 
   function describedBy(field: RecoveryClaimFieldName) {
@@ -127,8 +154,15 @@ export function RecoveryClaimForm({
         onSubmit={(event) => {
           // Enter-key submits bypass the disabled button; the match check must
           // hold there too.
-          if (passwordsMismatch) {
+          const submittedError =
+            credentials.confirmPassword.length === 0
+              ? CONFIRM_PASSWORD_REQUIRED_MESSAGE
+              : passwordsMismatch
+                ? PASSWORD_MISMATCH_MESSAGE
+                : undefined;
+          if (submittedError) {
             event.preventDefault();
+            setSubmittedConfirmPasswordError(submittedError);
             confirmPasswordRef.current?.focus();
           }
         }}
@@ -185,9 +219,7 @@ export function RecoveryClaimForm({
             autoComplete="new-password"
             id={FIELD_CONFIG.password.id}
             name="password"
-            onChange={(event) =>
-              setCredentials((current) => ({ ...current, password: event.target.value }))
-            }
+            onChange={(event) => updateCredential("password", event.target.value)}
             ref={passwordRef}
             required
             type="password"
@@ -209,12 +241,7 @@ export function RecoveryClaimForm({
             autoComplete="new-password"
             id={FIELD_CONFIG.confirmPassword.id}
             name="confirmPassword"
-            onChange={(event) =>
-              setCredentials((current) => ({
-                ...current,
-                confirmPassword: event.target.value,
-              }))
-            }
+            onChange={(event) => updateCredential("confirmPassword", event.target.value)}
             ref={confirmPasswordRef}
             required
             type="password"

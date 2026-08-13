@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { RecoveryClaimFormState } from "@/lib/auth-forms";
@@ -149,7 +149,13 @@ describe("RecoveryClaimForm", () => {
     if (!form) {
       throw new Error("Expected the claim form to render.");
     }
-    fireEvent.submit(form);
+    await act(async () => {
+      fireEvent.submit(form);
+    });
+    const summary = screen.getByRole("alert", { name: "There is a problem" });
+    expect(
+      within(summary).getByText("Confirm password - Passwords must match."),
+    ).toBeVisible();
     await waitFor(() => {
       expect(confirmInput).toHaveFocus();
     });
@@ -161,5 +167,28 @@ describe("RecoveryClaimForm", () => {
     expect(confirmInput).not.toHaveAttribute("aria-invalid");
     expect(passwordInput).not.toHaveAttribute("aria-invalid");
     expect(submit).toBeEnabled();
+  });
+
+  it("blocks a blank password confirmation through the field and error summary", async () => {
+    const user = userEvent.setup();
+    const action = vi.fn(async () => ({ values: {} }));
+
+    renderForm(action);
+
+    await user.type(screen.getByLabelText("Password"), "correct horse battery staple");
+    const confirmInput = screen.getByLabelText("Confirm password");
+    await user.click(screen.getByRole("button", { name: "Claim administrator" }));
+
+    expect(action).not.toHaveBeenCalled();
+    expect(confirmInput).toHaveAttribute("aria-invalid", "true");
+    expect(confirmInput).toHaveAttribute("aria-describedby", "confirmPassword-error");
+    expect(screen.getByText("Confirm the password.")).toBeVisible();
+    const summary = screen.getByRole("alert", { name: "There is a problem" });
+    expect(
+      within(summary).getByText("Confirm password - Confirm the password."),
+    ).toBeVisible();
+    await waitFor(() => {
+      expect(confirmInput).toHaveFocus();
+    });
   });
 });

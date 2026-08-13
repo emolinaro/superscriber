@@ -139,6 +139,7 @@ export function AccountsSection({
     target: RoleFocusTarget;
   } | null>(null);
   const queryRef = useRef(model.query);
+  const confirmPasswordRef = useRef<HTMLInputElement>(null);
 
   const summaryErrors = useMemo(
     () =>
@@ -151,6 +152,12 @@ export function AccountsSection({
         })),
     [fieldErrors],
   );
+
+  useEffect(() => {
+    if (fieldErrors.confirmPassword === PASSWORD_MISMATCH_MESSAGE) {
+      confirmPasswordRef.current?.focus();
+    }
+  }, [fieldErrors.confirmPassword]);
 
   useEffect(() => {
     if (queryRef.current !== model.query) {
@@ -517,6 +524,9 @@ export function AccountsSection({
     setNotice(null);
 
     if (nextErrors) {
+      if (nextErrors.confirmPassword === PASSWORD_MISMATCH_MESSAGE) {
+        confirmPasswordRef.current?.focus();
+      }
       return;
     }
 
@@ -812,6 +822,7 @@ export function AccountsSection({
               id={FIELD_CONFIG.confirmPassword.id}
               name="confirmPassword"
               onChange={(event) => updateValue("confirmPassword", event.target.value)}
+              ref={confirmPasswordRef}
               required
               type="password"
               value={values.confirmPassword}
