@@ -109,8 +109,8 @@ port_of_instance() {
     echo "missing ${INSTANCE_ROOT}/app.env; run scripts/bootstrap-local.sh first" >&2
     return 1
   }
-  port="$(sed -n 's/^PORT=\([0-9][0-9]*\)$/\1/p' "${INSTANCE_ROOT}/app.env" | tail -1)"
-  [[ -n "${port}" ]] || {
+  port="$(sed -n 's/^PORT=\([1-9][0-9]*\)$/\1/p' "${INSTANCE_ROOT}/app.env" | tail -1)"
+  [[ "${port}" =~ ^[1-9][0-9]{0,4}$ && "${port}" -ge 1024 && "${port}" -le 65535 ]] || {
     echo "missing valid PORT in ${INSTANCE_ROOT}/app.env" >&2
     return 1
   }
@@ -137,8 +137,90 @@ status_instance() {
   printf 'supervisor running: pid %s\n' "${pid}"
 }
 
+process_descendants_with_depth() {
+  local root_pid="$1"
+  ps -axo pid=,ppid= | awk -v root="${root_pid}" '
+    { parent[$1] = $2 }
+    END {
+      for (pid in parent) {
+        current = pid
+        depth = 0
+        while ((current in parent) && depth < 256) {
+          next_parent = parent[current]
+          depth++
+          if (next_parent == root) {
+            print depth, pid
+            break
+          }
+          if (next_parent <= 1 || next_parent == current) break
+          current = next_parent
+        }
+      }
+    }
+  ' | sort -k1,1nr -k2,2nr
+}
+
+process_is_descendant_of() {
+  local pid="$1" ancestor="$2" parent attempts=0
+  while [[ "${attempts}" -lt 256 ]]; do
+    parent="$(ps -p "${pid}" -o ppid= 2>/dev/null | awk '{$1=$1; print}')"
+    [[ "${parent}" =~ ^[0-9]+$ ]] || return 1
+    [[ "${parent}" == "${ancestor}" ]] && return 0
+    [[ "${parent}" -gt 1 && "${parent}" != "${pid}" ]] || return 1
+    pid="${parent}"
+    attempts=$((attempts + 1))
+  done
+  return 1
+}
+
+snapshot_verified_descendants() {
+  local supervisor_pid="$1" depth pid started
+  while read -r depth pid; do
+    [[ "${pid}" =~ ^[0-9]+$ ]] || continue
+    started="$(process_start_fingerprint "${pid}" 2>/dev/null)" || continue
+    printf '%s %s %s\n' "${depth}" "${pid}" "${started}"
+  done < <(process_descendants_with_depth "${supervisor_pid}")
+}
+
+signal_verified_role_children() {
+  local signal="$1" supervisor_pid="$2" supervisor_token="$3"
+  local role identity pid role_token started command
+  process_matches_identity "${supervisor_pid}" "${supervisor_token}" || return 0
+  for role in app worker; do
+    identity="$(cat "${PID_DIR}/${role}.identity" 2>/dev/null || true)"
+    [[ -n "${identity}" ]] || continue
+    read -r pid role_token started command <<< "${identity}"
+    [[ "${pid}" =~ ^[0-9]+$ && "${role_token}" =~ ^[0-9a-f]{48}$ && \
+       "${started}" =~ ^[0-9]+-[0-9]+$ && "${command}" =~ ^[0-9]+-[0-9]+$ ]] || continue
+    process_matches_role_identity "${pid}" "${started}" "${command}" || continue
+    process_is_descendant_of "${pid}" "${supervisor_pid}" || continue
+    kill "-${signal}" "${pid}" 2>/dev/null || true
+  done
+}
+
+signal_verified_descendants() {
+  local signal="$1" supervisor_pid="$2" supervisor_token="$3" snapshot="$4"
+  local depth pid started
+  process_matches_identity "${supervisor_pid}" "${supervisor_token}" || return 0
+  while read -r depth pid started; do
+    [[ "${pid}" =~ ^[0-9]+$ && "${started}" =~ ^[0-9]+-[0-9]+$ ]] || continue
+    process_matches_start_fingerprint "${pid}" "${started}" || continue
+    process_is_descendant_of "${pid}" "${supervisor_pid}" || continue
+    kill "-${signal}" "${pid}" 2>/dev/null || true
+  done <<< "${snapshot}"
+}
+
+snapshot_has_live_processes() {
+  local snapshot="$1" depth pid started
+  while read -r depth pid started; do
+    [[ "${pid}" =~ ^[0-9]+$ && "${started}" =~ ^[0-9]+-[0-9]+$ ]] || continue
+    process_matches_start_fingerprint "${pid}" "${started}" && return 0
+  done <<< "${snapshot}"
+  return 1
+}
+
 stop_instance() {
-  local identity pid token attempts=0
+  local identity pid token attempts=0 descendants=""
   if [[ -d "${LOCK_DIR}" ]] && ! valid_identity; then
     wait_for_valid_identity || true
   fi
@@ -153,8 +235,8 @@ stop_instance() {
     echo "instance is not running (no verified supervisor for ${INSTANCE_ROOT})"
     return 0
   fi
-  kill "${pid}"
-  while [[ "${attempts}" -lt 100 ]]; do
+  process_matches_identity "${pid}" "${token}" && kill "${pid}"
+  while [[ "${attempts}" -lt 10 ]]; do
     if ! process_matches_identity "${pid}" "${token}"; then
       reclaim_stale_lock || true
       echo "stopped supervisor ${pid}"
@@ -163,7 +245,26 @@ stop_instance() {
     attempts=$((attempts + 1))
     sleep 0.1
   done
-  echo "supervisor ${pid} did not exit within 10s of SIGTERM" >&2
+
+  descendants="$(snapshot_verified_descendants "${pid}")"
+  signal_verified_role_children KILL "${pid}" "${token}"
+  signal_verified_descendants KILL "${pid}" "${token}" "${descendants}"
+  if process_matches_identity "${pid}" "${token}"; then
+    kill -KILL "${pid}" 2>/dev/null || true
+  fi
+
+  attempts=0
+  while [[ "${attempts}" -lt 10 ]]; do
+    if ! process_matches_identity "${pid}" "${token}" && \
+       ! snapshot_has_live_processes "${descendants}"; then
+      reclaim_stale_lock || true
+      echo "force-stopped supervisor ${pid}"
+      return 0
+    fi
+    attempts=$((attempts + 1))
+    sleep 0.1
+  done
+  echo "supervisor ${pid} and its verified descendants did not exit after bounded escalation" >&2
   return 1
 }
 

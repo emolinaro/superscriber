@@ -25,6 +25,7 @@ import { afterEach, describe, expect, it } from "vitest";
 
 const REPO_ROOT = resolve(__dirname, "..");
 const BOOTSTRAP = join(REPO_ROOT, "scripts", "bootstrap-local.sh");
+const portHolders = new Map<ChildProcess, Promise<void>>();
 
 /** A port the OS reports as free right now (tests immediately bind nothing). */
 function freePort(): string {
@@ -55,6 +56,7 @@ async function holdPort(): Promise<{ port: string; stop: () => Promise<void> }> 
   const closed = new Promise<void>((resolvePromise) => {
     holder.once("close", () => resolvePromise());
   });
+  portHolders.set(holder, closed);
 
   try {
     const port = await new Promise<string>((resolvePromise, rejectPromise) => {
@@ -90,20 +92,22 @@ async function holdPort(): Promise<{ port: string; stop: () => Promise<void> }> 
 
     return {
       port,
-      stop: async () => {
-        if (holder.exitCode === null && holder.signalCode === null) {
-          holder.kill("SIGTERM");
-        }
-        await closed;
-      },
+      stop: () => stopPortHolder(holder),
     };
   } catch (error) {
-    if (holder.exitCode === null && holder.signalCode === null) {
-      holder.kill("SIGTERM");
-    }
-    await closed;
+    await stopPortHolder(holder);
     throw error;
   }
+}
+
+async function stopPortHolder(holder: ChildProcess) {
+  const closed = portHolders.get(holder);
+  if (!closed) return;
+  if (holder.exitCode === null && holder.signalCode === null) {
+    holder.kill("SIGTERM");
+  }
+  await closed;
+  portHolders.delete(holder);
 }
 const RUN = join(REPO_ROOT, "scripts", "instance-run.sh");
 const STOP = join(REPO_ROOT, "scripts", "instance-stop.sh");
@@ -162,11 +166,12 @@ describe("local deployment bootstrap scripts", () => {
   let testRoot: string | undefined;
   const runningInstances = new Set<string>();
 
-  afterEach(() => {
+  afterEach(async () => {
     for (const instance of runningInstances) {
       runScript(STOP, [instance]);
     }
     runningInstances.clear();
+    await Promise.all([...portHolders.keys()].map(stopPortHolder));
     if (testRoot) {
       rmSync(testRoot, { recursive: true, force: true });
       testRoot = undefined;
@@ -247,6 +252,7 @@ describe("local deployment bootstrap scripts", () => {
   it.each([
     ["not-a-port", "port must be a number"],
     ["80", "port 80 is outside 1024-65535"],
+    ["08080", "port must not contain leading zeros"],
   ])(
     "rejects invalid port %s before creating instance state",
     (port, expectedError) => {
@@ -538,10 +544,10 @@ describe("local deployment bootstrap scripts", () => {
     markInstanceRoot(instance);
 
     const holder = await holdPort();
-    expect(holder.port).toMatch(/^\d+$/);
-    writeFileSync(join(instance, "app.env"), `PORT=${holder.port}\n`);
 
     try {
+      expect(holder.port).toMatch(/^\d+$/);
+      writeFileSync(join(instance, "app.env"), `PORT=${holder.port}\n`);
       const result = runScript(RUN, [instance], withoutLsofPath(testRoot));
       expect(result.status).toBe(1);
       expect(result.stderr + result.stdout).toContain(
@@ -701,8 +707,8 @@ describe("local deployment bootstrap scripts", () => {
   });
 
   it(
-    "stops the supervisor promptly during role restart backoff",
-    { timeout: 25_000 },
+    "stops a retained frozen supervisor during uninterruptible backoff",
+    { timeout: 20_000 },
     async () => {
       testRoot = worktreeTestRoot();
       const instance = join(testRoot, "instance");
@@ -716,6 +722,9 @@ describe("local deployment bootstrap scripts", () => {
         freePort(),
         appServer,
         workerPython,
+        [],
+        "",
+        frozenUninterruptibleSupervisorSource(),
       );
       runningInstances.add(instance);
 
@@ -726,9 +735,17 @@ describe("local deployment bootstrap scripts", () => {
         return (
           existsSync(log) &&
           readFileSync(log, "utf8").includes("app exited status=1") &&
-          readFileSync(log, "utf8").includes("restart 2 in 15s")
+          readFileSync(log, "utf8").includes("restart 1 in 300s")
         );
-      }, 12_000);
+      });
+      const supervisorPid = Number(
+        readFileSync(
+          join(instance, "pids", "supervisor.lock", "identity"),
+          "utf8",
+        ).split(" ")[0],
+      );
+      const descendants = processDescendants(supervisorPid);
+      expect(descendants.length).toBeGreaterThan(0);
 
       const stopStarted = Date.now();
       const stop = runScript(STOP, [instance]);
@@ -737,6 +754,8 @@ describe("local deployment bootstrap scripts", () => {
       expect(stop.status, stop.stderr + stop.stdout).toBe(0);
       expect(stopElapsed).toBeLessThan(5_000);
       expect(runScript(RUN, [instance, "--status"]).status).toBe(1);
+      expect(processIsRunning(supervisorPid)).toBe(false);
+      expect(descendants.some(processIsRunning)).toBe(false);
     },
   );
 
@@ -1647,6 +1666,7 @@ function prepareRunnableInstance(
   workerPython: string,
   extraEnv: string[] = [],
   bundleServerSource = "",
+  bundleSupervisorSource = readFileSync(RUN, "utf8"),
 ) {
   const bundleId = `${"a".repeat(40)}-${"b".repeat(48)}`;
   const bundle = join(instance, "build", bundleId);
@@ -1660,7 +1680,7 @@ function prepareRunnableInstance(
   writeFileSync(join(bundle, "server.js"), bundleServerSource);
   writeFileSync(
     join(bundle, "scripts", "instance-run.sh"),
-    readFileSync(RUN, "utf8"),
+    bundleSupervisorSource,
   );
   writeFileSync(
     join(bundle, "scripts", "instance-paths.sh"),
@@ -1714,6 +1734,47 @@ function prepareRunnableInstance(
       "",
     ].join("\n"),
   );
+}
+
+function frozenUninterruptibleSupervisorSource() {
+  const current = readFileSync(RUN, "utf8");
+  const interruptible = `    sleep "\${wait_s}" &
+    backoff_pid=$!
+    if [[ "\${role_stop_requested}" -eq 1 ]]; then
+      kill "\${backoff_pid}" 2>/dev/null || true
+    fi
+    wait "\${backoff_pid}" 2>/dev/null || true
+    backoff_pid=""`;
+  const frozen = current
+    .replace("    1) echo 5 ;;", "    1) echo 300 ;;")
+    .replace(interruptible, `    sleep "\${wait_s}"`);
+  if (frozen === current || frozen.includes(interruptible)) {
+    throw new Error("could not create a frozen uninterruptible supervisor");
+  }
+  return frozen;
+}
+
+function processDescendants(rootPid: number) {
+  const result = spawnSync("ps", ["-axo", "pid=,ppid="], {
+    encoding: "utf8",
+  });
+  const children = new Map<number, number[]>();
+  for (const line of result.stdout.split("\n")) {
+    const [pidText, parentText] = line.trim().split(/\s+/);
+    const pid = Number(pidText);
+    const parent = Number(parentText);
+    if (!Number.isInteger(pid) || !Number.isInteger(parent)) continue;
+    children.set(parent, [...(children.get(parent) ?? []), pid]);
+  }
+  const descendants: number[] = [];
+  const pending = [...(children.get(rootPid) ?? [])];
+  while (pending.length > 0) {
+    const pid = pending.pop();
+    if (pid === undefined) continue;
+    descendants.push(pid);
+    pending.push(...(children.get(pid) ?? []));
+  }
+  return descendants;
 }
 
 function activationIdFrom(instance: string) {
