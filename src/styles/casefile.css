@@ -280,9 +280,7 @@
 }
 
 .media-transport__rail-chip[data-active] {
-  /* Tokenized active grammar (same contract as .transcript-segment[data-active]):
-     the pre-token literal light fills stayed pale sage in dark mode and
-     washed the pale text below the WCAG AA floor. */
+  /* Share the transcript active-state tokens so both themes remain WCAG AA. */
   border-color: color-mix(in srgb, var(--color-teal-700) 45%, transparent);
   background: var(--color-selected);
   box-shadow: inset 3px 0 0 var(--color-teal-700);

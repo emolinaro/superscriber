@@ -2,14 +2,8 @@
   gap: var(--space-4);
 }
 
-/* Standalone door pages (/reset-request and /reset/[token] share this one
-   shell cap): these render a bare <main className="auth-shell"> outside the
-   app shell, so the class must own its own layout. Unstyled this ran edge to
-   edge - viewport-wide inputs, a full-bleed submit bar, content flush past
-   the left edge. Same centering grammar as the landing's "shell shell-auth"
-   (gutter-relative width, auto margins, vertical centering), capped to the
-   readable --form-max column, holding one panel card like the landing's
-   auth card. */
+/* The standalone reset doors render outside the app shell, so this shared
+   shell owns the landing-style centering and readable form-width cap. */
 .auth-shell {
   width: min(100% - calc(var(--page-gutter) * 2), var(--form-max));
   margin-inline: auto;
@@ -19,8 +13,7 @@
   align-content: center;
 }
 
-/* The .stack rhythm owns the card's vertical spacing; default block margins
-   would double-park against it. */
+/* Let the stack gap own card rhythm instead of adding default block margins. */
 .auth-shell__card > .panel-inner.stack > h1,
 .auth-shell__card > .panel-inner.stack > p {
   margin: 0;

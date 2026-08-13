@@ -133,9 +133,8 @@ describe("product css contract", () => {
   });
 
   it("keeps the active segment rail chip on theme tokens so dark mode stays WCAG AA", () => {
-    // Pre-regression the active chip used literal light fills
-    // (rgba(232, 246, 239, 0.8) on rgba(42, 118, 94, *)), a pale sage card
-    // that left the pale dark-mode text far below the 4.5:1 AA bar PR #12 set.
+    // Literal light fills previously stranded pale dark-mode text below the
+    // 4.5:1 contrast floor.
     const casefile = readFileSync(resolve(STYLES_DIR, "casefile.css"), "utf8");
     const activeChip = casefile.match(
       /\.media-transport__rail-chip\[data-active\]\s*\{([^}]*)\}/,
@@ -147,8 +146,7 @@ describe("product css contract", () => {
   });
 
   it("caps standalone auth doors without resetting nested confirmation spacing", () => {
-    // /reset-request and /reset/[token] render a bare main.auth-shell outside
-    // the app shell; unstyled it ran edge to edge and clipped at the left.
+    // Both reset routes render outside the app shell and share this width cap.
     const auth = readFileSync(resolve(STYLES_DIR, "auth.css"), "utf8");
     const shell = auth.match(/\.auth-shell\s*\{([^}]*)\}/);
     expect(shell?.[1]).toContain("var(--form-max)");
