@@ -146,13 +146,17 @@ describe("product css contract", () => {
     expect(activeChip?.[1]).not.toContain("rgba(42, 118, 94");
   });
 
-  it("caps the standalone auth doors (auth-shell) to a centered readable column", () => {
+  it("caps standalone auth doors without resetting nested confirmation spacing", () => {
     // /reset-request and /reset/[token] render a bare main.auth-shell outside
     // the app shell; unstyled it ran edge to edge and clipped at the left.
     const auth = readFileSync(resolve(STYLES_DIR, "auth.css"), "utf8");
     const shell = auth.match(/\.auth-shell\s*\{([^}]*)\}/);
     expect(shell?.[1]).toContain("var(--form-max)");
     expect(shell?.[1]).toContain("margin-inline: auto");
+    expect(auth).toMatch(
+      /\.auth-shell__card > \.panel-inner\.stack > h1,\s*\.auth-shell__card > \.panel-inner\.stack > p\s*\{[^}]*margin: 0;/,
+    );
+    expect(auth).not.toMatch(/\.auth-shell__card\s+(?:h1|p)/);
     const tokens = readFileSync(resolve(STYLES_DIR, "tokens.css"), "utf8");
     expect(tokens).toMatch(/:root\s*\{[^}]*--form-max:/m);
   });

@@ -21,8 +21,8 @@
 
 /* The .stack rhythm owns the card's vertical spacing; default block margins
    would double-park against it. */
-.auth-shell__card h1,
-.auth-shell__card p {
+.auth-shell__card > .panel-inner.stack > h1,
+.auth-shell__card > .panel-inner.stack > p {
   margin: 0;
 }
 
