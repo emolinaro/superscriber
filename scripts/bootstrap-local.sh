@@ -205,12 +205,15 @@ resolve_instance_root() {
   reject_managed_instance_symlinks "${INSTANCE_ROOT}" || exit 1
 }
 
-validate_candidate_port() {
-  local configured_port
+validate_port_value() {
   case "${PORT}" in
     ''|*[!0-9]*) fail "port must be a number, got '${PORT}'" ;;
   esac
   [[ "${PORT}" -ge 1024 && "${PORT}" -le 65535 ]] || fail "port ${PORT} is outside 1024-65535"
+}
+
+validate_candidate_port() {
+  local configured_port
   if [[ -d "${INSTANCE_ROOT}" ]] && bash "${SCRIPT_DIR}/instance-run.sh" "${INSTANCE_ROOT}" --status >/dev/null 2>&1; then
     configured_port="$(activation_port_from_file "${INSTANCE_ROOT}/app.env" 2>/dev/null || true)"
     if [[ "${configured_port}" != "${PORT}" ]] && ! port_is_free "${PORT}"; then
@@ -717,10 +720,11 @@ recover_quiesced_activation() {
   resolve_active_bundle "${INSTANCE_ROOT}" >/dev/null 2>&1 || return 1
   INSTANCE_WAS_RUNNING=1
   INSTANCE_RESTORED=0
-  if ! bash "${SCRIPT_DIR}/instance-run.sh" "${INSTANCE_ROOT}" --status >/dev/null 2>&1; then
-    SUPERSCRIBER_MAINTENANCE_IDENTITY="${MAINTENANCE_IDENTITY}" \
-      bash "${SCRIPT_DIR}/instance-run.sh" "${INSTANCE_ROOT}" >/dev/null 2>&1 || return 1
+  if bash "${SCRIPT_DIR}/instance-run.sh" "${INSTANCE_ROOT}" --status >/dev/null 2>&1; then
+    bash "${SCRIPT_DIR}/instance-stop.sh" "${INSTANCE_ROOT}" >/dev/null 2>&1 || return 1
   fi
+  SUPERSCRIBER_MAINTENANCE_IDENTITY="${MAINTENANCE_IDENTITY}" \
+    bash "${SCRIPT_DIR}/instance-run.sh" "${INSTANCE_ROOT}" >/dev/null 2>&1 || return 1
   wait_for_instance_readiness || return 1
   durable_remove_paths "${INSTANCE_ROOT}" "${QUIESCE_RECORD}"
   INSTANCE_RESTORED=1
@@ -1090,6 +1094,7 @@ main() {
     return 0
   fi
 
+  validate_port_value
   resolve_instance_root
   check_python_venv
   log_dependencies

@@ -467,12 +467,15 @@ run_role() {
   trap - EXIT INT TERM
   local role="$1"
   shift
-  local log consecutive=0 child_pid="" role_token="" role_stop_requested=0
+  local log consecutive=0 child_pid="" backoff_pid="" role_token="" role_stop_requested=0
   if [[ "${role}" == "app" ]]; then log="${LOG_DIR}/app.log"; else log="${LOG_DIR}/worker.log"; fi
 
   trap 'role_stop_requested=1
     if [[ -n "${child_pid}" ]]; then
       kill "${child_pid}" 2>/dev/null || true
+    fi
+    if [[ -n "${backoff_pid}" ]]; then
+      kill "${backoff_pid}" 2>/dev/null || true
     fi' INT TERM
 
   while true; do
@@ -556,7 +559,13 @@ run_role() {
     consecutive=$((consecutive + 1))
     wait_s="$(next_backoff "${consecutive}")"
     say_supervisor "${role} exited status=${status} after $((ended - started))s; restart ${consecutive} in ${wait_s}s"
-    sleep "${wait_s}"
+    sleep "${wait_s}" &
+    backoff_pid=$!
+    if [[ "${role_stop_requested}" -eq 1 ]]; then
+      kill "${backoff_pid}" 2>/dev/null || true
+    fi
+    wait "${backoff_pid}" 2>/dev/null || true
+    backoff_pid=""
   done
 }
 

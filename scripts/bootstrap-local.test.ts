@@ -42,6 +42,69 @@ function freePort(): string {
   }
   return port;
 }
+
+async function holdPort(): Promise<{ port: string; stop: () => Promise<void> }> {
+  const holder: ChildProcess = spawn(
+    "node",
+    [
+      "-e",
+      "const s=require('node:net').createServer().listen(0,'127.0.0.1',()=>{console.log(s.address().port)});setInterval(()=>{},1000)",
+    ],
+    { stdio: ["ignore", "pipe", "ignore"] },
+  );
+  const closed = new Promise<void>((resolvePromise) => {
+    holder.once("close", () => resolvePromise());
+  });
+
+  try {
+    const port = await new Promise<string>((resolvePromise, rejectPromise) => {
+      let buffer = "";
+      const cleanup = () => {
+        clearTimeout(timeout);
+        holder.stdout?.off("data", onData);
+        holder.off("error", onError);
+        holder.off("close", onClose);
+      };
+      const onData = (chunk: Buffer) => {
+        buffer += String(chunk);
+        if (buffer.trim().length === 0) return;
+        cleanup();
+        resolvePromise(buffer.trim());
+      };
+      const onError = (error: Error) => {
+        cleanup();
+        rejectPromise(error);
+      };
+      const onClose = () => {
+        cleanup();
+        rejectPromise(new Error("port holder exited before binding"));
+      };
+      const timeout = setTimeout(() => {
+        cleanup();
+        rejectPromise(new Error("port holder never bound"));
+      }, 10_000);
+      holder.stdout?.on("data", onData);
+      holder.once("error", onError);
+      holder.once("close", onClose);
+    });
+
+    return {
+      port,
+      stop: async () => {
+        if (holder.exitCode === null && holder.signalCode === null) {
+          holder.kill("SIGTERM");
+        }
+        await closed;
+      },
+    };
+  } catch (error) {
+    if (holder.exitCode === null && holder.signalCode === null) {
+      holder.kill("SIGTERM");
+    }
+    await closed;
+    throw error;
+  }
+}
 const RUN = join(REPO_ROOT, "scripts", "instance-run.sh");
 const STOP = join(REPO_ROOT, "scripts", "instance-stop.sh");
 const INSTANCE_PATHS = join(REPO_ROOT, "scripts", "instance-paths.sh");
@@ -180,6 +243,27 @@ describe("local deployment bootstrap scripts", () => {
     expect(result.stderr).toContain("python3-venv");
     expect(result.stderr).toContain("ensurepip");
   });
+
+  it.each([
+    ["not-a-port", "port must be a number"],
+    ["80", "port 80 is outside 1024-65535"],
+  ])(
+    "rejects invalid port %s before creating instance state",
+    (port, expectedError) => {
+      testRoot = worktreeTestRoot();
+      const instance = join(testRoot, `instance-${port}`);
+
+      const result = runScript(
+        BOOTSTRAP,
+        ["--instance-root", instance, "--port", port],
+        stubToolchainEnv(testRoot),
+      );
+
+      expect(result.status).toBe(1);
+      expect(result.stderr).toContain(expectedError);
+      expect(existsSync(instance)).toBe(false);
+    },
+  );
 
   it("rejects an instance root under /tmp", () => {
     testRoot = mkdtempSync(join(tmpdir(), "superscriber-bootstrap-test-"));
@@ -453,31 +537,9 @@ describe("local deployment bootstrap scripts", () => {
     mkdirSync(join(instance, "pids"), { recursive: true });
     markInstanceRoot(instance);
 
-    // Occupy a real free port with a short-lived holder, then claim it in app.env.
-    const holder: ChildProcess = spawn(
-      "node",
-      [
-        "-e",
-        "const s=require('node:net').createServer().listen(0,'127.0.0.1',()=>{console.log(s.address().port)});setTimeout(()=>{},30000)",
-      ],
-      { stdio: ["ignore", "pipe", "ignore"] },
-    );
-    const port = await new Promise<string>((resolvePromise, rejectPromise) => {
-      let buffer = "";
-      holder.stdout?.on("data", (chunk) => {
-        buffer += String(chunk);
-        if (buffer.trim().length > 0) {
-          resolvePromise(buffer.trim());
-        }
-      });
-      holder.on("error", rejectPromise);
-      setTimeout(
-        () => rejectPromise(new Error("port holder never bound")),
-        10_000,
-      );
-    });
-    expect(port).toMatch(/^\d+$/);
-    writeFileSync(join(instance, "app.env"), `PORT=${port}\n`);
+    const holder = await holdPort();
+    expect(holder.port).toMatch(/^\d+$/);
+    writeFileSync(join(instance, "app.env"), `PORT=${holder.port}\n`);
 
     try {
       const result = runScript(RUN, [instance], withoutLsofPath(testRoot));
@@ -486,7 +548,7 @@ describe("local deployment bootstrap scripts", () => {
         "occupied by a foreign process",
       );
     } finally {
-      holder.kill("SIGTERM");
+      await holder.stop();
     }
   });
 
@@ -637,6 +699,46 @@ describe("local deployment bootstrap scripts", () => {
     expect(existsSync(join(instance, "pids", "app.pid"))).toBe(false);
     expect(runScript(RUN, [instance, "--app-running"]).status).toBe(1);
   });
+
+  it(
+    "stops the supervisor promptly during role restart backoff",
+    { timeout: 25_000 },
+    async () => {
+      testRoot = worktreeTestRoot();
+      const instance = join(testRoot, "instance");
+      const appServer = join(testRoot, "server.js");
+      const workerPython = join(testRoot, "worker-python");
+      writeFileSync(appServer, "process.exit(1)\n");
+      writeFileSync(workerPython, "#!/bin/sh\nexec sleep 30\n");
+      chmodSync(workerPython, 0o700);
+      prepareRunnableInstance(
+        instance,
+        freePort(),
+        appServer,
+        workerPython,
+      );
+      runningInstances.add(instance);
+
+      const start = runScript(RUN, [instance]);
+      expect(start.status, start.stderr + start.stdout).toBe(0);
+      await waitForCondition(() => {
+        const log = join(instance, "logs", "supervisor.log");
+        return (
+          existsSync(log) &&
+          readFileSync(log, "utf8").includes("app exited status=1") &&
+          readFileSync(log, "utf8").includes("restart 2 in 15s")
+        );
+      }, 12_000);
+
+      const stopStarted = Date.now();
+      const stop = runScript(STOP, [instance]);
+      const stopElapsed = Date.now() - stopStarted;
+
+      expect(stop.status, stop.stderr + stop.stdout).toBe(0);
+      expect(stopElapsed).toBeLessThan(5_000);
+      expect(runScript(RUN, [instance, "--status"]).status).toBe(1);
+    },
+  );
 
   it(
     "requires a working worker venv when dependency installation is skipped",
@@ -1306,7 +1408,7 @@ exit 0
   );
 
   it(
-    "recovers a pre-quiescence intent before rejecting an occupied candidate port",
+    "restarts pre-quiescence recovery before rejecting an occupied candidate port",
     { timeout: 60_000 },
     async () => {
       testRoot = worktreeTestRoot();
@@ -1328,8 +1430,10 @@ exit 0
       await waitForCondition(
         () => runScript(RUN, [instance, "--worker-ready"]).status === 0,
       );
-      const stop = runScript(STOP, [instance]);
-      expect(stop.status, stop.stderr + stop.stdout).toBe(0);
+      const previousSupervisor = readFileSync(
+        join(instance, "pids", "supervisor.lock", "identity"),
+        "utf8",
+      );
       writeFileSync(
         join(instance, "quiesce.pending"),
         [
@@ -1339,28 +1443,7 @@ exit 0
           "",
         ].join("\n"),
       );
-      const holder = spawn(
-        "node",
-        [
-          "-e",
-          "const s=require('node:net').createServer().listen(0,'127.0.0.1',()=>{console.log(s.address().port)});setInterval(()=>{},1000)",
-        ],
-        { stdio: ["ignore", "pipe", "ignore"] },
-      );
-      const candidatePort = await new Promise<string>(
-        (resolvePromise, rejectPromise) => {
-          let buffer = "";
-          holder.stdout?.on("data", (chunk) => {
-            buffer += String(chunk);
-            if (buffer.trim().length > 0) resolvePromise(buffer.trim());
-          });
-          holder.on("error", rejectPromise);
-          setTimeout(
-            () => rejectPromise(new Error("candidate port holder never bound")),
-            10_000,
-          );
-        },
-      );
+      const holder = await holdPort();
 
       try {
         const bootstrap = runScript(
@@ -1369,7 +1452,7 @@ exit 0
             "--instance-root",
             instance,
             "--port",
-            candidatePort,
+            holder.port,
             "--model-tier",
             "medium",
             "--skip-model-download",
@@ -1387,8 +1470,14 @@ exit 0
         await waitForCondition(
           () => runScript(RUN, [instance, "--worker-ready"]).status === 0,
         );
+        expect(
+          readFileSync(
+            join(instance, "pids", "supervisor.lock", "identity"),
+            "utf8",
+          ),
+        ).not.toBe(previousSupervisor);
       } finally {
-        holder.kill("SIGTERM");
+        await holder.stop();
       }
     },
   );
