@@ -1,6 +1,6 @@
 ## Project At A Glance
 
-- Current release on main: v0.3.0.0 (governed casefile). Version source: `VERSION`; release notes: `CHANGELOG.md`.
+- Current release on main: v0.4.0 (Authentik OIDC identity wave with break-glass access and governed account roles). Version source: `VERSION`; release notes: `CHANGELOG.md`.
 - Product overview, commands, and runtime: `README.md`. Design record and behavioral contract: `DESIGN.md`.
 - Domain workflow rules: `src/domain/workflow.ts`. Governed commands, capabilities, action mode, and access grants: `src/server/casefile/`. Authenticated routes: `app/(authenticated)/`.
 - Unmanageable-instance recovery (accounts exist, no active admin): operator-claim ceremony on the sign-up door gated by an on-host single-use token (`src/server/auth/recovery-claim.ts`, runbook `docs/operators/admin-recovery.md`).
