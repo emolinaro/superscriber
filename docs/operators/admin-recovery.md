@@ -73,8 +73,9 @@ so recovery is never needed.
    docker exec --user node <container> cat /app/data/admin-claim.token
    ```
 
-3. In the recovery pane, enter the new administrator's name, email, and
-   password, then paste the token. Dashes and letter case do not matter.
+3. In the recovery pane, enter the new administrator's name, email, password,
+   and matching password confirmation, then paste the token. Dashes and letter
+   case do not matter.
 4. Submit. On success the appliance signs the claim into the audit stream,
    consumes the token, and lands on the sign-in door with a completion
    notice; sign in with the new administrator.

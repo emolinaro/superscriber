@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 
-import { cleanup, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { BootstrapFormState } from "@/lib/auth-forms";
@@ -134,5 +134,77 @@ describe("BootstrapSetupForm", () => {
     expect(screen.getByRole("button", { name: "Creating account..." })).toBeDisabled();
 
     deferred.resolve({ values: {} });
+  });
+
+  it("blocks a password confirmation mismatch before submit and announces the copy", async () => {
+    const user = userEvent.setup();
+    const action: (state: BootstrapFormState, formData: FormData) => Promise<BootstrapFormState> =
+      vi.fn(async () => ({ values: {} }));
+
+    render(<BootstrapSetupForm action={action} readiness={READY_READINESS} />);
+
+    await user.type(screen.getByLabelText("Administrator name"), "Admin Example");
+    await user.type(screen.getByLabelText("Administrator email"), "admin@example.com");
+    const passwordInput = screen.getByLabelText("Password");
+    const confirmInput = screen.getByLabelText("Confirm password");
+    await user.type(passwordInput, "correct horse battery staple");
+    await user.type(confirmInput, "different horse battery staple");
+
+    expect(screen.getByText("Passwords must match.")).toHaveAttribute("role", "alert");
+    expect(confirmInput).toHaveAttribute("aria-invalid", "true");
+    expect(confirmInput).toHaveAttribute("aria-describedby", "confirmPassword-error");
+    expect(passwordInput).toHaveAttribute("aria-invalid", "true");
+    expect(passwordInput.getAttribute("aria-describedby")).toContain("confirmPassword-error");
+    const submit = screen.getByRole("button", { name: "Create admin" });
+    expect(submit).toBeDisabled();
+
+    // A real Enter key from another single-line field must still surface the
+    // submit-attempt summary and move focus to the confirmation field even
+    // though the submit button is disabled during a live mismatch.
+    await user.type(screen.getByLabelText("Administrator email"), "{Enter}");
+    const summary = screen.getByRole("alert", { name: "There is a problem" });
+    expect(
+      within(summary).getByText("Confirm password - Passwords must match."),
+    ).toBeVisible();
+    await waitFor(() => {
+      expect(confirmInput).toHaveFocus();
+    });
+    expect(action).not.toHaveBeenCalled();
+
+    await user.clear(confirmInput);
+    await user.type(confirmInput, "correct horse battery staple");
+    expect(screen.queryByText("Passwords must match.")).not.toBeInTheDocument();
+    expect(confirmInput).not.toHaveAttribute("aria-invalid");
+    expect(passwordInput).not.toHaveAttribute("aria-invalid");
+    expect(submit).toBeEnabled();
+
+    await user.click(submit);
+    expect(action).toHaveBeenCalledTimes(1);
+    const formData = vi.mocked(action).mock.calls[0]?.[1];
+    expect(formData?.get("confirmPassword")).toBe("correct horse battery staple");
+  });
+
+  it("blocks a blank password confirmation through the field and error summary", async () => {
+    const user = userEvent.setup();
+    const action: (state: BootstrapFormState, formData: FormData) => Promise<BootstrapFormState> =
+      vi.fn(async () => ({ values: {} }));
+
+    render(<BootstrapSetupForm action={action} readiness={READY_READINESS} />);
+
+    await user.type(screen.getByLabelText("Password"), "correct horse battery staple");
+    const confirmInput = screen.getByLabelText("Confirm password");
+    await user.click(screen.getByRole("button", { name: "Create admin" }));
+
+    expect(action).not.toHaveBeenCalled();
+    expect(confirmInput).toHaveAttribute("aria-invalid", "true");
+    expect(confirmInput).toHaveAttribute("aria-describedby", "confirmPassword-error");
+    expect(screen.getByText("Confirm the password.")).toBeVisible();
+    const summary = screen.getByRole("alert", { name: "There is a problem" });
+    expect(
+      within(summary).getByText("Confirm password - Confirm the password."),
+    ).toBeVisible();
+    await waitFor(() => {
+      expect(confirmInput).toHaveFocus();
+    });
   });
 });

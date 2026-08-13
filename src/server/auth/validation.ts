@@ -10,6 +10,24 @@ export const loginCredentialsSchema = z.object({
   password: z.string().min(1, "Enter your password."),
 });
 
+export const PASSWORD_MISMATCH_MESSAGE = "Passwords must match.";
+export const CONFIRM_PASSWORD_REQUIRED_MESSAGE = "Confirm the password.";
+
+const confirmPasswordField = z.string().min(1, CONFIRM_PASSWORD_REQUIRED_MESSAGE);
+
+function requirePasswordMatch(
+  value: { password: string; confirmPassword: string },
+  context: z.RefinementCtx,
+) {
+  if (value.password !== value.confirmPassword) {
+    context.addIssue({
+      code: "custom",
+      path: ["confirmPassword"],
+      message: PASSWORD_MISMATCH_MESSAGE,
+    });
+  }
+}
+
 export const localUserSchema = z.object({
   displayName: z
     .string()
@@ -28,6 +46,17 @@ export const localUserSchema = z.object({
   role: z.enum(USER_ROLES),
 });
 
+/**
+ * Admin-provisioned local account: the confirmation travels with the input so
+ * the server re-checks the match, but it is never persisted or forwarded past
+ * this schema. Consumers must strip it before calling account services.
+ */
+export const localUserWithConfirmationSchema = localUserSchema
+  .extend({
+    confirmPassword: confirmPasswordField,
+  })
+  .superRefine(requirePasswordMatch);
+
 export const bootstrapAdminSchema = localUserSchema
   .pick({
     displayName: true,
@@ -35,17 +64,9 @@ export const bootstrapAdminSchema = localUserSchema
     password: true,
   })
   .extend({
-    confirmPassword: z.string().min(1, "Confirm the password."),
+    confirmPassword: confirmPasswordField,
   })
-  .superRefine((value, context) => {
-    if (value.password !== value.confirmPassword) {
-      context.addIssue({
-        code: "custom",
-        path: ["confirmPassword"],
-        message: "Passwords must match.",
-      });
-    }
-  });
+  .superRefine(requirePasswordMatch);
 
 /**
  * Unmanageable-instance recovery claim: same account fields as first-run
@@ -58,15 +79,7 @@ export const recoveryAdminClaimSchema = localUserSchema
     password: true,
   })
   .extend({
-    confirmPassword: z.string().min(1, "Confirm the password."),
+    confirmPassword: confirmPasswordField,
     claimToken: z.string().min(1, "Enter the operator claim token from the appliance host."),
   })
-  .superRefine((value, context) => {
-    if (value.password !== value.confirmPassword) {
-      context.addIssue({
-        code: "custom",
-        path: ["confirmPassword"],
-        message: "Passwords must match.",
-      });
-    }
-  });
+  .superRefine(requirePasswordMatch);
