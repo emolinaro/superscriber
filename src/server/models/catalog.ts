@@ -93,6 +93,31 @@ function modelRoot() {
   );
 }
 
+function expectedArtifactSizes(tierId: string) {
+  const source = TIER_DOWNLOADS[tierId];
+  const fixtureRoot =
+    process.env.SUPERSCRIBER_MODEL_DOWNLOAD_FIXTURE_DIR?.trim();
+  if (!fixtureRoot) return source.fileSizeBytes;
+  const fixtureDir = join(fixtureRoot, tierId);
+  try {
+    return Object.fromEntries(
+      source.files.map((file) => {
+        const artifact = lstatSync(join(fixtureDir, file));
+        if (
+          !artifact.isFile() ||
+          artifact.isSymbolicLink() ||
+          artifact.size <= 0
+        ) {
+          throw new Error("invalid fixture artifact");
+        }
+        return [file, artifact.size];
+      }),
+    );
+  } catch {
+    return source.fileSizeBytes;
+  }
+}
+
 export function isModelProvisioned(tierId: string): boolean {
   if (!MODEL_TIER_IDS.includes(tierId)) {
     return false;
@@ -106,10 +131,11 @@ export function isModelProvisioned(tierId: string): boolean {
   } catch {
     return false;
   }
+  const expectedSizes = expectedArtifactSizes(tierId);
   return TIER_DOWNLOADS[tierId].files.every((file) => {
     try {
       const artifact = lstatSync(join(dir, file));
-      return artifact.isFile() && artifact.size > 0;
+      return artifact.isFile() && artifact.size === expectedSizes[file];
     } catch {
       return false;
     }

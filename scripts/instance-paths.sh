@@ -59,9 +59,9 @@ require_instance_marker() {
 }
 
 reject_managed_instance_symlinks() {
-  local root="$1" relative path found child
+  local root="$1" relative path found child target
   for relative in \
-    "${INSTANCE_MARKER_NAME}" app.env active-bundle instance.log \
+    "${INSTANCE_MARKER_NAME}" app.env rollback.env instance.log \
     data data/media data/uploads model-cache logs pids secrets venv build; do
     path="${root}/${relative}"
     if [[ -L "${path}" ]]; then
@@ -82,11 +82,18 @@ reject_managed_instance_symlinks() {
 
   path="${root}/venv"
   if [[ -d "${path}" ]]; then
-    found="$(find "${path}" -type l -print -quit)"
-    if [[ -n "${found}" ]]; then
+    while IFS= read -r found; do
+      relative="${found#"${path}"/}"
+      if [[ "${relative}" =~ ^bin/python([0-9]+(\.[0-9]+)?)?$ ]]; then
+        continue
+      fi
+      if [[ "${relative}" == "lib64" ]]; then
+        target="$(readlink "${found}")"
+        [[ "${target}" == "lib" ]] && continue
+      fi
       printf "managed instance path must not be a symlink: %s\n" "${found}" >&2
       return 1
-    fi
+    done < <(find "${path}" -type l -print)
   fi
 
   for path in \
@@ -120,10 +127,17 @@ instance_random_token() {
 
 process_start_fingerprint() {
   local pid="$1" started
-  kill -0 "${pid}" 2>/dev/null || return 1
+  process_is_live "${pid}" || return 1
   started="$(ps -ww -p "${pid}" -o lstart= 2>/dev/null)"
   [[ -n "${started//[[:space:]]/}" ]] || return 1
   printf '%s' "${started}" | cksum | awk '{ printf "%s-%s\n", $1, $2 }'
+}
+
+process_is_live() {
+  local pid="$1" state
+  kill -0 "${pid}" 2>/dev/null || return 1
+  state="$(ps -p "${pid}" -o stat= 2>/dev/null || true)"
+  [[ -n "${state}" && "${state}" != *Z* ]]
 }
 
 process_matches_start_fingerprint() {
@@ -134,7 +148,7 @@ process_matches_start_fingerprint() {
 
 process_command_fingerprint() {
   local pid="$1" command
-  kill -0 "${pid}" 2>/dev/null || return 1
+  process_is_live "${pid}" || return 1
   command="$(ps -ww -p "${pid}" -o args= 2>/dev/null)"
   [[ -n "${command}" ]] || return 1
   printf '%s' "${command}" | cksum | awk '{ printf "%s-%s\n", $1, $2 }'
@@ -304,12 +318,17 @@ maintenance_lock_is_active() {
   [[ "${args}" == *"bootstrap-local.sh"* ]]
 }
 
-resolve_active_bundle() {
-  local root="$1" active_file bundle_id bundle relative expected actual
-  active_file="${root}/active-bundle"
-  [[ -f "${active_file}" && ! -L "${active_file}" ]] || return 1
-  IFS= read -r bundle_id < "${active_file}" || return 1
+activation_id_from_file() {
+  local activation_file="$1" bundle_id
+  [[ -f "${activation_file}" && ! -L "${activation_file}" ]] || return 1
+  bundle_id="$(sed -n 's/^SUPERSCRIBER_ACTIVATION_ID=\([0-9a-f][0-9a-f]*-[0-9a-f][0-9a-f]*\)$/\1/p' "${activation_file}")"
   [[ "${bundle_id}" =~ ^[0-9a-f]{40}-[0-9a-f]{48}$ ]] || return 1
+  printf '%s\n' "${bundle_id}"
+}
+
+resolve_activation_bundle() {
+  local root="$1" activation_file="$2" bundle_id bundle relative expected actual
+  bundle_id="$(activation_id_from_file "${activation_file}")" || return 1
   bundle="${root}/build/${bundle_id}"
   [[ -d "${bundle}" && ! -L "${root}/build" && ! -L "${bundle}" ]] || return 1
   [[ -f "${bundle}/bundle.sha256" && ! -L "${bundle}/bundle.sha256" ]] || return 1
@@ -322,4 +341,8 @@ resolve_active_bundle() {
     [[ "${actual}" == "${expected}" ]] || return 1
   done
   printf '%s\n' "${bundle}"
+}
+
+resolve_active_bundle() {
+  resolve_activation_bundle "$1" "$1/app.env"
 }

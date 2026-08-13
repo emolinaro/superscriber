@@ -6,6 +6,7 @@ import {
   readFileSync,
   rmSync,
   symlinkSync,
+  truncateSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
@@ -103,9 +104,13 @@ describe("model provisioning service (model-tier-provisioning)", () => {
     vi.useRealTimers();
   });
 
-  function fakeTransport(bytes = 1024): DownloadTransport {
-    return async (_url, destination, onProgress) => {
-      writeFileSync(destination, Buffer.alloc(bytes, 7));
+  function fakeTransport(tierId = "tiny"): DownloadTransport {
+    return async (url, destination, onProgress) => {
+      const file = url.split("/").pop();
+      if (!file) throw new Error(`missing artifact name in ${url}`);
+      const bytes = TIER_DOWNLOADS[tierId].fileSizeBytes[file];
+      writeFileSync(destination, "artifact");
+      truncateSync(destination, bytes);
       onProgress({ bytesReceived: bytes, bytesTotal: bytes });
     };
   }
@@ -127,10 +132,9 @@ describe("model provisioning service (model-tier-provisioning)", () => {
     const dir = join(modelRoot, tierId);
     mkdirSync(dir, { recursive: true });
     for (const file of TIER_DOWNLOADS[tierId].files) {
-      writeFileSync(
-        join(dir, file),
-        file === "config.json" ? "{}" : "artifact",
-      );
+      const artifact = join(dir, file);
+      writeFileSync(artifact, "artifact");
+      truncateSync(artifact, TIER_DOWNLOADS[tierId].fileSizeBytes[file]);
     }
   }
 
@@ -204,10 +208,14 @@ describe("model provisioning service (model-tier-provisioning)", () => {
       onProgress,
     ) => {
       expect(url).toContain("https://huggingface.co/");
-      writeFileSync(destination, Buffer.alloc(3, 1));
-      onProgress({ bytesReceived: 1, bytesTotal: 3 });
-      onProgress({ bytesReceived: 3, bytesTotal: 3 });
-      progress.push(1, 3);
+      const file = url.split("/").pop();
+      if (!file) throw new Error(`missing artifact name in ${url}`);
+      const bytes = TIER_DOWNLOADS.tiny.fileSizeBytes[file];
+      writeFileSync(destination, "artifact");
+      truncateSync(destination, bytes);
+      onProgress({ bytesReceived: 1, bytesTotal: bytes });
+      onProgress({ bytesReceived: bytes, bytesTotal: bytes });
+      progress.push(1, bytes);
     };
 
     const status = startTierDownload("tiny", {
@@ -315,6 +323,10 @@ describe("model provisioning service (model-tier-provisioning)", () => {
   });
 
   it("keeps downloading while bytes arrive beyond the former absolute deadline", async () => {
+    const originalFileSizes = { ...TIER_DOWNLOADS.tiny.fileSizeBytes };
+    for (const file of TIER_DOWNLOADS.tiny.files) {
+      TIER_DOWNLOADS.tiny.fileSizeBytes[file] = 5;
+    }
     vi.spyOn(AbortSignal, "timeout").mockImplementation(() => {
       const controller = new AbortController();
       setTimeout(() => controller.abort(), 15);
@@ -352,14 +364,18 @@ describe("model provisioning service (model-tier-provisioning)", () => {
       }),
     );
 
-    startTierDownload("tiny", { probeDiskSpace: unlimitedDisk });
-    await waitForTierDownload("tiny");
+    try {
+      startTierDownload("tiny", { probeDiskSpace: unlimitedDisk });
+      await waitForTierDownload("tiny");
 
-    const tiny = listProvisioningStatus().tiers.find(
-      (tier) => tier.tierId === "tiny",
-    );
-    expect(tiny?.available).toBe(true);
-    expect(tiny?.download.state).toBe("completed");
+      const tiny = listProvisioningStatus().tiers.find(
+        (tier) => tier.tierId === "tiny",
+      );
+      expect(tiny?.available).toBe(true);
+      expect(tiny?.download.state).toBe("completed");
+    } finally {
+      Object.assign(TIER_DOWNLOADS.tiny.fileSizeBytes, originalFileSizes);
+    }
   });
 
   it("fails a download after ninety seconds without a received byte", async () => {
@@ -496,7 +512,7 @@ describe("model provisioning service (model-tier-provisioning)", () => {
   it("serializes downloads with a 409 while another tier is in flight", async () => {
     let release: () => void = () => undefined;
     let gateOpen = false;
-    const blocked: DownloadTransport = async (_url, destination) => {
+    const blocked: DownloadTransport = async (url, destination) => {
       if (!gateOpen) {
         // Hold only the FIRST file so the second start attempt reliably sees
         // an in-flight download; releasing lets every file complete.
@@ -507,7 +523,10 @@ describe("model provisioning service (model-tier-provisioning)", () => {
           };
         });
       }
-      writeFileSync(destination, "x");
+      const file = url.split("/").pop();
+      if (!file) throw new Error(`missing artifact name in ${url}`);
+      writeFileSync(destination, "artifact");
+      truncateSync(destination, TIER_DOWNLOADS.tiny.fileSizeBytes[file]);
     };
 
     startTierDownload("tiny", {

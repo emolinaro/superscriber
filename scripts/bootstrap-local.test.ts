@@ -8,6 +8,7 @@ import {
   existsSync,
   mkdirSync,
   mkdtempSync,
+  readdirSync,
   readFileSync,
   rmSync,
   statSync,
@@ -388,6 +389,35 @@ describe("local deployment bootstrap scripts", () => {
     }
   });
 
+  it(
+    "accepts the interpreter symlinks created by a standard Python venv",
+    () => {
+      testRoot = worktreeTestRoot();
+      const instance = join(testRoot, "instance");
+      markInstanceRoot(instance);
+      const created = spawnSync(
+        "python3",
+        ["-m", "venv", join(instance, "venv")],
+        { encoding: "utf8" },
+      );
+      expect(created.status, created.stderr).toBe(0);
+
+      const result = spawnSync(
+        "bash",
+        [
+          "-c",
+          '. "$1"; reject_managed_instance_symlinks "$2"',
+          "bash",
+          INSTANCE_PATHS,
+          instance,
+        ],
+        { encoding: "utf8" },
+      );
+
+      expect(result.status, result.stderr).toBe(0);
+    },
+  );
+
   it("instance-run refuses a foreign process on the instance port", async () => {
     testRoot = mkdtempSync(join(tmpdir(), "superscriber-bootstrap-test-"));
     const instance = join(testRoot, "instance");
@@ -706,15 +736,6 @@ describe("local deployment bootstrap scripts", () => {
     },
   );
 
-  it("publishes immutable per-instance bundles and configures their path", () => {
-    const source = readFileSync(BOOTSTRAP, "utf8");
-    expect(source).toContain('BUNDLE_DIR="${INSTANCE_ROOT}/build/${BUNDLE_ID}"');
-    expect(source).toContain('mv "${staging}" "${BUNDLE_DIR}"');
-    expect(source).toContain("write_env_assignment \"${env_file}\" SUPERSCRIBER_APP_BUNDLE");
-    expect(source).toContain('SUPERSCRIBER_NEXT_DIST_DIR="${dist_relative}"');
-    expect(source).toContain("acquire_repository_lock");
-  });
-
   it("revalidates maintenance ownership in the supervisor child", () => {
     const source = readFileSync(RUN, "utf8");
     const superviseCase = source.indexOf('[[ "${SUPERVISOR_TOKEN}" =~');
@@ -725,12 +746,38 @@ describe("local deployment bootstrap scripts", () => {
     expect(identityPublish).toBeGreaterThan(revalidation);
   });
 
-  it("terminates a role child when identity publication fails", () => {
-    const source = readFileSync(RUN, "utf8");
-    expect(source).toContain('if ! write_role_identity "${role}" "${child_pid}" "${role_token}"; then');
-    expect(source).toContain('kill "${child_pid}" 2>/dev/null || true');
-    expect(source).toContain('wait "${child_pid}" 2>/dev/null || true');
-  });
+  it(
+    "restarts a role after identity publication fails",
+    { timeout: 20_000 },
+    async () => {
+      testRoot = worktreeTestRoot();
+      const instance = join(testRoot, "instance");
+      const appServer = join(testRoot, "server.js");
+      const workerPython = join(testRoot, "worker-python");
+      writeFileSync(appServer, "setTimeout(()=>{},30000)\n");
+      writeFileSync(workerPython, "#!/bin/sh\nexec sleep 30\n");
+      chmodSync(workerPython, 0o700);
+      prepareRunnableInstance(instance, freePort(), appServer, workerPython, [
+        "SUPERSCRIBER_TEST_FAIL_ROLE_IDENTITY_ONCE=app",
+      ]);
+      runningInstances.add(instance);
+
+      const start = runScript(RUN, [instance]);
+      expect(start.status, start.stderr + start.stdout).toBe(0);
+      await waitForCondition(
+        () => runScript(RUN, [instance, "--app-running"]).status === 0,
+        15_000,
+      );
+      const log = readFileSync(
+        join(instance, "logs", "supervisor.log"),
+        "utf8",
+      );
+      expect(log).toContain(
+        "app identity publication failed; child terminated",
+      );
+      expect(log.match(/app starting:/g)?.length).toBeGreaterThanOrEqual(2);
+    },
+  );
 
   it("launches only a hash-verified active bundle", () => {
     testRoot = worktreeTestRoot();
@@ -741,7 +788,7 @@ describe("local deployment bootstrap scripts", () => {
     writeFileSync(workerPython, "#!/bin/sh\nexec sleep 30\n");
     chmodSync(workerPython, 0o700);
     prepareRunnableInstance(instance, freePort(), appServer, workerPython);
-    const bundleId = readFileSync(join(instance, "active-bundle"), "utf8").trim();
+    const bundleId = activationIdFrom(instance);
     writeFileSync(join(instance, "build", bundleId, "server.js"), "tampered\n");
 
     const result = runScript(RUN, [instance]);
@@ -750,6 +797,147 @@ describe("local deployment bootstrap scripts", () => {
     expect(result.stderr).toContain("valid immutable instance bundle");
     expect(runScript(RUN, [instance, "--status"]).status).toBe(1);
   });
+
+  it("ignores app entrypoint overrides outside explicit test mode", async () => {
+    testRoot = worktreeTestRoot();
+    const instance = join(testRoot, "instance");
+    const appServer = join(testRoot, "external-server.js");
+    const workerPython = join(testRoot, "worker-python");
+    const selectedServer = join(testRoot, "selected-server");
+    writeFileSync(
+      appServer,
+      `require("node:fs").writeFileSync(${JSON.stringify(selectedServer)}, "override");setTimeout(()=>{},30000)\n`,
+    );
+    writeFileSync(workerPython, "#!/bin/sh\nexec sleep 30\n");
+    chmodSync(workerPython, 0o700);
+    prepareRunnableInstance(
+      instance,
+      freePort(),
+      appServer,
+      workerPython,
+      [
+        `SUPERSCRIBER_APP_SERVER=${shellQuote(appServer)}`,
+        "SUPERSCRIBER_INSTANCE_TEST_MODE=0",
+      ],
+      `require("node:fs").writeFileSync(${JSON.stringify(selectedServer)}, "bundle");setTimeout(()=>{},30000)\n`,
+    );
+    runningInstances.add(instance);
+
+    const start = runScript(RUN, [instance]);
+    expect(start.status, start.stderr + start.stdout).toBe(0);
+    await waitForCondition(() => existsSync(selectedServer));
+    expect(readFileSync(selectedServer, "utf8")).toBe("bundle");
+  });
+
+  it(
+    "activates one record while retaining only active and rollback bundles",
+    { timeout: 30_000 },
+    async () => {
+      testRoot = worktreeTestRoot();
+      const instance = join(testRoot, "instance");
+      const port = freePort();
+      const oldServer = join(testRoot, "old-server.js");
+      const oldWorker = join(testRoot, "old-worker");
+      writeFileSync(oldServer, "setTimeout(()=>{},30000)\n");
+      writeFileSync(oldWorker, "#!/bin/sh\nexec sleep 30\n");
+      chmodSync(oldWorker, 0o700);
+      prepareRunnableInstance(instance, port, oldServer, oldWorker);
+      const oldId = activationIdFrom(instance);
+      runningInstances.add(instance);
+      const oldStart = runScript(RUN, [instance]);
+      expect(oldStart.status, oldStart.stderr + oldStart.stdout).toBe(0);
+      await waitForCondition(
+        () => runScript(RUN, [instance, "--status"]).status === 0,
+      );
+      for (const token of ["c", "d"]) {
+        mkdirSync(
+          join(instance, "build", `${"e".repeat(40)}-${token.repeat(48)}`),
+        );
+      }
+      const modelDir = join(instance, "model-cache", "medium");
+      mkdirSync(modelDir, { recursive: true });
+      writeModelTier(modelDir, "txt");
+      prepareBootstrapVenv(instance, true);
+
+      const result = runScript(
+        BOOTSTRAP,
+        [
+          "--instance-root",
+          instance,
+          "--port",
+          port,
+          "--model-tier",
+          "medium",
+          "--skip-model-download",
+          "--skip-worker-deps",
+        ],
+        stubSuccessfulBuildEnv(testRoot, healthyServerSource()),
+      );
+
+      expect(result.status, result.stderr + result.stdout).toBe(0);
+      const activeId = activationIdFrom(instance);
+      expect(activeId).not.toBe(oldId);
+      expect(readFileSync(join(instance, "rollback.env"), "utf8")).toContain(
+        `SUPERSCRIBER_ACTIVATION_ID=${oldId}`,
+      );
+      expect(existsSync(join(instance, "active-bundle"))).toBe(false);
+      const generations = readdirSync(join(instance, "build")).filter((name) =>
+        /^[0-9a-f]{40}-[0-9a-f]{48}$/.test(name),
+      );
+      expect(generations.sort()).toEqual([activeId, oldId].sort());
+    },
+  );
+
+  it(
+    "restores and restarts the previous activation when a candidate fails",
+    { timeout: 30_000 },
+    async () => {
+      testRoot = worktreeTestRoot();
+      const instance = join(testRoot, "instance");
+      const port = freePort();
+      const oldServer = join(testRoot, "old-server.js");
+      const oldWorker = join(testRoot, "old-worker");
+      writeFileSync(oldServer, "setTimeout(()=>{},30000)\n");
+      writeFileSync(oldWorker, "#!/bin/sh\nexec sleep 30\n");
+      chmodSync(oldWorker, 0o700);
+      prepareRunnableInstance(instance, port, oldServer, oldWorker);
+      const previousActivation = readFileSync(join(instance, "app.env"), "utf8");
+      runningInstances.add(instance);
+      const oldStart = runScript(RUN, [instance]);
+      expect(oldStart.status, oldStart.stderr + oldStart.stdout).toBe(0);
+      await waitForCondition(
+        () => runScript(RUN, [instance, "--status"]).status === 0,
+      );
+      const modelDir = join(instance, "model-cache", "medium");
+      mkdirSync(modelDir, { recursive: true });
+      writeModelTier(modelDir, "txt");
+      prepareBootstrapVenv(instance, false);
+
+      const result = runScript(
+        BOOTSTRAP,
+        [
+          "--instance-root",
+          instance,
+          "--port",
+          port,
+          "--model-tier",
+          "medium",
+          "--skip-model-download",
+          "--skip-worker-deps",
+        ],
+        stubSuccessfulBuildEnv(testRoot, healthyServerSource()),
+      );
+
+      expect(result.status).toBe(1);
+      expect(readFileSync(join(instance, "app.env"), "utf8")).toBe(
+        previousActivation,
+      );
+      await waitForCondition(
+        () => runScript(RUN, [instance, "--app-running"]).status === 0,
+        15_000,
+      );
+    },
+  );
 
   it(
     "reports a worker startup failure instead of app-only readiness",
@@ -784,7 +972,7 @@ describe("local deployment bootstrap scripts", () => {
   );
 
   it(
-    "quiesces a verified live instance before build activation",
+    "restarts a verified live instance when preparation fails before activation",
     { timeout: 20_000 },
     async () => {
       testRoot = worktreeTestRoot();
@@ -822,7 +1010,9 @@ describe("local deployment bootstrap scripts", () => {
         stubNpxEnv(testRoot),
       );
       expect(bootstrap.status).not.toBe(0);
-      expect(runScript(RUN, [instance, "--status"]).status).not.toBe(0);
+      await waitForCondition(
+        () => runScript(RUN, [instance, "--status"]).status === 0,
+      );
     },
   );
 });
@@ -841,6 +1031,41 @@ function stubNpxEnv(testRoot: string) {
   );
   chmodSync(join(fakeBin, "npm"), 0o755);
   return env;
+}
+
+function stubSuccessfulBuildEnv(testRoot: string, serverSource: string) {
+  const env = stubToolchainEnv(testRoot);
+  const fakeBin = join(testRoot, "bin");
+  const serverFixture = join(testRoot, "candidate-server.js");
+  writeFileSync(serverFixture, serverSource);
+  writeFileSync(
+    join(fakeBin, "npx"),
+    '#!/bin/sh\n[ -d "$PWD/.superscriber-bootstrap-repository.lock" ] || exit 92\nexit 0\n',
+  );
+  writeFileSync(
+    join(fakeBin, "npm"),
+    `#!/bin/sh
+if [ "\${1:-}" = "--version" ]; then echo 11.19.0; exit 0; fi
+[ -d "$PWD/.superscriber-bootstrap-repository.lock" ] || exit 91
+if [ "\${1:-}" = "run" ] && [ "\${2:-}" = "build" ]; then
+  output="$PWD/$SUPERSCRIBER_NEXT_DIST_DIR"
+  mkdir -p "$output/standalone" "$output/static"
+  cp ${shellQuote(serverFixture)} "$output/standalone/server.js"
+fi
+exit 0
+`,
+  );
+  chmodSync(join(fakeBin, "npx"), 0o700);
+  chmodSync(join(fakeBin, "npm"), 0o700);
+  return env;
+}
+
+function healthyServerSource() {
+  return (
+    "require('node:http').createServer((_q,r)=>{" +
+    "r.writeHead(200,{'content-type':'application/json'});" +
+    "r.end('{\"ok\":true}')}).listen(Number(process.env.PORT),'127.0.0.1')\n"
+  );
 }
 
 function worktreeTestRoot() {
@@ -890,6 +1115,8 @@ function prepareRunnableInstance(
   port: string,
   appServer: string,
   workerPython: string,
+  extraEnv: string[] = [],
+  bundleServerSource = "",
 ) {
   const bundleId = `${"a".repeat(40)}-${"b".repeat(48)}`;
   const bundle = join(instance, "build", bundleId);
@@ -899,7 +1126,7 @@ function prepareRunnableInstance(
   mkdirSync(join(instance, "secrets"), { recursive: true });
   mkdirSync(join(bundle, "scripts"), { recursive: true });
   mkdirSync(join(bundle, "worker"), { recursive: true });
-  writeFileSync(join(bundle, "server.js"), "");
+  writeFileSync(join(bundle, "server.js"), bundleServerSource);
   writeFileSync(
     join(bundle, "scripts", "instance-run.sh"),
     readFileSync(RUN, "utf8"),
@@ -928,7 +1155,6 @@ function prepareRunnableInstance(
     })
     .join("\n");
   writeFileSync(join(bundle, "bundle.sha256"), `${manifest}\n`);
-  writeFileSync(join(instance, "active-bundle"), `${bundleId}\n`);
   writeFileSync(join(instance, "secrets", "auth.secret"), "auth");
   writeFileSync(join(instance, "secrets", "engine.secret"), "engine");
   writeFileSync(
@@ -936,13 +1162,24 @@ function prepareRunnableInstance(
     [
       `PORT=${port}`,
       "HOSTNAME=127.0.0.1",
-      `SUPERSCRIBER_APP_SERVER=${shellQuote(appServer)}`,
+      `SUPERSCRIBER_ACTIVATION_ID=${bundleId}`,
       `SUPERSCRIBER_APP_BUNDLE=${shellQuote(bundle)}`,
-      `SUPERSCRIBER_WORKER_PYTHON=${shellQuote(workerPython)}`,
+      "SUPERSCRIBER_INSTANCE_TEST_MODE=1",
+      `SUPERSCRIBER_TEST_APP_SERVER=${shellQuote(appServer)}`,
+      `SUPERSCRIBER_TEST_WORKER_PYTHON=${shellQuote(workerPython)}`,
       "SUPERSCRIBER_ENGINE_MODE=internal",
+      ...extraEnv,
       "",
     ].join("\n"),
   );
+}
+
+function activationIdFrom(instance: string) {
+  const match = readFileSync(join(instance, "app.env"), "utf8").match(
+    /^SUPERSCRIBER_ACTIVATION_ID=([0-9a-f]{40}-[0-9a-f]{48})$/m,
+  );
+  if (!match) throw new Error("missing activation id");
+  return match[1];
 }
 
 function markInstanceRoot(instance: string) {
@@ -965,6 +1202,19 @@ function prepareWorkingVenv(instance: string) {
   mkdirSync(bin, { recursive: true });
   const python = join(bin, "python3");
   writeFileSync(python, "#!/bin/sh\nexit 0\n");
+  chmodSync(python, 0o700);
+}
+
+function prepareBootstrapVenv(instance: string, ready: boolean) {
+  const bin = join(instance, "venv", "bin");
+  mkdirSync(bin, { recursive: true });
+  const python = join(bin, "python3");
+  writeFileSync(
+    python,
+    ready
+      ? "#!/bin/sh\nif [ \"${1:-}\" = \"-c\" ]; then exit 0; fi\nsleep 1\necho '[worker] ready with offline model fixture'\ntrap 'kill \"$child\" 2>/dev/null; exit 0' TERM INT\nwhile :; do sleep 30 & child=$!; wait \"$child\"; done\n"
+      : "#!/bin/sh\nif [ \"${1:-}\" = \"-c\" ]; then exit 0; fi\nsleep 1\necho '[worker] startup failed: fixture' >&2\nexit 1\n",
+  );
   chmodSync(python, 0o700);
 }
 

@@ -77,14 +77,17 @@ Options: `--instance-root DIR` (default `~/.local/share/superscriber`),
 `--skip-worker-deps`.
 
 Instance layout (all under the instance root): `.superscriber-instance`
-(bootstrap ownership marker), `app.env` (non-secret config), `secrets/`
+(bootstrap ownership marker), `app.env` (the atomic active deployment record),
+`rollback.env` (the prior deployment record), `secrets/`
 (auth + engine secrets, mode `0600`, never printed), `data/`
 (SQLite database, media, uploads), `model-cache/` (model tiers), `logs/`
 (`app.log`, `worker.log`, `supervisor.log`), `pids/`, and immutable `build/`
-bundles selected through `active-bundle`. Existing managed directories and
+bundles selected by the active deployment record. A successful re-run retains
+the active bundle and one rollback bundle. Existing managed directories and
 leaf files, including database/WAL files, secrets, logs, PID/readiness files,
 and model-tier directories, must not be symlinks; bootstrap refuses them
-before writing.
+before writing. Standard interpreter symlinks created inside `venv/bin/` are
+allowed, but the `venv` root and nonstandard venv paths must be real paths.
 
 Operate the instance:
 

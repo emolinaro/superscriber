@@ -3,6 +3,7 @@ import {
   mkdirSync,
   rmSync,
   symlinkSync,
+  truncateSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
@@ -26,6 +27,7 @@ describe("model catalog (demo-model-tier-picker)", () => {
     for (const key of [
       "SUPERSCRIBER_TRANSCRIBE_MODEL_DIR",
       "SUPERSCRIBER_TRANSCRIBE_MODEL",
+      "SUPERSCRIBER_MODEL_DOWNLOAD_FIXTURE_DIR",
     ]) {
       if (savedEnv[key] === undefined) {
         delete process.env[key];
@@ -40,6 +42,9 @@ describe("model catalog (demo-model-tier-picker)", () => {
       process.env.SUPERSCRIBER_TRANSCRIBE_MODEL_DIR;
     savedEnv.SUPERSCRIBER_TRANSCRIBE_MODEL =
       process.env.SUPERSCRIBER_TRANSCRIBE_MODEL;
+    savedEnv.SUPERSCRIBER_MODEL_DOWNLOAD_FIXTURE_DIR =
+      process.env.SUPERSCRIBER_MODEL_DOWNLOAD_FIXTURE_DIR;
+    delete process.env.SUPERSCRIBER_MODEL_DOWNLOAD_FIXTURE_DIR;
   }
 
   function provision(root: string, ...tiers: string[]) {
@@ -47,10 +52,9 @@ describe("model catalog (demo-model-tier-picker)", () => {
       const dir = join(root, tier);
       mkdirSync(dir, { recursive: true });
       for (const file of TIER_DOWNLOADS[tier].files) {
-        writeFileSync(
-          join(dir, file),
-          file === "config.json" ? "{}" : "artifact",
-        );
+        const artifact = join(dir, file);
+        writeFileSync(artifact, "artifact");
+        truncateSync(artifact, TIER_DOWNLOADS[tier].fileSizeBytes[file]);
       }
     }
   }
@@ -104,6 +108,19 @@ describe("model catalog (demo-model-tier-picker)", () => {
       }
     }
     expect(isModelProvisioned("tiny")).toBe(false);
+  });
+
+  it("rejects a truncated pinned artifact", () => {
+    snapshotEnv();
+    const root = mkdtempSync(join(tmpdir(), "model-catalog-truncated-"));
+    provision(root, "small");
+    truncateSync(
+      join(root, "small", "model.bin"),
+      TIER_DOWNLOADS.small.fileSizeBytes["model.bin"] - 1,
+    );
+    process.env.SUPERSCRIBER_TRANSCRIBE_MODEL_DIR = root;
+
+    expect(isModelProvisioned("small")).toBe(false);
   });
 
   it("rejects a symlinked model tier directory", () => {

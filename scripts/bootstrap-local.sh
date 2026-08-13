@@ -21,6 +21,10 @@ BUNDLE_DIR=""
 BUILD_OUTPUT_DIR=""
 REPOSITORY_LOCK_DIR="${REPO_ROOT}/.superscriber-bootstrap-repository.lock"
 REPOSITORY_LOCK_IDENTITY=""
+ACTIVATION_BACKUP=""
+ACTIVATION_PENDING=0
+INSTANCE_WAS_RUNNING=0
+INSTANCE_RESTORED=0
 
 usage() {
   cat <<'EOF'
@@ -225,7 +229,7 @@ normalize_runtime_permissions() {
     "${INSTANCE_ROOT}/pids" "${INSTANCE_ROOT}/secrets" -type f -exec chmod 600 {} +
   [[ ! -f "${INSTANCE_ROOT}/instance.log" ]] || chmod 600 "${INSTANCE_ROOT}/instance.log"
   [[ ! -f "${INSTANCE_ROOT}/app.env" ]] || chmod 600 "${INSTANCE_ROOT}/app.env"
-  [[ ! -f "${INSTANCE_ROOT}/active-bundle" ]] || chmod 600 "${INSTANCE_ROOT}/active-bundle"
+  [[ ! -f "${INSTANCE_ROOT}/rollback.env" ]] || chmod 600 "${INSTANCE_ROOT}/rollback.env"
   chmod 600 "${INSTANCE_ROOT}/${INSTANCE_MARKER_NAME}"
 }
 
@@ -418,18 +422,73 @@ cleanup_bundle_staging() {
   fi
 }
 
+remove_bundle_generation() {
+  local bundle_id="$1" path active_id
+  [[ "${bundle_id}" =~ ^[0-9a-f]{40}-[0-9a-f]{48}$ ]] || return 0
+  path="${INSTANCE_ROOT}/build/${bundle_id}"
+  [[ "${bundle_id}" == "${BUNDLE_ID}" && "${path}" == "${BUNDLE_DIR}" ]] || return 0
+  active_id="$(activation_id_from_file "${INSTANCE_ROOT}/app.env" 2>/dev/null || true)"
+  [[ "${active_id}" != "${bundle_id}" ]] || return 0
+  if [[ -d "${path}" && ! -L "${path}" ]]; then
+    rm -rf -- "${path}"
+  fi
+}
+
+restart_quiesced_instance() {
+  [[ "${INSTANCE_WAS_RUNNING}" -eq 1 && "${INSTANCE_RESTORED}" -eq 0 ]] || return 0
+  if ! bash "${SCRIPT_DIR}/instance-run.sh" "${INSTANCE_ROOT}" --status >/dev/null 2>&1; then
+    if SUPERSCRIBER_MAINTENANCE_IDENTITY="${MAINTENANCE_IDENTITY}" \
+      bash "${SCRIPT_DIR}/instance-run.sh" "${INSTANCE_ROOT}" >/dev/null 2>&1; then
+      log "restored the previously running instance"
+    else
+      printf '[bootstrap] ERROR: could not restart the previous instance; inspect %s/logs/supervisor.log\n' "${INSTANCE_ROOT}" >&2
+    fi
+  fi
+  INSTANCE_RESTORED=1
+}
+
+restore_previous_activation() {
+  [[ "${ACTIVATION_PENDING}" -eq 1 ]] || return 0
+  bash "${SCRIPT_DIR}/instance-stop.sh" "${INSTANCE_ROOT}" >/dev/null 2>&1 || true
+  if [[ -n "${ACTIVATION_BACKUP}" && -f "${ACTIVATION_BACKUP}" && ! -L "${ACTIVATION_BACKUP}" ]]; then
+    mv "${ACTIVATION_BACKUP}" "${INSTANCE_ROOT}/app.env"
+  else
+    rm -f "${INSTANCE_ROOT}/app.env"
+  fi
+  ACTIVATION_PENDING=0
+  ACTIVATION_BACKUP=""
+  remove_bundle_generation "${BUNDLE_ID}"
+  restart_quiesced_instance
+}
+
 cleanup_bootstrap_state() {
   cleanup_build_output
   cleanup_bundle_staging
   release_repository_lock
+  if [[ "${ACTIVATION_PENDING}" -eq 1 ]]; then
+    restore_previous_activation
+  else
+    restart_quiesced_instance
+  fi
+  remove_bundle_generation "${BUNDLE_ID}"
+  [[ -z "${ACTIVATION_BACKUP}" ]] || rm -f -- "${ACTIVATION_BACKUP}"
   release_maintenance_lock
 }
 
 write_app_env() {
-  local env_file="${INSTANCE_ROOT}/app.env.tmp.$$" active_file
+  local env_file="${INSTANCE_ROOT}/app.env.tmp.$$"
   reject_managed_instance_symlinks "${INSTANCE_ROOT}" || exit 1
   [[ -n "${BUNDLE_ID}" && -n "${BUNDLE_DIR}" ]] || fail "production bundle was not published"
+  if resolve_active_bundle "${INSTANCE_ROOT}" >/dev/null 2>&1; then
+    ACTIVATION_BACKUP="${INSTANCE_ROOT}/.activation-previous.$$"
+    [[ ! -e "${ACTIVATION_BACKUP}" && ! -L "${ACTIVATION_BACKUP}" ]] || \
+      fail "refusing to overwrite an existing activation backup"
+    cp "${INSTANCE_ROOT}/app.env" "${ACTIVATION_BACKUP}"
+    chmod 600 "${ACTIVATION_BACKUP}"
+    activation_id_from_file "${ACTIVATION_BACKUP}" >/dev/null
+  fi
   : > "${env_file}"
+  write_env_assignment "${env_file}" SUPERSCRIBER_ACTIVATION_ID "${BUNDLE_ID}"
   write_env_assignment "${env_file}" SUPERSCRIBER_AUTH_MODE local
   write_env_assignment "${env_file}" SUPERSCRIBER_DEPLOYMENT_PROFILE no-mail
   write_env_assignment "${env_file}" SUPERSCRIBER_DB_PATH "${INSTANCE_ROOT}/data/superscriber.db"
@@ -442,17 +501,42 @@ write_app_env() {
   write_env_assignment "${env_file}" SUPERSCRIBER_TRANSCRIBE_MODEL_DIR "${INSTANCE_ROOT}/model-cache"
   write_env_assignment "${env_file}" SUPERSCRIBER_TRANSCRIBE_OFFLINE 1
   write_env_assignment "${env_file}" SUPERSCRIBER_TRANSCRIBE_ALLOW_RUNTIME_DOWNLOAD 0
-  write_env_assignment "${env_file}" SUPERSCRIBER_WORKER_PYTHON "${INSTANCE_ROOT}/venv/bin/python3"
   write_env_assignment "${env_file}" SUPERSCRIBER_APP_BUNDLE "${BUNDLE_DIR}"
   write_env_assignment "${env_file}" PORT "${PORT}"
   write_env_assignment "${env_file}" HOSTNAME 127.0.0.1
   chmod 600 "${env_file}"
   mv "${env_file}" "${INSTANCE_ROOT}/app.env"
-  active_file="${INSTANCE_ROOT}/active-bundle.tmp.$$"
-  printf '%s\n' "${BUNDLE_ID}" > "${active_file}"
-  chmod 600 "${active_file}"
-  mv "${active_file}" "${INSTANCE_ROOT}/active-bundle"
+  ACTIVATION_PENDING=1
+  rm -f "${INSTANCE_ROOT}/active-bundle"
   log "instance root ready at ${INSTANCE_ROOT} (db: data/superscriber.db, models: model-cache/, logs: logs/)"
+}
+
+prune_inactive_bundles() {
+  local active_id rollback_id="" path name
+  active_id="$(activation_id_from_file "${INSTANCE_ROOT}/app.env")" || return 1
+  if [[ -f "${INSTANCE_ROOT}/rollback.env" && ! -L "${INSTANCE_ROOT}/rollback.env" ]]; then
+    rollback_id="$(activation_id_from_file "${INSTANCE_ROOT}/rollback.env" 2>/dev/null || true)"
+  fi
+  for path in "${INSTANCE_ROOT}/build"/*; do
+    [[ -e "${path}" || -L "${path}" ]] || continue
+    name="${path##*/}"
+    [[ "${name}" =~ ^[0-9a-f]{40}-[0-9a-f]{48}$ ]] || continue
+    [[ "${name}" == "${active_id}" || "${name}" == "${rollback_id}" ]] && continue
+    [[ -d "${path}" && ! -L "${path}" ]] || continue
+    rm -rf -- "${path}"
+  done
+}
+
+commit_activation() {
+  if [[ -n "${ACTIVATION_BACKUP}" && -f "${ACTIVATION_BACKUP}" && ! -L "${ACTIVATION_BACKUP}" ]]; then
+    mv "${ACTIVATION_BACKUP}" "${INSTANCE_ROOT}/rollback.env"
+  else
+    rm -f "${INSTANCE_ROOT}/rollback.env"
+  fi
+  ACTIVATION_BACKUP=""
+  ACTIVATION_PENDING=0
+  INSTANCE_RESTORED=1
+  prune_inactive_bundles
 }
 
 provision_model() {
@@ -470,6 +554,7 @@ provision_model() {
 
 quiesce_instance() {
   if bash "${SCRIPT_DIR}/instance-run.sh" "${INSTANCE_ROOT}" --status >/dev/null 2>&1; then
+    INSTANCE_WAS_RUNNING=1
     log "quiescing the running instance before database and bundle activation"
     bash "${SCRIPT_DIR}/instance-stop.sh" "${INSTANCE_ROOT}"
   fi
@@ -527,7 +612,7 @@ build_app() {
 }
 
 launch_failure() {
-  bash "${SCRIPT_DIR}/instance-stop.sh" "${INSTANCE_ROOT}" >/dev/null 2>&1 || true
+  restore_previous_activation
   fail "$1"
 }
 
@@ -608,15 +693,16 @@ main() {
     install_worker_deps
   fi
   validate_worker_venv
-  choose_model_tier
   acquire_repository_lock
   install_node_deps
-  build_app
-  release_repository_lock
+  choose_model_tier
   provision_model
   init_database
+  build_app
+  release_repository_lock
   write_app_env
   launch_instance
+  commit_activation
   release_maintenance_lock
   trap - EXIT
   print_first_run

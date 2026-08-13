@@ -10,6 +10,7 @@ import {
   mkdirSync,
   mkdtempSync,
   rmSync,
+  truncateSync,
   writeFileSync,
 } from "node:fs";
 import { spawn, spawnSync } from "node:child_process";
@@ -138,10 +139,9 @@ describe("provision-model-tier CLI", () => {
       const tierDir = join(modelRoot, TIER);
       mkdirSync(tierDir, { recursive: true });
       for (const file of TIER_DOWNLOADS[TIER].files) {
-        writeFileSync(
-          join(tierDir, file),
-          file === "config.json" ? "{}" : "model",
-        );
+        const artifact = join(tierDir, file);
+        writeFileSync(artifact, "artifact");
+        truncateSync(artifact, TIER_DOWNLOADS[TIER].fileSizeBytes[file]);
       }
       const result = runCli(["--verify", TIER], {
         SUPERSCRIBER_TRANSCRIBE_MODEL_DIR: modelRoot,
