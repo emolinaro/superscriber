@@ -4,7 +4,7 @@
 
 # Superscriber
 
-Superscriber is a self-contained governed transcription appliance for sensitive audio and video. The current release is v0.3.0.0 (see [CHANGELOG.md](./CHANGELOG.md)).
+Superscriber is a self-contained governed transcription appliance for sensitive audio and video. The current release is v0.4.0 (see [CHANGELOG.md](./CHANGELOG.md)).
 
 The app models a regulated workflow:
 

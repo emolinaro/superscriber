@@ -2,20 +2,53 @@
 
 All notable changes to this project will be documented in this file.
 
+## [Unreleased]
+
+### Added
+- Adopted an editorial single-voice wordmark and branded the sign-in and first-run surfaces, replayed as a two-door landing that also works without JavaScript (PRs #9, #10, #15, #29).
+- Added a landing footer source repository link with an opt-in hosted user-guide link behind `SUPERSCRIBER_DOCS_URL` (PR #31).
+- Added a per-user appearance system (Light / Dark / System) with a WCAG-AA dark theme (PR #12).
+- Added recording pause and resume controls to governed ingest (PR #11).
+- Added self-service and administrator password reset, with an opt-in SMTP mail seam and an operator-assisted default, a confirmation copy that no longer implies reset mail when none is configured, and a preserved self-reset link handoff (PRs #13, #23, #33).
+- Added batch multi-file upload with a persistent transfer card and per-file results (PR #16).
+- Restored the waveform player with segment-aware scrubbing, added playback toggle from active transcript segments, and pinned the playback chrome with a centered transcript follow-scroll (PRs #17, #32, #36).
+- Added live, engine-derived transcription progress in work ledgers and uploader status casefiles (PR #21).
+- Added a host-verified ingest model tier picker plus self-service admin model provisioning with free-space preflight, staged installs, and single-download serialization (PRs #19, #27, #37).
+- Restored the governed folder-watch ingest lane with its operator runbook (PR #22).
+- Expanded governed admin ledger access and restored case links across ledger rows (PRs #24, #25).
+- Added operator-gated admin recovery: an on-host single-use claim-token ceremony that re-admins an instance whose accounts survived but which has no active administrator (PR #26).
+- Added governed bulk speaker rename with a confirmed count summary and merge-onto-existing behavior (PR #35).
+- Added a one-shot local deployment bootstrap with idempotent setup, model-tier provisioning, and crash-supervised app and worker processes (PR #40).
+- Restored demo governance controls (PR #18).
+
+### Changed
+- Applied a casefile UX batch: bounded shell, header governance trigger, Edited-vs badges, and phone-safety copy (PR #14).
+- Added CONTRIBUTING.md with the contribution workflow, validation gate, and security disclosure rules (PR #30).
+
+### Fixed
+- Stabilized OIDC sign-in, callback, and revocation flows under contention (PR #28).
+- Made revision snapshot picks hard-navigate without an app-router dependency (PR #20).
+- Restored governed export recovery for completed casefile snapshots (PR #34).
+- Required password confirmation in the account dialog and compacted its layout (PR #39).
+- Vertically centered the ingest file input chooser row (PR #38).
+
 ## [0.4.0] - 2026-08-06
 
 ### Added
 - Added Authentik OIDC integration as a central identity provider with a revocable session registry, strength-scaled authorization, and external identity links with strict role mapping (PR #4).
 - Added an identity mode contract (local / dual-run / authentik-primary) enforced by startup invariants, with operator tooling, runbooks, and documentation (PR #4).
 - Added break-glass access: a designated emergency local admin protected by a WebAuthn ceremony and one-time codes (PR #4).
+- Added governed account role management: inline role edits with a required change reason, atomic role-change audit, authorization version bump, and revocation of the account's active sessions (PR #8).
 - Added container E2E failure-artifact uploads for CI debugging (PR #5).
 
 ### Changed
 - Aligned README, AGENTS, DESIGN, and TODOS with the v0.3.0.0 reality and untracked the superpowers specs (PR #3).
 - Hardened container E2E with navigation anchors and a pinned base image digest (PR #5).
+- Recovered this 0.4.0 CHANGELOG section from the v0.4.0 release notes (PR #7).
 
 ### Notes
 - No live-target changes: all integration delivery qualified locally (unit and container E2E lanes).
+- The GitHub release and `v0.4.0` tag were published 2026-08-06 over the identity-provider, docs-alignment, and container-hardening commits; the governed account role management that completes the identity wave landed in-tree on 2026-08-09 under the same release line.
 
 ## [0.3.0.0] - 2026-08-02
 

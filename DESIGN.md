@@ -4,7 +4,7 @@
 
 Superscriber is a calm, governed institutional workspace, not a generic AI dashboard and not a developer console. The core product promise is simple: sensitive recordings enter one controlled system, reviewers do careful work in the browser, and approvals happen against an explicit, traceable record.
 
-This file is the design record and the visual and interaction source of truth for the product as shipped on `main` (v0.3.0.0). It records both how the product looks and how its governed workflow behaves; code is authoritative for anything beyond what is written here.
+This file is the design record and the visual and interaction source of truth for the product as shipped on `main` (v0.4.0). It records both how the product looks and how its governed workflow behaves; code is authoritative for anything beyond what is written here.
 
 ## The Governed Casefile Model
 
