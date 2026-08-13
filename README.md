@@ -273,6 +273,7 @@ Optional configuration:
 - [`CONTRIBUTING.md`](./CONTRIBUTING.md) - contribution workflow, validation gate, commit style, and disclosure rules
 - [`DESIGN.md`](./DESIGN.md) — design record and behavioral contract for the governed casefile workspace
 - [`TODOS.md`](./TODOS.md) — deferred follow-on work after the current appliance release
+- [`docs/USER-GUIDE.md`](./docs/USER-GUIDE.md) - end-to-end user guide: sign-in, ingest, casefile review, governed workflow, export, and administration
 - [`docs/operators/`](./docs/operators/) - operator runbooks for authentication and account recovery, including [governed folder-watch ingest](./docs/operators/ingest-watch.md)
 
 ## Orchestration Modes

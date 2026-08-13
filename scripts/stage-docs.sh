@@ -25,8 +25,8 @@ cp README.md "$content/index.md"
 cp DESIGN.md CHANGELOG.md CONTRIBUTING.md TODOS.md "$content/"
 cp docs/operators/*.md "$content/operators/"
 
-# Future user guide: once the demo lane lands docs/USER-GUIDE.md it is staged
-# automatically; add it to website/sidebars.ts at the same time.
+# User guide: docs/USER-GUIDE.md is staged automatically when present; it is
+# listed in website/sidebars.ts.
 if [ -f docs/USER-GUIDE.md ]; then
   cp docs/USER-GUIDE.md "$content/USER-GUIDE.md"
 fi
@@ -49,6 +49,9 @@ perl -pi -e "s{\\]\\(\\./AGENTS\\.md\\)}{]($github_blob/AGENTS.md)}g" *.md
 perl -pi -e 's{\]\(\./README\.md(#[A-Za-z0-9_-]+)?\)}{](index.md$1)}g' *.md operators/*.md
 #    and from runbooks, ../../README.md -> ../index.md (same target)
 perl -pi -e 's{\]\(\.\./\.\./README\.md(#[A-Za-z0-9_-]+)?\)}{](../index.md$1)}g' operators/*.md
+#  - the user guide is staged at the docs root, so links into docs/USER-GUIDE.md
+#    must follow it there
+perl -pi -e 's{\]\(\./docs/USER-GUIDE\.md(#[A-Za-z0-9_-]+)?\)}{](USER-GUIDE.md$1)}g' *.md operators/*.md
 #  - dev-process specs/plans (docs/superpowers/) are not staged into the
 #    site, so links into them point at the repo blob
 perl -pi -e "s{\\]\\(\\./docs/superpowers/([A-Za-z0-9_./-]+\\.md)\\)}{]($github_blob/docs/superpowers/\$1)}g" *.md operators/*.md
