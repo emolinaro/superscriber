@@ -238,3 +238,29 @@
   width: min(12rem, 100%);
   height: 0.9rem;
 }
+
+/* model-tier-provisioning: the tier install affordance is an inline
+   underlined text action in the notes register, not a bordered button
+   block - the option stays available but quiet, same pattern as
+   .case-header__governance. Inherits the list's body scale so it reads as
+   one more quiet note, with hover and disabled paralleling the button
+   contract. */
+.ingest-model-download__action {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--color-teal-700);
+  text-decoration: underline;
+  text-decoration-thickness: 1px;
+  text-underline-offset: 0.18em;
+  cursor: pointer;
+}
+
+.ingest-model-download__action:hover:not(:disabled) {
+  color: var(--color-rust-600);
+}
+
+.ingest-model-download__action:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
