@@ -1,6 +1,19 @@
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import {
+  chmodSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  symlinkSync,
+  truncateSync,
+  utimesSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { createHash } from "node:crypto";
+import { execFileSync } from "node:child_process";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const fsFaults = vi.hoisted(() => ({
@@ -9,6 +22,7 @@ const fsFaults = vi.hoisted(() => ({
     source: string;
     destination: string;
     sourceWasDirectory: boolean;
+    sourceOwnerExisted: boolean;
     destinationExisted: boolean;
   }>,
 }));
@@ -23,6 +37,9 @@ vi.mock("node:fs", async (importOriginal) => {
         source: String(source),
         destination: String(destination),
         sourceWasDirectory: actual.statSync(source).isDirectory(),
+        sourceOwnerExisted: actual.existsSync(
+          join(String(source), "owner.json"),
+        ),
         destinationExisted: actual.existsSync(destination),
       });
       return actual.renameSync(...args);
@@ -31,7 +48,8 @@ vi.mock("node:fs", async (importOriginal) => {
       const path = String(args[0]);
       if (
         fsFaults.failTierRemovals &&
-        (path.endsWith(join(".provisioning", "tiny")) || path.endsWith(join("", "tiny")))
+        (path.includes(`${join(".provisioning", "tiny")}-`) ||
+          path.endsWith(join("", "tiny")))
       ) {
         throw new Error("simulated cleanup failure");
       }
@@ -49,6 +67,7 @@ import {
   waitForTierDownload,
   type DownloadTransport,
 } from "./provisioning";
+import { isModelProvisioned } from "./catalog";
 import { TIER_DOWNLOADS } from "./tier-downloads";
 
 // model-tier-provisioning: the server owns tier installs end to end - disk
@@ -61,7 +80,8 @@ describe("model provisioning service (model-tier-provisioning)", () => {
 
   beforeEach(() => {
     modelRoot = mkdtempSync(join(tmpdir(), "superscriber-provisioning-"));
-    savedEnv.SUPERSCRIBER_TRANSCRIBE_MODEL_DIR = process.env.SUPERSCRIBER_TRANSCRIBE_MODEL_DIR;
+    savedEnv.SUPERSCRIBER_TRANSCRIBE_MODEL_DIR =
+      process.env.SUPERSCRIBER_TRANSCRIBE_MODEL_DIR;
     savedEnv.SUPERSCRIBER_MODEL_DOWNLOAD_FIXTURE_DIR =
       process.env.SUPERSCRIBER_MODEL_DOWNLOAD_FIXTURE_DIR;
     process.env.SUPERSCRIBER_TRANSCRIBE_MODEL_DIR = modelRoot;
@@ -89,9 +109,13 @@ describe("model provisioning service (model-tier-provisioning)", () => {
     vi.useRealTimers();
   });
 
-  function fakeTransport(bytes = 1024): DownloadTransport {
-    return async (_url, destination, onProgress) => {
-      writeFileSync(destination, Buffer.alloc(bytes, 7));
+  function fakeTransport(tierId = "tiny"): DownloadTransport {
+    return async (url, destination, onProgress) => {
+      const file = url.split("/").pop();
+      if (!file) throw new Error(`missing artifact name in ${url}`);
+      const bytes = TIER_DOWNLOADS[tierId].fileSizeBytes[file];
+      writeFileSync(destination, "artifact");
+      truncateSync(destination, bytes);
       onProgress({ bytesReceived: bytes, bytesTotal: bytes });
     };
   }
@@ -100,10 +124,29 @@ describe("model provisioning service (model-tier-provisioning)", () => {
     return { freeBytes: Number.MAX_SAFE_INTEGER };
   }
 
+  function processStartIdentityForTest() {
+    const identity = execFileSync(
+      "ps",
+      ["-ww", "-p", String(process.pid), "-o", "lstart=", "-o", "args="],
+      { encoding: "utf8" },
+    ).trim();
+    return createHash("sha256").update(identity).digest("hex");
+  }
+
+  function writeProvisionedTier(tierId: string) {
+    const dir = join(modelRoot, tierId);
+    mkdirSync(dir, { recursive: true });
+    for (const file of TIER_DOWNLOADS[tierId].files) {
+      const artifact = join(dir, file);
+      writeFileSync(artifact, "artifact");
+      truncateSync(artifact, TIER_DOWNLOADS[tierId].fileSizeBytes[file]);
+    }
+  }
+
   it("rejects an unknown tier as a 400 validation error", () => {
-    expect(() => startTierDownload("not-a-model", { probeDiskSpace: unlimitedDisk })).toThrow(
-      ProvisioningError,
-    );
+    expect(() =>
+      startTierDownload("not-a-model", { probeDiskSpace: unlimitedDisk }),
+    ).toThrow(ProvisioningError);
     try {
       startTierDownload("not-a-model", { probeDiskSpace: unlimitedDisk });
     } catch (error) {
@@ -114,10 +157,7 @@ describe("model provisioning service (model-tier-provisioning)", () => {
   });
 
   it("refuses to download an already provisioned tier", () => {
-    const dir = join(modelRoot, "tiny");
-    mkdirSync(dir, { recursive: true });
-    writeFileSync(join(dir, "model.bin"), "bin");
-    writeFileSync(join(dir, "config.json"), "{}");
+    writeProvisionedTier("tiny");
 
     try {
       startTierDownload("tiny", { probeDiskSpace: unlimitedDisk });
@@ -129,8 +169,24 @@ describe("model provisioning service (model-tier-provisioning)", () => {
     }
   });
 
+  it("refuses a symlinked model tier before deleting or downloading", () => {
+    const outside = mkdtempSync(join(tmpdir(), "superscriber-model-outside-"));
+    symlinkSync(outside, join(modelRoot, "tiny"));
+
+    try {
+      startTierDownload("tiny", { probeDiskSpace: unlimitedDisk });
+      expect.unreachable();
+    } catch (error) {
+      expect((error as ProvisioningError).code).toBe("unsafe_model_path");
+    }
+    expect(existsSync(join(modelRoot, ".provisioning.lock"))).toBe(false);
+    rmSync(outside, { recursive: true, force: true });
+  });
+
   it("checks disk space before starting and refuses with an honest 507", () => {
-    const required = Math.ceil(TIER_DOWNLOADS.tiny.sizeBytes * DISK_SPACE_HEADROOM);
+    const required = Math.ceil(
+      TIER_DOWNLOADS.tiny.sizeBytes * DISK_SPACE_HEADROOM,
+    );
     try {
       startTierDownload("tiny", {
         probeDiskSpace: () => ({ freeBytes: required - 1 }),
@@ -140,7 +196,9 @@ describe("model provisioning service (model-tier-provisioning)", () => {
       const provisioningError = error as ProvisioningError;
       expect(provisioningError.httpStatus).toBe(507);
       expect(provisioningError.code).toBe("insufficient_disk_space");
-      expect(provisioningError.details).toMatchObject({ requiredBytes: required });
+      expect(provisioningError.details).toMatchObject({
+        requiredBytes: required,
+      });
     }
     // No download state may linger after the refused start.
     const status = listProvisioningStatus();
@@ -149,12 +207,20 @@ describe("model provisioning service (model-tier-provisioning)", () => {
 
   it("runs a download to completion and lands the faster-whisper layout", async () => {
     const progress: number[] = [];
-    const transport: DownloadTransport = async (url, destination, onProgress) => {
+    const transport: DownloadTransport = async (
+      url,
+      destination,
+      onProgress,
+    ) => {
       expect(url).toContain("https://huggingface.co/");
-      writeFileSync(destination, Buffer.alloc(3, 1));
-      onProgress({ bytesReceived: 1, bytesTotal: 3 });
-      onProgress({ bytesReceived: 3, bytesTotal: 3 });
-      progress.push(1, 3);
+      const file = url.split("/").pop();
+      if (!file) throw new Error(`missing artifact name in ${url}`);
+      const bytes = TIER_DOWNLOADS.tiny.fileSizeBytes[file];
+      writeFileSync(destination, "artifact");
+      truncateSync(destination, bytes);
+      onProgress({ bytesReceived: 1, bytesTotal: bytes });
+      onProgress({ bytesReceived: bytes, bytesTotal: bytes });
+      progress.push(1, bytes);
     };
 
     const status = startTierDownload("tiny", {
@@ -194,15 +260,45 @@ describe("model provisioning service (model-tier-provisioning)", () => {
     });
     await waitForTierDownload("tiny");
 
-    expect(fsFaults.renameSnapshots).toEqual([
-      {
-        source: join(modelRoot, ".provisioning", "tiny"),
-        destination: join(modelRoot, "tiny"),
-        sourceWasDirectory: true,
-        destinationExisted: false,
-      },
-    ]);
+    const publishRenames = fsFaults.renameSnapshots.filter(
+      (snapshot) => snapshot.destination === join(modelRoot, "tiny"),
+    );
+    expect(publishRenames).toHaveLength(1);
+    expect(publishRenames[0]).toMatchObject({
+      destination: join(modelRoot, "tiny"),
+      sourceWasDirectory: true,
+      destinationExisted: false,
+    });
+    expect(publishRenames[0].source).toMatch(
+      new RegExp(
+        `${join(modelRoot, ".provisioning", "tiny-").replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\d+-[0-9a-f]{48}$`,
+      ),
+    );
     expect(existsSync(join(modelRoot, "tiny", "stale.txt"))).toBe(false);
+  });
+
+  it("publishes fully initialized primary lock ownership atomically", async () => {
+    startTierDownload("tiny", {
+      transportFor: () => fakeTransport(),
+      probeDiskSpace: unlimitedDisk,
+    });
+    await waitForTierDownload("tiny");
+
+    const lockRenames = fsFaults.renameSnapshots.filter(
+      (snapshot) =>
+        snapshot.destination === join(modelRoot, ".provisioning.lock"),
+    );
+    expect(lockRenames).toHaveLength(1);
+    expect(lockRenames[0]).toMatchObject({
+      sourceWasDirectory: true,
+      sourceOwnerExisted: true,
+      destinationExisted: false,
+    });
+    const prefix = join(modelRoot, ".provisioning.lock.pending.");
+    expect(lockRenames[0].source.startsWith(prefix)).toBe(true);
+    expect(lockRenames[0].source.slice(prefix.length)).toMatch(
+      /^\d+\.[0-9a-f]{48}$/,
+    );
   });
 
   it("marks a failed download honestly and keeps the tier unprovisioned", async () => {
@@ -213,7 +309,9 @@ describe("model provisioning service (model-tier-provisioning)", () => {
       writeFileSync(destination, "ok");
     };
 
-    const logSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const logSpy = vi
+      .spyOn(console, "error")
+      .mockImplementation(() => undefined);
     startTierDownload("tiny", {
       transportFor: () => failing,
       probeDiskSpace: unlimitedDisk,
@@ -254,6 +352,10 @@ describe("model provisioning service (model-tier-provisioning)", () => {
   });
 
   it("keeps downloading while bytes arrive beyond the former absolute deadline", async () => {
+    const originalFileSizes = { ...TIER_DOWNLOADS.tiny.fileSizeBytes };
+    for (const file of TIER_DOWNLOADS.tiny.files) {
+      TIER_DOWNLOADS.tiny.fileSizeBytes[file] = 5;
+    }
     vi.spyOn(AbortSignal, "timeout").mockImplementation(() => {
       const controller = new AbortController();
       setTimeout(() => controller.abort(), 15);
@@ -291,12 +393,18 @@ describe("model provisioning service (model-tier-provisioning)", () => {
       }),
     );
 
-    startTierDownload("tiny", { probeDiskSpace: unlimitedDisk });
-    await waitForTierDownload("tiny");
+    try {
+      startTierDownload("tiny", { probeDiskSpace: unlimitedDisk });
+      await waitForTierDownload("tiny");
 
-    const tiny = listProvisioningStatus().tiers.find((tier) => tier.tierId === "tiny");
-    expect(tiny?.available).toBe(true);
-    expect(tiny?.download.state).toBe("completed");
+      const tiny = listProvisioningStatus().tiers.find(
+        (tier) => tier.tierId === "tiny",
+      );
+      expect(tiny?.available).toBe(true);
+      expect(tiny?.download.state).toBe("completed");
+    } finally {
+      Object.assign(TIER_DOWNLOADS.tiny.fileSizeBytes, originalFileSizes);
+    }
   });
 
   it("fails a download after ninety seconds without a received byte", async () => {
@@ -326,7 +434,9 @@ describe("model provisioning service (model-tier-provisioning)", () => {
     startTierDownload("tiny", { probeDiskSpace: unlimitedDisk });
     try {
       await vi.advanceTimersByTimeAsync(90_001);
-      const tiny = listProvisioningStatus().tiers.find((tier) => tier.tierId === "tiny");
+      const tiny = listProvisioningStatus().tiers.find(
+        (tier) => tier.tierId === "tiny",
+      );
       expect(tiny?.download.state).toBe("failed");
       expect(tiny?.download.error).toContain("stalled");
     } finally {
@@ -340,21 +450,115 @@ describe("model provisioning service (model-tier-provisioning)", () => {
       throw new Error("boom");
     };
     vi.spyOn(console, "error").mockImplementation(() => undefined);
-    startTierDownload("tiny", { transportFor: () => failing, probeDiskSpace: unlimitedDisk });
+    startTierDownload("tiny", {
+      transportFor: () => failing,
+      probeDiskSpace: unlimitedDisk,
+    });
     await waitForTierDownload("tiny");
 
-    startTierDownload("tiny", { transportFor: () => fakeTransport(), probeDiskSpace: unlimitedDisk });
+    startTierDownload("tiny", {
+      transportFor: () => fakeTransport(),
+      probeDiskSpace: unlimitedDisk,
+    });
     await waitForTierDownload("tiny");
 
-    const tiny = listProvisioningStatus().tiers.find((tier) => tier.tierId === "tiny");
+    const tiny = listProvisioningStatus().tiers.find(
+      (tier) => tier.tierId === "tiny",
+    );
     expect(tiny?.available).toBe(true);
     expect(tiny?.download.state).toBe("completed");
+  });
+
+  it("reclaims a filesystem lock left by a dead provisioning process", async () => {
+    mkdirSync(join(modelRoot, ".provisioning.lock"));
+    writeFileSync(
+      join(modelRoot, ".provisioning.lock", "owner.json"),
+      JSON.stringify({
+        pid: 2_147_483_647,
+        processStart: "b".repeat(64),
+        tierId: "tiny",
+        token: "a".repeat(48),
+        createdAt: new Date(0).toISOString(),
+      }),
+    );
+
+    startTierDownload("tiny", {
+      transportFor: () => fakeTransport(),
+      probeDiskSpace: unlimitedDisk,
+    });
+    await waitForTierDownload("tiny");
+
+    expect(isModelProvisioned("tiny")).toBe(true);
+    expect(existsSync(join(modelRoot, ".provisioning.lock"))).toBe(false);
+  });
+
+  it("reclaims a lock whose pid was reused by another process", async () => {
+    mkdirSync(join(modelRoot, ".provisioning.lock"));
+    writeFileSync(
+      join(modelRoot, ".provisioning.lock", "owner.json"),
+      JSON.stringify({
+        pid: process.pid,
+        processStart: "0".repeat(64),
+        tierId: "tiny",
+        token: "c".repeat(48),
+        createdAt: new Date(0).toISOString(),
+      }),
+    );
+
+    startTierDownload("tiny", {
+      transportFor: () => fakeTransport(),
+      probeDiskSpace: unlimitedDisk,
+    });
+    await waitForTierDownload("tiny");
+
+    expect(isModelProvisioned("tiny")).toBe(true);
+    expect(existsSync(join(modelRoot, ".provisioning.lock"))).toBe(false);
+  });
+
+  it("does not remove a live reclaim slot", () => {
+    const reclaim = join(modelRoot, ".provisioning.lock.reclaim");
+    mkdirSync(reclaim);
+    writeFileSync(
+      join(reclaim, "owner.json"),
+      JSON.stringify({
+        pid: process.pid,
+        processStart: processStartIdentityForTest(),
+        tierId: "tiny",
+        token: "d".repeat(48),
+        createdAt: new Date(0).toISOString(),
+      }),
+    );
+
+    try {
+      startTierDownload("tiny", { probeDiskSpace: unlimitedDisk });
+      expect.unreachable();
+    } catch (error) {
+      expect((error as ProvisioningError).code).toBe("download_in_progress");
+    }
+    expect(existsSync(reclaim)).toBe(true);
+  });
+
+  it("recovers an aged reclaim slot with malformed ownership metadata", async () => {
+    const reclaim = join(modelRoot, ".provisioning.lock.reclaim");
+    mkdirSync(reclaim);
+    writeFileSync(join(reclaim, "owner.json"), "incomplete");
+    const staleTime = new Date(Date.now() - 10_000);
+    utimesSync(reclaim, staleTime, staleTime);
+
+    startTierDownload("tiny", {
+      transportFor: () => fakeTransport(),
+      probeDiskSpace: unlimitedDisk,
+    });
+    await waitForTierDownload("tiny");
+
+    expect(isModelProvisioned("tiny")).toBe(true);
+    expect(existsSync(reclaim)).toBe(false);
   });
 
   it("serializes downloads with a 409 while another tier is in flight", async () => {
     let release: () => void = () => undefined;
     let gateOpen = false;
-    const blocked: DownloadTransport = async (_url, destination) => {
+    const blocked: DownloadTransport = async (url, destination) => {
       if (!gateOpen) {
         // Hold only the FIRST file so the second start attempt reliably sees
         // an in-flight download; releasing lets every file complete.
@@ -365,12 +569,21 @@ describe("model provisioning service (model-tier-provisioning)", () => {
           };
         });
       }
-      writeFileSync(destination, "x");
+      const file = url.split("/").pop();
+      if (!file) throw new Error(`missing artifact name in ${url}`);
+      writeFileSync(destination, "artifact");
+      truncateSync(destination, TIER_DOWNLOADS.tiny.fileSizeBytes[file]);
     };
 
-    startTierDownload("tiny", { transportFor: () => blocked, probeDiskSpace: unlimitedDisk });
+    startTierDownload("tiny", {
+      transportFor: () => blocked,
+      probeDiskSpace: unlimitedDisk,
+    });
     try {
-      startTierDownload("base", { transportFor: () => fakeTransport(), probeDiskSpace: unlimitedDisk });
+      startTierDownload("base", {
+        transportFor: () => fakeTransport(),
+        probeDiskSpace: unlimitedDisk,
+      });
       expect.unreachable();
     } catch (error) {
       const provisioningError = error as ProvisioningError;
@@ -383,7 +596,9 @@ describe("model provisioning service (model-tier-provisioning)", () => {
   });
 
   it("uses the fixture transport when the seam env var provides the full artifact set", async () => {
-    const fixtureRoot = mkdtempSync(join(tmpdir(), "superscriber-model-fixture-"));
+    const fixtureRoot = mkdtempSync(
+      join(tmpdir(), "superscriber-model-fixture-"),
+    );
     const fixtureTier = join(fixtureRoot, "base");
     mkdirSync(fixtureTier, { recursive: true });
     for (const file of TIER_DOWNLOADS.base.files) {
@@ -395,8 +610,12 @@ describe("model provisioning service (model-tier-provisioning)", () => {
     await waitForTierDownload("base");
 
     const tierDir = join(modelRoot, "base");
-    expect(readFileSync(join(tierDir, "model.bin"), "utf8")).toBe("fixture-model.bin");
-    const base = listProvisioningStatus().tiers.find((tier) => tier.tierId === "base");
+    expect(readFileSync(join(tierDir, "model.bin"), "utf8")).toBe(
+      "fixture-model.bin",
+    );
+    const base = listProvisioningStatus().tiers.find(
+      (tier) => tier.tierId === "base",
+    );
     expect(base?.available).toBe(true);
     rmSync(fixtureRoot, { recursive: true, force: true });
   });
@@ -406,18 +625,18 @@ describe("model provisioning service (model-tier-provisioning)", () => {
   it.runIf(typeof process.getuid !== "function" || process.getuid() !== 0)(
     "fails honestly when the model root cannot be created",
     () => {
-    const readOnly = join(modelRoot, "sealed");
-    mkdirSync(readOnly, { recursive: true });
-    chmodSync(readOnly, 0o555);
-    process.env.SUPERSCRIBER_TRANSCRIBE_MODEL_DIR = join(readOnly, "models");
+      const readOnly = join(modelRoot, "sealed");
+      mkdirSync(readOnly, { recursive: true });
+      chmodSync(readOnly, 0o555);
+      process.env.SUPERSCRIBER_TRANSCRIBE_MODEL_DIR = join(readOnly, "models");
 
-    try {
-      startTierDownload("tiny", { probeDiskSpace: unlimitedDisk });
-      expect.unreachable();
-    } catch (error) {
-      const provisioningError = error as ProvisioningError;
-      expect(provisioningError.code).toBe("model_root_unwritable");
-      expect(provisioningError.httpStatus).toBe(500);
+      try {
+        startTierDownload("tiny", { probeDiskSpace: unlimitedDisk });
+        expect.unreachable();
+      } catch (error) {
+        const provisioningError = error as ProvisioningError;
+        expect(provisioningError.code).toBe("model_root_unwritable");
+        expect(provisioningError.httpStatus).toBe(500);
       } finally {
         chmodSync(readOnly, 0o755);
       }
@@ -425,13 +644,12 @@ describe("model provisioning service (model-tier-provisioning)", () => {
   );
 
   it("reports idle status for untouched tiers and completed for hand-provisioned ones", () => {
-    const dir = join(modelRoot, "large-v3-turbo");
-    mkdirSync(dir, { recursive: true });
-    writeFileSync(join(dir, "model.bin"), "bin");
-    writeFileSync(join(dir, "config.json"), "{}");
+    writeProvisionedTier("large-v3-turbo");
 
     const status = listProvisioningStatus();
-    const byId = Object.fromEntries(status.tiers.map((tier) => [tier.tierId, tier]));
+    const byId = Object.fromEntries(
+      status.tiers.map((tier) => [tier.tierId, tier]),
+    );
     expect(byId["large-v3-turbo"].available).toBe(true);
     expect(byId["large-v3-turbo"].download.state).toBe("completed");
     expect(byId.tiny.available).toBe(false);

@@ -1,9 +1,21 @@
-import { mkdtempSync, mkdirSync, writeFileSync } from "node:fs";
+import {
+  mkdtempSync,
+  mkdirSync,
+  rmSync,
+  symlinkSync,
+  truncateSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 
-import { isModelProvisioned, listModelCatalog, MODEL_TIER_IDS } from "./catalog";
+import {
+  isModelProvisioned,
+  listModelCatalog,
+  MODEL_TIER_IDS,
+} from "./catalog";
+import { TIER_DOWNLOADS } from "./tier-downloads";
 
 // demo-model-tier-picker: availability is server-checked against artifacts;
 // nothing may render selectable that the host cannot run.
@@ -15,6 +27,7 @@ describe("model catalog (demo-model-tier-picker)", () => {
     for (const key of [
       "SUPERSCRIBER_TRANSCRIBE_MODEL_DIR",
       "SUPERSCRIBER_TRANSCRIBE_MODEL",
+      "SUPERSCRIBER_MODEL_DOWNLOAD_FIXTURE_DIR",
     ]) {
       if (savedEnv[key] === undefined) {
         delete process.env[key];
@@ -25,16 +38,24 @@ describe("model catalog (demo-model-tier-picker)", () => {
   });
 
   function snapshotEnv() {
-    savedEnv.SUPERSCRIBER_TRANSCRIBE_MODEL_DIR = process.env.SUPERSCRIBER_TRANSCRIBE_MODEL_DIR;
-    savedEnv.SUPERSCRIBER_TRANSCRIBE_MODEL = process.env.SUPERSCRIBER_TRANSCRIBE_MODEL;
+    savedEnv.SUPERSCRIBER_TRANSCRIBE_MODEL_DIR =
+      process.env.SUPERSCRIBER_TRANSCRIBE_MODEL_DIR;
+    savedEnv.SUPERSCRIBER_TRANSCRIBE_MODEL =
+      process.env.SUPERSCRIBER_TRANSCRIBE_MODEL;
+    savedEnv.SUPERSCRIBER_MODEL_DOWNLOAD_FIXTURE_DIR =
+      process.env.SUPERSCRIBER_MODEL_DOWNLOAD_FIXTURE_DIR;
+    delete process.env.SUPERSCRIBER_MODEL_DOWNLOAD_FIXTURE_DIR;
   }
 
   function provision(root: string, ...tiers: string[]) {
     for (const tier of tiers) {
       const dir = join(root, tier);
       mkdirSync(dir, { recursive: true });
-      writeFileSync(join(dir, "model.bin"), "bin");
-      writeFileSync(join(dir, "config.json"), "{}");
+      for (const file of TIER_DOWNLOADS[tier].files) {
+        const artifact = join(dir, file);
+        writeFileSync(artifact, "artifact");
+        truncateSync(artifact, TIER_DOWNLOADS[tier].fileSizeBytes[file]);
+      }
     }
   }
 
@@ -51,6 +72,69 @@ describe("model catalog (demo-model-tier-picker)", () => {
     expect(catalog.tiers.every((tier) => !tier.default)).toBe(true);
   });
 
+  it("keeps a tier unavailable when any pinned artifact is missing", () => {
+    snapshotEnv();
+    const root = mkdtempSync(join(tmpdir(), "model-catalog-partial-"));
+    const dir = join(root, "small");
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, "model.bin"), "bin");
+    writeFileSync(join(dir, "config.json"), "{}");
+    process.env.SUPERSCRIBER_TRANSCRIBE_MODEL_DIR = root;
+
+    expect(isModelProvisioned("small")).toBe(false);
+  });
+
+  it("rejects empty and non-file artifacts", () => {
+    snapshotEnv();
+    const root = mkdtempSync(join(tmpdir(), "model-catalog-invalid-"));
+    const emptyDir = join(root, "small");
+    mkdirSync(emptyDir, { recursive: true });
+    for (const file of TIER_DOWNLOADS.small.files) {
+      writeFileSync(
+        join(emptyDir, file),
+        file === "model.bin" ? "" : "artifact",
+      );
+    }
+    process.env.SUPERSCRIBER_TRANSCRIBE_MODEL_DIR = root;
+    expect(isModelProvisioned("small")).toBe(false);
+
+    const directoryTier = join(root, "tiny");
+    mkdirSync(directoryTier, { recursive: true });
+    for (const file of TIER_DOWNLOADS.tiny.files) {
+      if (file === "tokenizer.json") {
+        mkdirSync(join(directoryTier, file));
+      } else {
+        writeFileSync(join(directoryTier, file), "artifact");
+      }
+    }
+    expect(isModelProvisioned("tiny")).toBe(false);
+  });
+
+  it("rejects a truncated pinned artifact", () => {
+    snapshotEnv();
+    const root = mkdtempSync(join(tmpdir(), "model-catalog-truncated-"));
+    provision(root, "small");
+    truncateSync(
+      join(root, "small", "model.bin"),
+      TIER_DOWNLOADS.small.fileSizeBytes["model.bin"] - 1,
+    );
+    process.env.SUPERSCRIBER_TRANSCRIBE_MODEL_DIR = root;
+
+    expect(isModelProvisioned("small")).toBe(false);
+  });
+
+  it("rejects a symlinked model tier directory", () => {
+    snapshotEnv();
+    const root = mkdtempSync(join(tmpdir(), "model-catalog-symlink-"));
+    const outside = mkdtempSync(join(tmpdir(), "model-catalog-outside-"));
+    provision(outside, "small");
+    symlinkSync(join(outside, "small"), join(root, "small"));
+    process.env.SUPERSCRIBER_TRANSCRIBE_MODEL_DIR = root;
+
+    expect(isModelProvisioned("small")).toBe(false);
+    rmSync(outside, { recursive: true, force: true });
+  });
+
   it("marks provisioned tiers available and defaults to best provisioned quality", () => {
     snapshotEnv();
     const root = mkdtempSync(join(tmpdir(), "model-catalog-full-"));
@@ -64,7 +148,9 @@ describe("model catalog (demo-model-tier-picker)", () => {
     expect(isModelProvisioned("large-v3")).toBe(false);
     expect(isModelProvisioned("not-a-model")).toBe(false);
     expect(catalog.defaultModel).toBe("large-v3-turbo");
-    const byId = Object.fromEntries(catalog.tiers.map((tier) => [tier.id, tier]));
+    const byId = Object.fromEntries(
+      catalog.tiers.map((tier) => [tier.id, tier]),
+    );
     expect(byId["large-v3-turbo"].default).toBe(true);
     expect(byId["small"].default).toBe(false);
     expect(byId["large-v3"].available).toBe(false);
@@ -96,7 +182,9 @@ describe("model catalog (demo-model-tier-picker)", () => {
       configuredModel: "small",
       defaultModel: "large-v3",
     });
-    const byId = Object.fromEntries(catalog.tiers.map((tier) => [tier.id, tier]));
+    const byId = Object.fromEntries(
+      catalog.tiers.map((tier) => [tier.id, tier]),
+    );
     expect(byId["large-v3"].default).toBe(true);
     expect(byId["small"].default).toBe(false);
   });
@@ -108,7 +196,9 @@ describe("model catalog (demo-model-tier-picker)", () => {
     delete process.env.SUPERSCRIBER_TRANSCRIBE_MODEL;
 
     const catalog = listModelCatalog();
-    const byId = Object.fromEntries(catalog.tiers.map((tier) => [tier.id, tier]));
+    const byId = Object.fromEntries(
+      catalog.tiers.map((tier) => [tier.id, tier]),
+    );
     for (const tier of catalog.tiers) {
       expect(Number.isFinite(tier.downloadSizeBytes)).toBe(true);
       expect(tier.downloadSizeBytes).toBeGreaterThan(0);

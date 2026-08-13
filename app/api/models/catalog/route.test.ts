@@ -1,4 +1,10 @@
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import {
+  mkdirSync,
+  mkdtempSync,
+  rmSync,
+  truncateSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -8,6 +14,7 @@ vi.mock("@/server/session", () => ({
 }));
 
 import { getActivePrincipal } from "@/server/session";
+import { TIER_DOWNLOADS } from "@/server/models/tier-downloads";
 
 const UPLOADER = {
   userId: "user-uploader",
@@ -44,8 +51,11 @@ describe("model catalog route (demo-model-tier-picker)", () => {
   function provision(tierId: string) {
     const dir = join(modelRoot, tierId);
     mkdirSync(dir, { recursive: true });
-    writeFileSync(join(dir, "model.bin"), "bin");
-    writeFileSync(join(dir, "config.json"), "{}");
+    for (const file of TIER_DOWNLOADS[tierId].files) {
+      const artifact = join(dir, file);
+      writeFileSync(artifact, "");
+      truncateSync(artifact, TIER_DOWNLOADS[tierId].fileSizeBytes[file]);
+    }
   }
 
   it("rejects anonymous callers", async () => {

@@ -40,6 +40,72 @@ It runs as a single-institution deployment with local accounts, SQLite persisten
 - Python worker runtime
 - Vitest
 
+## Local deployment
+
+One command takes a fresh machine from a clean clone to a running,
+crash-supervised local instance:
+
+```bash
+scripts/bootstrap-local.sh
+```
+
+The bootstrap is idempotent and safe to re-run. It:
+
+1. Requires exactly Node 24.18.1, the `NODE_BASE_IMAGE` version pinned at
+   `Dockerfile:4`, plus npm and Python >= 3.10 with venv/ensurepip support,
+   failing loudly with an install hint when anything is missing
+2. Runs `npm ci` and creates the transcription worker's Python virtual
+   environment from `worker/requirements.txt` inside the immutable deployment
+   generation, so rollback restores the matching worker dependencies
+3. Initializes the database through the repo migration chain
+   (`scripts/ensure-db.ts`) into the instance's durable data directory -
+   never `/tmp`
+4. Provisions a faster-whisper model tier through the same pinned-artifact
+   install flow the in-app picker uses
+   (`src/server/models/provisioning.ts` via
+   `scripts/provision-model-tier.ts`). Interactive runs offer the full tier
+   menu (default: the catalog default `small`); `--skip-model-download`
+   preserves an explicit or previously configured tier and verifies its cache,
+   so re-runs work offline without silently changing models
+5. Builds and atomically publishes an immutable standalone production bundle
+   under the instance root, then launches app + worker from that bundle under
+   a SIGTERM-stoppable crash-restart supervisor with per-role logs and bounded
+   backoff (`scripts/instance-run.sh`). Bootstrap waits for both app health and
+   the worker's offline-model readiness signal before reporting success
+
+Options: `--instance-root DIR` (default `~/.local/share/superscriber`),
+`--port N` (default `3000`; valid range `1024-65535`),
+`--model-tier TIER`, `--skip-model-download`, `--skip-worker-deps`, and
+`--check-deps-only` for a preflight without changing the instance.
+
+Instance layout (all under the instance root): `.superscriber-instance`
+(bootstrap ownership marker), `app.env` (the atomic active deployment record),
+`rollback.env` (the prior deployment record), `secrets/`
+(auth + engine secrets, mode `0600`, never printed), `data/`
+(SQLite database, media, uploads), `model-cache/` (model tiers), `logs/`
+(`app.log`, `worker.log`, `supervisor.log`), `pids/`, and immutable `build/`
+bundles selected by the active deployment record. A successful re-run retains
+the active bundle and one rollback bundle, each with its own worker venv.
+Interrupted staging generations are swept under the lifecycle locks before a
+new build starts. Existing managed directories and
+leaf files, including database/WAL files, secrets, logs, PID/readiness files,
+and model-tier directories, must not be symlinks; bootstrap refuses them
+before writing. Standard interpreter symlinks created inside a generation's
+`venv/bin/` and the standard `venv/lib64 -> lib` link are allowed, but each
+`venv` root and every nonstandard venv path must be real.
+
+Operate the instance:
+
+```bash
+scripts/instance-stop.sh [INSTANCE_ROOT]   # SIGTERM the supervisor
+scripts/instance-run.sh [INSTANCE_ROOT]    # start again (idempotent)
+```
+
+First-run admin: open the printed URL - with no accounts yet, the sign-up
+door is the bootstrap door, so the first account created becomes the
+administrator. The door closes afterwards; admins then provision further
+accounts from **Administration > Accounts**.
+
 ## Getting Started
 
 1. Install dependencies:
@@ -179,6 +245,7 @@ Optional configuration:
 - `npm run auth:revoke` - revoke all sessions for a user (incident response)
 - `npm run break-glass:designate` - designate the single break-glass admin
 - `npm run break-glass:transfer` - atomically transfer the break-glass designation
+- `npm run bootstrap:local` - bootstrap or update a durable local instance
 - `npm run worker:check` — syntax-check the Python worker
 - `npm run worker:prefetch` — download the configured speech model into the local worker cache
 - `npm run worker:python` — run the Python worker against a live app
@@ -218,7 +285,7 @@ For the internal worker, the main model/runtime controls are:
 - `SUPERSCRIBER_TRANSCRIBE_ALLOW_RUNTIME_DOWNLOAD`
 - `SUPERSCRIBER_TRANSCRIBE_ALLOW_STUB_FALLBACK`
 
-`SUPERSCRIBER_TRANSCRIBE_MODEL` names the configured worker default. The ingest model catalog checks `SUPERSCRIBER_TRANSCRIBE_MODEL_DIR` on every request and treats a tier as provisioned only when `<model-dir>/<tier>/model.bin` and `<model-dir>/<tier>/config.json` both exist. The standard local commands default to `models/`, while the supplied container sets `/app/models`; when you override the directory, give the app and worker the same value. Advanced settings disables every unprovisioned tier and always preselects the highest-quality provisioned tier, even when the configured model is itself provisioned.
+`SUPERSCRIBER_TRANSCRIBE_MODEL` names the configured worker default. The ingest model catalog checks `SUPERSCRIBER_TRANSCRIBE_MODEL_DIR` on every request and treats a tier as provisioned only when every regular file in the complete pinned artifact set has its exact pinned byte size from `TIER_DOWNLOADS.fileSizeBytes`: `<model-dir>/<tier>/model.bin`, `config.json`, `tokenizer.json`, and the tier's `vocabulary.txt` or `vocabulary.json`. The standard local commands default to `models/`, while the supplied container sets `/app/models`; when you override the directory, give the app and worker the same value. Advanced settings disables every unprovisioned tier and always preselects the highest-quality provisioned tier, even when the configured model is itself provisioned.
 
 Unprovisioned tiers can be installed straight from the picker: admins outside phone-safety mode get a quiet inline, underlined Download action per tier with the exact size in its label and live byte progress. The server fetches the faster-whisper artifact set (`model.bin`, `config.json`, `tokenizer.json`, and the tier's vocabulary file) from pinned huggingface.co repository and commit URLs into the configured model directory. It stages the complete tier before revealing it, removes partial files after a failure, and needs no worker restart; the tier becomes selectable as soon as the install completes. A free-space preflight rejects the start with HTTP 507 before any download, and only one tier can download at a time, with concurrent starts rejected by HTTP 409. Failures keep the server error on screen next to a retry. `POST /api/models/provisioning` is admin-only; `GET /api/models/provisioning` reports per-tier state to any signed-in account. The only outbound network surface this adds is the pinned huggingface.co artifact URLs.
 

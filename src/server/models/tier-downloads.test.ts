@@ -22,6 +22,15 @@ describe("tier download sources (model-tier-provisioning)", () => {
       expect(
         source.files.includes("vocabulary.txt") || source.files.includes("vocabulary.json"),
       ).toBe(true);
+      expect(Object.keys(source.fileSizeBytes).sort()).toEqual(
+        [...source.files].sort(),
+      );
+      expect(
+        Object.values(source.fileSizeBytes).reduce(
+          (total, size) => total + size,
+          0,
+        ),
+      ).toBe(source.sizeBytes);
       expect(source.sizeBytes).toBeGreaterThan(0);
     }
   });

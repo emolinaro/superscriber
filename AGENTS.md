@@ -4,6 +4,7 @@
 - Product overview, commands, and runtime: `README.md`. Design record and behavioral contract: `DESIGN.md`.
 - Domain workflow rules: `src/domain/workflow.ts`. Governed commands, capabilities, action mode, and access grants: `src/server/casefile/`. Authenticated routes: `app/(authenticated)/`.
 - Unmanageable-instance recovery (accounts exist, no active admin): operator-claim ceremony on the sign-up door gated by an on-host single-use token (`src/server/auth/recovery-claim.ts`, runbook `docs/operators/admin-recovery.md`).
+- One-shot local deployment: `scripts/bootstrap-local.sh` (idempotent; supervisor `scripts/instance-run.sh`, model provisioning CLI `scripts/provision-model-tier.ts` over `src/server/models/provisioning.ts`). Docs: README "Local deployment".
 - Full validation gate: `npm run typecheck`, `npm test`, `npm run build`, `npm run worker:check`, `npm run e2e`, `npm run e2e:container`.
 
 ## GBrain Configuration (configured by /setup-gbrain)

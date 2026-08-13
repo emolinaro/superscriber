@@ -1,0 +1,758 @@
+#!/usr/bin/env bash
+# local-deploy-bootstrap: durable crash-restart supervisor for a Superscriber
+# local deployment. Runs app and worker with per-role logs, bounded restart
+# backoff, atomic instance ownership, and SIGTERM shutdown.
+# SUPERSCRIBER_INSTANCE_TEST_MODE=1 enables test-only role entrypoint seams.
+set -euo pipefail
+umask 077
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=scripts/instance-paths.sh
+. "${SCRIPT_DIR}/instance-paths.sh"
+
+RAW_INSTANCE_ROOT="${1:-${SUPERSCRIBER_INSTANCE_ROOT:-$HOME/.local/share/superscriber}}"
+INSTANCE_ROOT="$(resolve_durable_instance_root "${RAW_INSTANCE_ROOT}")" || exit 1
+[[ -d "${INSTANCE_ROOT}" ]] || {
+  echo "instance root '${RAW_INSTANCE_ROOT}' does not exist; run scripts/bootstrap-local.sh first" >&2
+  exit 1
+}
+require_instance_marker "${INSTANCE_ROOT}" || exit 1
+reject_managed_instance_symlinks "${INSTANCE_ROOT}" || exit 1
+MODE="${2:---start}"
+SUPERVISOR_TOKEN="${3:-}"
+EXPECTED_ACTIVATION_ID="${4:-}"
+
+RUNTIME_ROOT=""
+LOG_DIR="${INSTANCE_ROOT}/logs"
+PID_DIR="${INSTANCE_ROOT}/pids"
+LOCK_DIR="${PID_DIR}/supervisor.lock"
+IDENTITY_FILE="${LOCK_DIR}/identity"
+TOKEN_FILE="${LOCK_DIR}/token"
+SUPERVISOR_PID_FILE="${PID_DIR}/supervisor.pid"
+INSTANCE_LOG="${INSTANCE_ROOT}/instance.log"
+PORT=""
+
+timestamp() { date -u +%Y-%m-%dT%H:%M:%SZ; }
+
+random_token() {
+  instance_random_token
+}
+
+read_identity() {
+  local pid token
+  [[ -f "${IDENTITY_FILE}" && ! -L "${IDENTITY_FILE}" ]] || return 1
+  read -r pid token < "${IDENTITY_FILE}" || return 1
+  [[ "${pid}" =~ ^[0-9]+$ && "${token}" =~ ^[0-9a-f]{48}$ ]] || return 1
+  printf '%s %s\n' "${pid}" "${token}"
+}
+
+process_matches_identity() {
+  local pid="$1" token="$2" args
+  process_matches_start_fingerprint "${pid}" "$(cat "${LOCK_DIR}/started" 2>/dev/null || true)" || return 1
+  args="$(ps -ww -p "${pid}" -o args= 2>/dev/null || true)"
+  [[ "${args}" == *"instance-run.sh"* && "${args}" == *"--supervise ${token}"* ]]
+}
+
+valid_identity() {
+  local identity pid token
+  identity="$(read_identity)" || return 1
+  read -r pid token <<< "${identity}"
+  process_matches_identity "${pid}" "${token}"
+}
+
+wait_for_valid_identity() {
+  local attempts=0
+  while [[ "${attempts}" -lt 50 ]]; do
+    valid_identity && return 0
+    attempts=$((attempts + 1))
+    sleep 0.1
+  done
+  return 1
+}
+
+reclaim_stale_lock() {
+  local observed
+  [[ -d "${LOCK_DIR}" ]] || return 0
+  valid_identity && return 1
+  observed="$(cat "${IDENTITY_FILE}" 2>/dev/null || true)"
+  reclaim_stale_owned_lock "${LOCK_DIR}" "${observed}" supervisor_lock_is_active "${LOCK_DIR}"
+}
+
+remove_owned_supervisor_lock() {
+  local token="$1" identity identity_token stale current claim observed
+  [[ -d "${LOCK_DIR}" && -f "${TOKEN_FILE}" ]] || return 0
+  [[ "$(cat "${TOKEN_FILE}" 2>/dev/null || true)" == "${token}" ]] || return 0
+  identity="$(read_identity 2>/dev/null || true)"
+  if [[ -n "${identity}" ]]; then
+    read -r _ identity_token <<< "${identity}"
+    [[ "${identity_token}" == "${token}" ]] || return 0
+  fi
+  current="$(cat "${TOKEN_FILE}" 2>/dev/null || true) $(cat "${IDENTITY_FILE}" 2>/dev/null || true)"
+  [[ "${current}" == "${token} ${identity}" ]] || return 0
+  observed="$(cat "${IDENTITY_FILE}" 2>/dev/null || true)"
+  claim="$(acquire_reclaim_slot "${LOCK_DIR}")" || return 0
+  [[ "$(cat "${IDENTITY_FILE}" 2>/dev/null || true)" == "${observed}" ]] || {
+    release_reclaim_slot "${LOCK_DIR}" "${claim}"
+    return 0
+  }
+  reclaim_slot_is_owned "${LOCK_DIR}" "${claim}" || return 0
+  stale="${LOCK_DIR}.stale.$$.$RANDOM"
+  if mv "${LOCK_DIR}" "${stale}" 2>/dev/null; then
+    rm -rf -- "${stale}"
+  fi
+  release_reclaim_slot "${LOCK_DIR}" "${claim}"
+}
+
+port_of_instance() {
+  local port
+  [[ -f "${INSTANCE_ROOT}/app.env" && ! -L "${INSTANCE_ROOT}/app.env" ]] || {
+    echo "missing ${INSTANCE_ROOT}/app.env; run scripts/bootstrap-local.sh first" >&2
+    return 1
+  }
+  port="$(sed -n 's/^PORT=\([1-9][0-9]*\)$/\1/p' "${INSTANCE_ROOT}/app.env" | tail -1)"
+  [[ "${port}" =~ ^[1-9][0-9]{0,4}$ && "${port}" -ge 1024 && "${port}" -le 65535 ]] || {
+    echo "missing valid PORT in ${INSTANCE_ROOT}/app.env" >&2
+    return 1
+  }
+  printf '%s\n' "${port}"
+}
+
+port_is_free() {
+  node -e '
+    const net = require("node:net");
+    const port = Number(process.argv[1]);
+    const server = net.createServer();
+    server.once("error", (error) => process.exit(error.code === "EADDRINUSE" ? 1 : 2));
+    server.listen(port, "127.0.0.1", () => server.close(() => process.exit(0)));
+  ' "$1"
+}
+
+status_instance() {
+  local identity pid token
+  if ! identity="$(read_identity)"; then
+    return 1
+  fi
+  read -r pid token <<< "${identity}"
+  process_matches_identity "${pid}" "${token}" || return 1
+  printf 'supervisor running: pid %s\n' "${pid}"
+}
+
+process_descendants_with_depth() {
+  local root_pid="$1"
+  ps -axo pid=,ppid= | awk -v root="${root_pid}" '
+    { parent[$1] = $2 }
+    END {
+      for (pid in parent) {
+        current = pid
+        depth = 0
+        while ((current in parent) && depth < 256) {
+          next_parent = parent[current]
+          depth++
+          if (next_parent == root) {
+            print depth, pid
+            break
+          }
+          if (next_parent <= 1 || next_parent == current) break
+          current = next_parent
+        }
+      }
+    }
+  ' | sort -k1,1nr -k2,2nr
+}
+
+process_is_descendant_of() {
+  local pid="$1" ancestor="$2" parent attempts=0
+  while [[ "${attempts}" -lt 256 ]]; do
+    parent="$(ps -p "${pid}" -o ppid= 2>/dev/null | awk '{$1=$1; print}')"
+    [[ "${parent}" =~ ^[0-9]+$ ]] || return 1
+    [[ "${parent}" == "${ancestor}" ]] && return 0
+    [[ "${parent}" -gt 1 && "${parent}" != "${pid}" ]] || return 1
+    pid="${parent}"
+    attempts=$((attempts + 1))
+  done
+  return 1
+}
+
+snapshot_verified_descendants() {
+  local supervisor_pid="$1" depth pid started
+  while read -r depth pid; do
+    [[ "${pid}" =~ ^[0-9]+$ ]] || continue
+    started="$(process_start_fingerprint "${pid}" 2>/dev/null)" || continue
+    printf '%s %s %s\n' "${depth}" "${pid}" "${started}"
+  done < <(process_descendants_with_depth "${supervisor_pid}")
+}
+
+signal_verified_role_children() {
+  local signal="$1" supervisor_pid="$2" supervisor_token="$3"
+  local role identity pid role_token started command
+  process_matches_identity "${supervisor_pid}" "${supervisor_token}" || return 0
+  for role in app worker; do
+    identity="$(cat "${PID_DIR}/${role}.identity" 2>/dev/null || true)"
+    [[ -n "${identity}" ]] || continue
+    read -r pid role_token started command <<< "${identity}"
+    [[ "${pid}" =~ ^[0-9]+$ && "${role_token}" =~ ^[0-9a-f]{48}$ && \
+       "${started}" =~ ^[0-9]+-[0-9]+$ && "${command}" =~ ^[0-9]+-[0-9]+$ ]] || continue
+    process_matches_role_identity "${pid}" "${started}" "${command}" || continue
+    process_is_descendant_of "${pid}" "${supervisor_pid}" || continue
+    kill "-${signal}" "${pid}" 2>/dev/null || true
+  done
+}
+
+signal_verified_descendants() {
+  local signal="$1" supervisor_pid="$2" supervisor_token="$3" snapshot="$4"
+  local depth pid started
+  process_matches_identity "${supervisor_pid}" "${supervisor_token}" || return 0
+  while read -r depth pid started; do
+    [[ "${pid}" =~ ^[0-9]+$ && "${started}" =~ ^[0-9]+-[0-9]+$ ]] || continue
+    process_matches_start_fingerprint "${pid}" "${started}" || continue
+    process_is_descendant_of "${pid}" "${supervisor_pid}" || continue
+    kill "-${signal}" "${pid}" 2>/dev/null || true
+  done <<< "${snapshot}"
+}
+
+snapshot_has_live_processes() {
+  local snapshot="$1" depth pid started
+  while read -r depth pid started; do
+    [[ "${pid}" =~ ^[0-9]+$ && "${started}" =~ ^[0-9]+-[0-9]+$ ]] || continue
+    process_matches_start_fingerprint "${pid}" "${started}" && return 0
+  done <<< "${snapshot}"
+  return 1
+}
+
+stop_instance() {
+  local identity pid token attempts=0 descendants=""
+  if [[ -d "${LOCK_DIR}" ]] && ! valid_identity; then
+    wait_for_valid_identity || true
+  fi
+  if ! identity="$(read_identity)"; then
+    reclaim_stale_lock || true
+    echo "instance is not running (no verified supervisor for ${INSTANCE_ROOT})"
+    return 0
+  fi
+  read -r pid token <<< "${identity}"
+  if ! process_matches_identity "${pid}" "${token}"; then
+    reclaim_stale_lock || true
+    echo "instance is not running (no verified supervisor for ${INSTANCE_ROOT})"
+    return 0
+  fi
+  process_matches_identity "${pid}" "${token}" && kill "${pid}"
+  while [[ "${attempts}" -lt 10 ]]; do
+    if ! process_matches_identity "${pid}" "${token}"; then
+      reclaim_stale_lock || true
+      echo "stopped supervisor ${pid}"
+      return 0
+    fi
+    attempts=$((attempts + 1))
+    sleep 0.1
+  done
+
+  descendants="$(snapshot_verified_descendants "${pid}")"
+  signal_verified_role_children KILL "${pid}" "${token}"
+  signal_verified_descendants KILL "${pid}" "${token}" "${descendants}"
+  if process_matches_identity "${pid}" "${token}"; then
+    kill -KILL "${pid}" 2>/dev/null || true
+  fi
+
+  attempts=0
+  while [[ "${attempts}" -lt 10 ]]; do
+    if ! process_matches_identity "${pid}" "${token}" && \
+       ! snapshot_has_live_processes "${descendants}"; then
+      reclaim_stale_lock || true
+      echo "force-stopped supervisor ${pid}"
+      return 0
+    fi
+    attempts=$((attempts + 1))
+    sleep 0.1
+  done
+  echo "supervisor ${pid} and its verified descendants did not exit after bounded escalation" >&2
+  return 1
+}
+
+worker_ready_status() {
+  local identity supervisor_token pid role_token started command ready_token failed_supervisor_token
+  identity="$(read_identity)" || return 1
+  read -r pid supervisor_token <<< "${identity}"
+  process_matches_identity "${pid}" "${supervisor_token}" || return 1
+  if [[ -f "${PID_DIR}/worker.failed" ]]; then
+    read -r failed_supervisor_token _ < "${PID_DIR}/worker.failed" || true
+    [[ "${failed_supervisor_token:-}" != "${supervisor_token}" ]] || return 2
+  fi
+  [[ -f "${PID_DIR}/worker.identity" && -f "${PID_DIR}/worker.ready" ]] || return 1
+  read -r pid role_token started command < "${PID_DIR}/worker.identity" || return 1
+  read -r ready_token < "${PID_DIR}/worker.ready" || return 1
+  [[ "${pid}" =~ ^[0-9]+$ && "${role_token}" == "${ready_token}" && "${started}" =~ ^[0-9]+-[0-9]+$ && "${command}" =~ ^[0-9]+-[0-9]+$ ]] || return 1
+  process_matches_role_identity "${pid}" "${started}" "${command}"
+}
+
+role_running_status() {
+  local role="$1" supervisor_identity supervisor_pid supervisor_token pid token started command
+  supervisor_identity="$(read_identity)" || return 1
+  read -r supervisor_pid supervisor_token <<< "${supervisor_identity}"
+  process_matches_identity "${supervisor_pid}" "${supervisor_token}" || return 1
+  [[ -f "${PID_DIR}/${role}.identity" ]] || return 1
+  read -r pid token started command < "${PID_DIR}/${role}.identity" || return 1
+  [[ "${pid}" =~ ^[0-9]+$ && "${token}" =~ ^[0-9a-f]{48}$ && "${started}" =~ ^[0-9]+-[0-9]+$ && "${command}" =~ ^[0-9]+-[0-9]+$ ]] || return 1
+  process_matches_role_identity "${pid}" "${started}" "${command}"
+}
+
+prepare_runtime_files() {
+  reject_managed_instance_symlinks "${INSTANCE_ROOT}" || return 1
+  mkdir -p "${LOG_DIR}" "${PID_DIR}"
+  chmod 700 "${INSTANCE_ROOT}" "${LOG_DIR}" "${PID_DIR}"
+  [[ ! -f "${INSTANCE_ROOT}/app.env" ]] || chmod 600 "${INSTANCE_ROOT}/app.env"
+  [[ ! -f "${INSTANCE_ROOT}/rollback.env" ]] || chmod 600 "${INSTANCE_ROOT}/rollback.env"
+  [[ ! -f "${INSTANCE_ROOT}/activation.pending" ]] || chmod 600 "${INSTANCE_ROOT}/activation.pending"
+  [[ ! -f "${INSTANCE_ROOT}/activation.previous" ]] || chmod 600 "${INSTANCE_ROOT}/activation.previous"
+  [[ ! -f "${INSTANCE_ROOT}/activation.candidate" ]] || chmod 600 "${INSTANCE_ROOT}/activation.candidate"
+  [[ ! -f "${INSTANCE_ROOT}/secrets/auth.secret" ]] || chmod 600 "${INSTANCE_ROOT}/secrets/auth.secret"
+  [[ ! -f "${INSTANCE_ROOT}/secrets/engine.secret" ]] || chmod 600 "${INSTANCE_ROOT}/secrets/engine.secret"
+  touch "${INSTANCE_LOG}" "${LOG_DIR}/supervisor.log" "${LOG_DIR}/app.log" "${LOG_DIR}/worker.log"
+  chmod 600 "${INSTANCE_LOG}" "${LOG_DIR}/supervisor.log" "${LOG_DIR}/app.log" "${LOG_DIR}/worker.log"
+}
+
+valid_maintenance_authorization() {
+  local current
+  [[ -n "${SUPERSCRIBER_MAINTENANCE_IDENTITY:-}" ]] || return 1
+  current="$(cat "$(maintenance_lock_dir "${INSTANCE_ROOT}")/identity" 2>/dev/null || true)"
+  [[ "${current}" == "${SUPERSCRIBER_MAINTENANCE_IDENTITY}" ]] || return 1
+  maintenance_lock_is_active "${INSTANCE_ROOT}"
+}
+
+maintenance_blocks_start() {
+  local lock_dir current
+  lock_dir="$(maintenance_lock_dir "${INSTANCE_ROOT}")"
+  [[ -d "${lock_dir}" ]] || return 1
+  current="$(cat "${lock_dir}/identity" 2>/dev/null || true)"
+  if valid_maintenance_authorization; then
+    return 1
+  fi
+  return 0
+}
+
+start_instance() {
+  local token expected_pid port attempts supervisor_script active_bundle activation_id
+  if maintenance_blocks_start; then
+    if maintenance_lock_is_active "${INSTANCE_ROOT}"; then
+      echo "refusing to start while bootstrap maintenance is in progress for ${INSTANCE_ROOT}" >&2
+    else
+      echo "refusing to start with a stale maintenance lock; re-run scripts/bootstrap-local.sh for ${INSTANCE_ROOT}" >&2
+    fi
+    return 1
+  fi
+  if [[ -e "${INSTANCE_ROOT}/activation.pending" || -L "${INSTANCE_ROOT}/activation.pending" ]]; then
+    valid_maintenance_authorization || {
+      echo "refusing to start an interrupted activation; re-run scripts/bootstrap-local.sh for ${INSTANCE_ROOT}" >&2
+      return 1
+    }
+  fi
+  prepare_runtime_files
+  while true; do
+    if lock_reclaim_is_blocking "${LOCK_DIR}"; then
+      sleep 0.05
+      continue
+    fi
+    token="$(random_token)"
+    if publish_process_lock_directory \
+      "${LOCK_DIR}" \
+      identity "2147483647 ${token}" \
+      token "${token}" \
+      started ""; then
+      if maintenance_blocks_start; then
+        remove_owned_supervisor_lock "${token}"
+        echo "refusing to start while bootstrap maintenance is in progress for ${INSTANCE_ROOT}" >&2
+        return 1
+      fi
+      port="$(port_of_instance)" || {
+        remove_owned_supervisor_lock "${token}"
+        return 1
+      }
+      if ! port_is_free "${port}"; then
+        remove_owned_supervisor_lock "${token}"
+        echo "refusing to start with port ${port} occupied by a foreign process" >&2
+        return 1
+      fi
+      active_bundle="$(resolve_active_bundle "${INSTANCE_ROOT}" 2>/dev/null)" || {
+        remove_owned_supervisor_lock "${token}"
+        echo "refusing to start without a valid immutable instance bundle; re-run scripts/bootstrap-local.sh" >&2
+        return 1
+      }
+      activation_id="$(activation_id_from_file "${INSTANCE_ROOT}/app.env")" || {
+        remove_owned_supervisor_lock "${token}"
+        echo "refusing to start without a valid activation record; re-run scripts/bootstrap-local.sh" >&2
+        return 1
+      }
+      supervisor_script="${active_bundle}/scripts/instance-run.sh"
+      nohup bash "${supervisor_script}" "${INSTANCE_ROOT}" --supervise "${token}" "${activation_id}" >>"${INSTANCE_LOG}" 2>&1 &
+      expected_pid=$!
+      attempts=0
+      while [[ "${attempts}" -lt 50 ]]; do
+        if valid_identity; then
+          echo "started supervisor ${expected_pid}"
+          return 0
+        fi
+        if ! process_is_live "${expected_pid}"; then
+          break
+        fi
+        attempts=$((attempts + 1))
+        sleep 0.1
+      done
+      kill "${expected_pid}" 2>/dev/null || true
+      remove_owned_supervisor_lock "${token}"
+      echo "supervisor failed to acquire instance ownership" >&2
+      return 1
+    fi
+
+    if wait_for_valid_identity; then
+      if status_instance | sed 's/supervisor running/supervisor already running/'; then
+        return 0
+      fi
+    fi
+    reclaim_stale_lock || true
+  done
+}
+
+case "${MODE}" in
+  --status) status_instance; exit $? ;;
+  --stop) stop_instance; exit $? ;;
+  --worker-ready) worker_ready_status; exit $? ;;
+  --app-running) role_running_status app; exit $? ;;
+  --start) start_instance; exit $? ;;
+  --supervise) ;;
+  *) echo "unknown instance-run mode: ${MODE}" >&2; exit 64 ;;
+esac
+
+[[ "${SUPERVISOR_TOKEN}" =~ ^[0-9a-f]{48}$ ]] || exit 1
+[[ "${EXPECTED_ACTIVATION_ID}" =~ ^[0-9a-f]{40}-[0-9a-f]{48}$ ]] || exit 1
+[[ -f "${TOKEN_FILE}" && ! -L "${TOKEN_FILE}" && "$(cat "${TOKEN_FILE}")" == "${SUPERVISOR_TOKEN}" ]] || exit 1
+[[ "$(awk '{ print $2 }' "${IDENTITY_FILE}" 2>/dev/null || true)" == "${SUPERVISOR_TOKEN}" ]] || exit 1
+[[ "$(activation_id_from_file "${INSTANCE_ROOT}/app.env" 2>/dev/null || true)" == "${EXPECTED_ACTIVATION_ID}" ]] || {
+  echo "refusing supervisor ownership after the active deployment changed" >&2
+  exit 1
+}
+[[ "$(resolve_active_bundle "${INSTANCE_ROOT}" 2>/dev/null || true)" == "${SCRIPT_DIR%/scripts}" ]] || {
+  echo "refusing supervisor ownership from a non-active deployment bundle" >&2
+  exit 1
+}
+if [[ -n "${SUPERSCRIBER_MAINTENANCE_IDENTITY:-}" ]]; then
+  valid_maintenance_authorization || {
+    echo "refusing supervisor ownership without matching bootstrap maintenance authorization" >&2
+    exit 1
+  }
+elif maintenance_blocks_start; then
+  echo "refusing supervisor ownership while bootstrap maintenance is in progress for ${INSTANCE_ROOT}" >&2
+  exit 1
+fi
+prepare_runtime_files
+SUPERVISOR_PID="$$"
+rm -f "${SUPERVISOR_PID_FILE}" "${PID_DIR}/app.pid" "${PID_DIR}/worker.pid" \
+  "${PID_DIR}/app.identity" "${PID_DIR}/worker.identity" \
+  "${PID_DIR}/worker.ready" "${PID_DIR}/worker.failed" \
+  "${PID_DIR}/app.identity-failed" "${PID_DIR}/worker.identity-failed"
+printf '%s\n' "$(process_start_fingerprint "$$")" > "${LOCK_DIR}/started.tmp.$$"
+mv "${LOCK_DIR}/started.tmp.$$" "${LOCK_DIR}/started"
+identity_tmp="${IDENTITY_FILE}.$$"
+printf '%s %s\n' "${SUPERVISOR_PID}" "${SUPERVISOR_TOKEN}" > "${identity_tmp}"
+mv "${identity_tmp}" "${IDENTITY_FILE}"
+printf '%s\n' "${SUPERVISOR_PID}" > "${SUPERVISOR_PID_FILE}.tmp.$$"
+mv "${SUPERVISOR_PID_FILE}.tmp.$$" "${SUPERVISOR_PID_FILE}"
+
+say_supervisor() {
+  printf '[%s] [supervisor] %s\n' "$(timestamp)" "$*" >>"${LOG_DIR}/supervisor.log"
+  printf '[%s] [supervisor] %s\n' "$(timestamp)" "$*" >>"${INSTANCE_LOG}"
+}
+
+load_env() {
+  local active_bundle worker_venv
+  [[ -f "${INSTANCE_ROOT}/app.env" ]] || {
+    echo "missing ${INSTANCE_ROOT}/app.env; run scripts/bootstrap-local.sh first" >&2
+    exit 1
+  }
+  set -a
+  # shellcheck disable=SC1090,SC1091
+  . "${INSTANCE_ROOT}/app.env"
+  set +a
+  [[ "${SUPERSCRIBER_ACTIVATION_ID:-}" == "${EXPECTED_ACTIVATION_ID}" ]] || {
+    echo "activation record changed before supervisor startup; re-run scripts/bootstrap-local.sh" >&2
+    exit 1
+  }
+  if [[ -n "${SUPERSCRIBER_APP_BUNDLE:-}" ]]; then
+    active_bundle="$(resolve_active_bundle "${INSTANCE_ROOT}")" || {
+      echo "active instance bundle is missing or unsafe; re-run scripts/bootstrap-local.sh" >&2
+      exit 1
+    }
+    [[ "${SUPERSCRIBER_APP_BUNDLE}" == "${active_bundle}" ]] || {
+      echo "app.env does not match the active instance bundle; re-run scripts/bootstrap-local.sh" >&2
+      exit 1
+    }
+    RUNTIME_ROOT="${active_bundle}"
+  else
+    echo "app.env has no immutable app bundle; re-run scripts/bootstrap-local.sh" >&2
+    exit 1
+  fi
+  worker_venv="${SUPERSCRIBER_WORKER_VENV:-}"
+  [[ "${worker_venv}" == "${RUNTIME_ROOT}/venv" && \
+     -d "${worker_venv}" && ! -L "${worker_venv}" && \
+     -x "${worker_venv}/bin/python3" ]] || {
+    echo "app.env has no valid generation-owned worker venv; re-run scripts/bootstrap-local.sh" >&2
+    exit 1
+  }
+  reject_worker_venv_symlinks "${worker_venv}" || exit 1
+  SUPERSCRIBER_WORKER_VENV="${worker_venv}"
+  export SUPERSCRIBER_WORKER_VENV
+  [[ -f "${INSTANCE_ROOT}/secrets/auth.secret" && ! -L "${INSTANCE_ROOT}/secrets/auth.secret" ]] || exit 1
+  [[ -f "${INSTANCE_ROOT}/secrets/engine.secret" && ! -L "${INSTANCE_ROOT}/secrets/engine.secret" ]] || exit 1
+  AUTH_SECRET="$(cat "${INSTANCE_ROOT}/secrets/auth.secret")"
+  NEXTAUTH_SECRET="${AUTH_SECRET}"
+  SUPERSCRIBER_ENGINE_SHARED_SECRET="$(cat "${INSTANCE_ROOT}/secrets/engine.secret")"
+  export AUTH_SECRET NEXTAUTH_SECRET SUPERSCRIBER_ENGINE_SHARED_SECRET
+  export NODE_ENV=production
+}
+
+next_backoff() {
+  case "$1" in
+    1) echo 5 ;;
+    2) echo 15 ;;
+    3) echo 45 ;;
+    *) echo 300 ;;
+  esac
+}
+
+write_role_identity() {
+  local role pid token tmp started command previous attempts=0 test_marker
+  role="$1"
+  pid="$2"
+  token="$3"
+  test_marker="${PID_DIR}/.${role}.identity-failed.test"
+  if [[ "${SUPERSCRIBER_INSTANCE_TEST_MODE:-0}" == "1" && \
+        "${SUPERSCRIBER_TEST_FAIL_ROLE_IDENTITY_ONCE:-}" == "${role}" && \
+        ! -e "${test_marker}" ]]; then
+    : > "${test_marker}" || return 2
+    return 2
+  fi
+  if [[ "${SUPERSCRIBER_INSTANCE_TEST_MODE:-0}" == "1" && \
+        "${SUPERSCRIBER_TEST_PAUSE_ROLE_IDENTITY:-}" == "${role}" ]]; then
+    sleep 5
+  fi
+  started="$(process_start_fingerprint "${pid}")" || return 3
+  sleep 0.05
+  command="$(process_command_fingerprint "${pid}")" || return 3
+  while [[ "${attempts}" -lt 10 ]]; do
+    sleep 0.02
+    previous="${command}"
+    command="$(process_command_fingerprint "${pid}")" || return 3
+    [[ "${command}" == "${previous}" ]] && break
+    attempts=$((attempts + 1))
+  done
+  [[ "${command}" == "${previous}" ]] || return 3
+  tmp="${PID_DIR}/${role}.identity.tmp.$$"
+  printf '%s %s %s %s\n' "${pid}" "${token}" "${started}" "${command}" > "${tmp}" || return 2
+  mv "${tmp}" "${PID_DIR}/${role}.identity" || return 2
+  printf '%s\n' "${pid}" > "${PID_DIR}/${role}.pid.tmp.$$" || return 2
+  mv "${PID_DIR}/${role}.pid.tmp.$$" "${PID_DIR}/${role}.pid" || return 2
+}
+
+clear_role_state() {
+  local role="$1" token="$2" identity current_token ready_token
+  identity="$(cat "${PID_DIR}/${role}.identity" 2>/dev/null || true)"
+  [[ -n "${identity}" ]] || return 0
+  read -r _ current_token _ <<< "${identity}"
+  [[ "${current_token}" == "${token}" ]] || return 0
+  rm -f "${PID_DIR}/${role}.identity" "${PID_DIR}/${role}.pid"
+  if [[ "${role}" == "worker" ]]; then
+    ready_token="$(cat "${PID_DIR}/worker.ready" 2>/dev/null || true)"
+    [[ "${ready_token}" != "${token}" ]] || rm -f "${PID_DIR}/worker.ready"
+  fi
+}
+
+run_role() {
+  trap - EXIT INT TERM
+  local role="$1"
+  shift
+  local log consecutive=0 child_pid="" backoff_pid="" role_token="" role_stop_requested=0
+  if [[ "${role}" == "app" ]]; then log="${LOG_DIR}/app.log"; else log="${LOG_DIR}/worker.log"; fi
+
+  trap 'role_stop_requested=1
+    if [[ -n "${child_pid}" ]]; then
+      kill "${child_pid}" 2>/dev/null || true
+    fi
+    if [[ -n "${backoff_pid}" ]]; then
+      kill "${backoff_pid}" 2>/dev/null || true
+    fi' INT TERM
+
+  while true; do
+    local started status ended wait_s ready_tmp failed_tmp was_ready identity_failed identity_failure_tmp identity_status process_state
+    if [[ "${role_stop_requested}" -eq 1 ]]; then
+      rm -f "${PID_DIR}/${role}.identity.tmp.$$" "${PID_DIR}/${role}.pid.tmp.$$"
+      [[ -z "${role_token}" ]] || clear_role_state "${role}" "${role_token}"
+      exit 0
+    fi
+    started="$(date +%s)"
+    role_token="$(random_token)"
+    say_supervisor "${role} starting: $*"
+    set +e
+    "$@" > >(
+      while IFS= read -r line; do
+        printf '[%s] [%s] %s\n' "$(timestamp)" "${role}" "${line}" | tee -a "${log}" >>"${INSTANCE_LOG}"
+        if [[ "${role}" == "worker" && "${line}" == *"[worker] ready with offline model"* ]]; then
+          if [[ "$(awk '{ print $2 }' "${PID_DIR}/worker.identity" 2>/dev/null || true)" == "${role_token}" ]]; then
+            ready_tmp="${PID_DIR}/worker.ready.tmp.$$.$RANDOM"
+            printf '%s\n' "${role_token}" > "${ready_tmp}"
+            mv "${ready_tmp}" "${PID_DIR}/worker.ready"
+            rm -f "${PID_DIR}/worker.failed"
+          fi
+        fi
+      done
+    ) 2>&1 &
+    child_pid=$!
+    if [[ "${role_stop_requested}" -eq 1 ]]; then
+      kill "${child_pid}" 2>/dev/null || true
+      wait "${child_pid}" 2>/dev/null || true
+      child_pid=""
+      rm -f "${PID_DIR}/${role}.identity.tmp.$$" "${PID_DIR}/${role}.pid.tmp.$$"
+      clear_role_state "${role}" "${role_token}"
+      set -e
+      exit 0
+    fi
+    identity_failed=0
+    if write_role_identity "${role}" "${child_pid}" "${role_token}"; then
+      rm -f "${PID_DIR}/${role}.identity-failed"
+      wait "${child_pid}"
+      status=$?
+      child_pid=""
+    else
+      identity_status=$?
+      process_state="$(ps -p "${child_pid}" -o stat= 2>/dev/null || true)"
+      if [[ "${identity_status}" -eq 2 || ( -n "${process_state}" && "${process_state}" != *Z* ) ]]; then
+        identity_failed=1
+        kill "${child_pid}" 2>/dev/null || true
+      fi
+      wait "${child_pid}" 2>/dev/null
+      status=$?
+      child_pid=""
+      [[ "${status}" -ne 0 ]] || status=1
+      rm -f "${PID_DIR}/${role}.identity.tmp.$$" "${PID_DIR}/${role}.pid.tmp.$$"
+      clear_role_state "${role}" "${role_token}"
+      if [[ "${identity_failed}" -eq 1 ]]; then
+        identity_failure_tmp="${PID_DIR}/${role}.identity-failed.tmp.$$"
+        printf '%s %s %s\n' "${SUPERVISOR_TOKEN}" "${role_token}" "${status}" > "${identity_failure_tmp}"
+        mv "${identity_failure_tmp}" "${PID_DIR}/${role}.identity-failed"
+        say_supervisor "${role} identity publication failed; child terminated"
+      fi
+    fi
+    set -e
+    if [[ "${role_stop_requested}" -eq 1 ]]; then
+      rm -f "${PID_DIR}/${role}.identity.tmp.$$" "${PID_DIR}/${role}.pid.tmp.$$"
+      clear_role_state "${role}" "${role_token}"
+      exit 0
+    fi
+    was_ready=0
+    if [[ "${role}" == "worker" && "$(cat "${PID_DIR}/worker.ready" 2>/dev/null || true)" == "${role_token}" ]]; then
+      was_ready=1
+    fi
+    clear_role_state "${role}" "${role_token}"
+    if [[ "${role}" == "worker" && "${was_ready}" -eq 0 && "${identity_failed}" -eq 0 ]]; then
+      failed_tmp="${PID_DIR}/worker.failed.tmp.$$"
+      printf '%s %s %s\n' "${SUPERVISOR_TOKEN}" "${role_token}" "${status}" > "${failed_tmp}"
+      mv "${failed_tmp}" "${PID_DIR}/worker.failed"
+    fi
+    ended="$(date +%s)"
+    if [[ $((ended - started)) -ge 60 ]]; then consecutive=0; fi
+    consecutive=$((consecutive + 1))
+    wait_s="$(next_backoff "${consecutive}")"
+    say_supervisor "${role} exited status=${status} after $((ended - started))s; restart ${consecutive} in ${wait_s}s"
+    sleep "${wait_s}" &
+    backoff_pid=$!
+    if [[ "${role_stop_requested}" -eq 1 ]]; then
+      kill "${backoff_pid}" 2>/dev/null || true
+    fi
+    wait "${backoff_pid}" 2>/dev/null || true
+    backoff_pid=""
+  done
+}
+
+APP_LOOP_PID=""
+WORKER_LOOP_PID=""
+
+terminate_children() {
+  local name identity pid token started command
+  [[ -z "${APP_LOOP_PID}" ]] || kill "${APP_LOOP_PID}" 2>/dev/null || true
+  [[ -z "${WORKER_LOOP_PID}" ]] || kill "${WORKER_LOOP_PID}" 2>/dev/null || true
+  for name in app worker; do
+    if [[ "${name}" == "app" && -n "${APP_LOOP_PID}" ]] && process_is_live "${APP_LOOP_PID}"; then
+      continue
+    fi
+    if [[ "${name}" == "worker" && -n "${WORKER_LOOP_PID}" ]] && process_is_live "${WORKER_LOOP_PID}"; then
+      continue
+    fi
+    identity="$(cat "${PID_DIR}/${name}.identity" 2>/dev/null || true)"
+    [[ -n "${identity}" ]] || continue
+    read -r pid token started command <<< "${identity}"
+    [[ "${pid}" =~ ^[0-9]+$ && "${token}" =~ ^[0-9a-f]{48}$ && "${started}" =~ ^[0-9]+-[0-9]+$ && "${command}" =~ ^[0-9]+-[0-9]+$ ]] || continue
+    process_matches_role_identity "${pid}" "${started}" "${command}" || continue
+    kill "${pid}" 2>/dev/null || true
+  done
+}
+
+cleanup_identity() {
+  local identity pid token
+  identity="$(read_identity 2>/dev/null)" || return
+  read -r pid token <<< "${identity}"
+  [[ "${pid}" == "${SUPERVISOR_PID}" && "${token}" == "${SUPERVISOR_TOKEN}" ]] || return
+  terminate_children
+  rm -f "${IDENTITY_FILE}" "${TOKEN_FILE}" "${LOCK_DIR}/started" "${SUPERVISOR_PID_FILE}" \
+    "${PID_DIR}/app.pid" "${PID_DIR}/worker.pid" \
+    "${PID_DIR}/app.identity" "${PID_DIR}/worker.identity" \
+    "${PID_DIR}/worker.ready" "${PID_DIR}/worker.failed" \
+    "${PID_DIR}/app.identity-failed" "${PID_DIR}/worker.identity-failed" \
+    "${PID_DIR}/.app.identity-failed.test" "${PID_DIR}/.worker.identity-failed.test"
+  rmdir "${LOCK_DIR}" 2>/dev/null || true
+}
+
+shutdown() {
+  local identity pid token
+  trap - INT TERM
+  identity="$(read_identity 2>/dev/null)" || exit 0
+  read -r pid token <<< "${identity}"
+  [[ "${pid}" == "${SUPERVISOR_PID}" && "${token}" == "${SUPERVISOR_TOKEN}" ]] || exit 0
+  say_supervisor "stop requested"
+  terminate_children
+  wait "${APP_LOOP_PID}" 2>/dev/null || true
+  [[ -z "${WORKER_LOOP_PID}" ]] || wait "${WORKER_LOOP_PID}" 2>/dev/null || true
+  exit 0
+}
+
+trap cleanup_identity EXIT
+unset SUPERSCRIBER_MAINTENANCE_IDENTITY
+load_env
+cd "${RUNTIME_ROOT}"
+
+APP_SERVER="${RUNTIME_ROOT}/server.js"
+WORKER_PYTHON="${SUPERSCRIBER_WORKER_VENV}/bin/python3"
+if [[ "${SUPERSCRIBER_INSTANCE_TEST_MODE:-0}" == "1" ]]; then
+  APP_SERVER="${SUPERSCRIBER_TEST_APP_SERVER:-${APP_SERVER}}"
+  WORKER_PYTHON="${SUPERSCRIBER_TEST_WORKER_PYTHON:-${WORKER_PYTHON}}"
+fi
+
+STARTUP_STOP_REQUESTED=0
+trap 'STARTUP_STOP_REQUESTED=1' INT TERM
+run_role app node "${APP_SERVER}" &
+APP_LOOP_PID=$!
+if [[ "${STARTUP_STOP_REQUESTED}" -eq 1 ]]; then
+  trap shutdown INT TERM
+  shutdown
+fi
+
+if [[ "${SUPERSCRIBER_ENGINE_MODE:-internal}" == "internal" ]]; then
+  run_role worker env PYTHONUNBUFFERED=1 \
+    SUPERSCRIBER_WORKER_PYTHON="${WORKER_PYTHON}" \
+    bash "${RUNTIME_ROOT}/scripts/run-worker-python.sh" "${RUNTIME_ROOT}/worker/main.py" &
+  WORKER_LOOP_PID=$!
+fi
+
+trap shutdown INT TERM
+if [[ "${STARTUP_STOP_REQUESTED}" -eq 1 ]]; then
+  shutdown
+fi
+
+say_supervisor "supervising app=${APP_LOOP_PID} worker=${WORKER_LOOP_PID:-none} at http://127.0.0.1:${PORT}"
+wait

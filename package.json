@@ -18,6 +18,7 @@
     "auth:revoke": "tsx scripts/auth-revoke.ts",
     "break-glass:designate": "tsx scripts/break-glass.ts designate",
     "break-glass:transfer": "tsx scripts/break-glass.ts transfer",
+    "bootstrap:local": "bash scripts/bootstrap-local.sh",
     "worker:check": "bash scripts/run-worker-python.sh -m py_compile worker/main.py worker/prefetch_model.py worker/runtime_support.py",
     "worker:prefetch": "bash scripts/run-worker-python.sh worker/prefetch_model.py",
     "worker:python": "bash scripts/run-worker-python.sh worker/main.py"
