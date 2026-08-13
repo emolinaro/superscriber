@@ -22,7 +22,10 @@ import {
   type ChangeAccountRoleActionResult,
   type CreateUserInput,
 } from "@/server/actions/administration-actions";
-import { localUserSchema } from "@/server/auth/validation";
+import {
+  localUserWithConfirmationSchema,
+  PASSWORD_MISMATCH_MESSAGE,
+} from "@/server/auth/validation";
 import {
   AccountRoleEditor,
   emptyRoleEditorState,
@@ -35,6 +38,7 @@ const FIELD_CONFIG = {
   displayName: { id: "account-display-name", label: "Name" },
   email: { id: "account-email", label: "Email" },
   password: { id: "account-password", label: "Password" },
+  confirmPassword: { id: "account-confirm-password", label: "Confirm password" },
   role: { id: "account-role", label: "Role" },
 } as const;
 
@@ -47,12 +51,13 @@ function emptyValues(): AccountValues {
     displayName: "",
     email: "",
     password: "",
+    confirmPassword: "",
     role: "reviewer",
   };
 }
 
 function fieldErrorsFromSchema(values: AccountValues) {
-  const parsed = localUserSchema.safeParse(values);
+  const parsed = localUserWithConfirmationSchema.safeParse(values);
   if (parsed.success) {
     return null;
   }
@@ -261,14 +266,45 @@ export function AccountsSection({
     setFormError(null);
   }, [pending, pendingRoleUserId]);
 
+  // Live match check, before any submit attempt: the confirmation is client
+  // state that rides along in CreateUserInput so the server re-checks it, but
+  // nothing beyond the match validation ever consumes it.
+  const passwordsMismatch =
+    values.confirmPassword.length > 0 && values.password !== values.confirmPassword;
+  const confirmPasswordError = passwordsMismatch
+    ? PASSWORD_MISMATCH_MESSAGE
+    : fieldErrors.confirmPassword;
+
   function updateValue(field: FieldName, value: string) {
     setValues((current) => ({
       ...current,
       [field]: field === "role" ? (value as UserRole) : value,
     }));
+    if (field === "password" || field === "confirmPassword") {
+      // A stale submit-time confirmation error must clear as soon as either
+      // password field is edited; the live mismatch state takes over.
+      setFieldErrors((current) => {
+        if (!current.confirmPassword) {
+          return current;
+        }
+        const next = { ...current };
+        delete next.confirmPassword;
+        return next;
+      });
+    }
   }
 
   function describedBy(field: FieldName) {
+    if (field === "confirmPassword") {
+      return confirmPasswordError ? "confirmPassword-error" : undefined;
+    }
+    if (field === "password") {
+      const ids = [
+        fieldErrors.password ? "password-error" : null,
+        passwordsMismatch ? "confirmPassword-error" : null,
+      ].filter((id): id is string => Boolean(id));
+      return ids.length > 0 ? ids.join(" ") : undefined;
+    }
     return fieldErrors[field] ? `${field}-error` : undefined;
   }
 
@@ -696,15 +732,9 @@ export function AccountsSection({
         backdropClassName="administration-drawer-backdrop"
         onClose={closeDrawer}
         open={open && !phoneSafetyMode && !pendingRoleUserId}
-        surfaceClassName="administration-drawer"
+        surfaceClassName="administration-drawer administration-drawer--compact"
         title="Create local account"
       >
-        <div className="button-row administration-drawer__actions">
-          <button className="button button-secondary" disabled={pending} onClick={closeDrawer} type="button">
-            Close
-          </button>
-        </div>
-
         <ErrorSummary errors={summaryErrors} />
 
         <form className="form-grid" noValidate onSubmit={(event) => void submitAccount(event)}>
@@ -756,7 +786,7 @@ export function AccountsSection({
             </label>
             <input
               aria-describedby={describedBy("password")}
-              aria-invalid={fieldErrors.password ? true : undefined}
+              aria-invalid={fieldErrors.password || passwordsMismatch ? true : undefined}
               id={FIELD_CONFIG.password.id}
               name="password"
               onChange={(event) => updateValue("password", event.target.value)}
@@ -767,6 +797,32 @@ export function AccountsSection({
             {fieldErrors.password ? (
               <p className="field-error-message" id="password-error">
                 {fieldErrors.password}
+              </p>
+            ) : null}
+          </div>
+
+          <div className="field">
+            <label className="field-label" htmlFor={FIELD_CONFIG.confirmPassword.id}>
+              {FIELD_CONFIG.confirmPassword.label}
+            </label>
+            <input
+              aria-describedby={describedBy("confirmPassword")}
+              aria-invalid={confirmPasswordError ? true : undefined}
+              autoComplete="new-password"
+              id={FIELD_CONFIG.confirmPassword.id}
+              name="confirmPassword"
+              onChange={(event) => updateValue("confirmPassword", event.target.value)}
+              required
+              type="password"
+              value={values.confirmPassword}
+            />
+            {confirmPasswordError ? (
+              <p
+                className="field-error-message"
+                id="confirmPassword-error"
+                role={passwordsMismatch ? "alert" : undefined}
+              >
+                {confirmPasswordError}
               </p>
             ) : null}
           </div>
@@ -802,9 +858,19 @@ export function AccountsSection({
             </p>
           ) : null}
 
-          <button className="button button-primary" disabled={pending} type="submit">
+          <button
+            className="button button-primary"
+            disabled={pending || passwordsMismatch}
+            type="submit"
+          >
             {pending ? "Creating account..." : "Create local account"}
           </button>
+
+          <div className="button-row administration-drawer__actions">
+            <button className="button button-secondary" disabled={pending} onClick={closeDrawer} type="button">
+              Close
+            </button>
+          </div>
         </form>
       </Modal>
     </section>

@@ -531,6 +531,7 @@ describe("typed administration actions", () => {
         displayName: "Reviewer 2",
         email: "reviewer2@example.com",
         password: "correct horse battery staple",
+        confirmPassword: "correct horse battery staple",
         role: "reviewer",
       }),
     ).resolves.toEqual({
@@ -550,6 +551,51 @@ describe("typed administration actions", () => {
           activeAssignmentCount: 0,
         },
       },
+    });
+  });
+
+  it("rejects a password confirmation mismatch before any account work", async () => {
+    const result = await createUserAction({
+      displayName: "Reviewer 2",
+      email: "reviewer2@example.com",
+      password: "correct horse battery staple",
+      confirmPassword: "different horse battery staple",
+      role: "reviewer",
+    });
+
+    expect(result).toEqual({
+      ok: false,
+      code: "VALIDATION_ERROR",
+      message: "Review the highlighted fields and try again.",
+      fieldErrors: { confirmPassword: "Passwords must match." },
+    });
+    expect(createLocalUserMock).not.toHaveBeenCalled();
+  });
+
+  it("never forwards the password confirmation to account creation", async () => {
+    createLocalUserMock.mockResolvedValue({
+      id: "user-2",
+      displayName: "Reviewer 2",
+      email: "reviewer2@example.com",
+      role: "reviewer",
+      isActive: true,
+      createdAt: "2026-08-01T12:10:00.000Z",
+      updatedAt: "2026-08-01T12:10:00.000Z",
+    });
+
+    await createUserAction({
+      displayName: "Reviewer 2",
+      email: "reviewer2@example.com",
+      password: "correct horse battery staple",
+      confirmPassword: "correct horse battery staple",
+      role: "reviewer",
+    });
+
+    expect(createLocalUserMock).toHaveBeenCalledWith({
+      displayName: "Reviewer 2",
+      email: "reviewer2@example.com",
+      password: "correct horse battery staple",
+      role: "reviewer",
     });
   });
 

@@ -234,6 +234,14 @@
   overflow: auto;
 }
 
+/* Compact dialogs (e.g. account creation) size to their content like the
+   casefile modals instead of stretching an empty drawer over the viewport. */
+.administration-drawer--compact {
+  height: auto;
+  max-height: calc(100dvh - 2 * var(--space-4));
+  border-radius: var(--radius-modal);
+}
+
 .administration-drawer__actions {
   justify-content: flex-end;
 }

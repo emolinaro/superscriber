@@ -1,9 +1,10 @@
 "use client";
 
-import { useActionState, useEffect, useMemo, useRef, useTransition } from "react";
+import { useActionState, useEffect, useMemo, useRef, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { ErrorSummary } from "@/components/ui/error-summary";
 import { createBootstrapAdminAction } from "@/server/actions/auth-actions";
+import { PASSWORD_MISMATCH_MESSAGE } from "@/server/auth/validation";
 import {
   EMPTY_BOOTSTRAP_FORM_STATE,
   type BootstrapFieldName,
@@ -61,6 +62,15 @@ export function BootstrapSetupForm({
   const [isRefreshing, startRefresh] = useTransition();
   const passwordRef = useRef<HTMLInputElement>(null);
   const confirmPasswordRef = useRef<HTMLInputElement>(null);
+  // Live match check before any submit attempt; the confirm value reaches the
+  // server only as match-validation input, never as stored data.
+  const [credentials, setCredentials] = useState({ password: "", confirmPassword: "" });
+  const passwordsMismatch =
+    credentials.confirmPassword.length > 0 &&
+    credentials.password !== credentials.confirmPassword;
+  const confirmPasswordError = passwordsMismatch
+    ? PASSWORD_MISMATCH_MESSAGE
+    : state.fieldErrors?.confirmPassword;
 
   const summaryErrors = useMemo(
     () =>
@@ -85,6 +95,7 @@ export function BootstrapSetupForm({
     if (confirmPasswordRef.current) {
       confirmPasswordRef.current.value = "";
     }
+    setCredentials({ password: "", confirmPassword: "" });
   }, [state.formError, summaryErrors.length]);
 
   function errorFor(field: BootstrapFieldName) {
@@ -92,6 +103,16 @@ export function BootstrapSetupForm({
   }
 
   function describedBy(field: BootstrapFieldName) {
+    if (field === "confirmPassword") {
+      return confirmPasswordError ? "confirmPassword-error" : undefined;
+    }
+    if (field === "password") {
+      const ids = [
+        errorFor("password") ? "password-error" : null,
+        passwordsMismatch ? "confirmPassword-error" : null,
+      ].filter((id): id is string => Boolean(id));
+      return ids.length > 0 ? ids.join(" ") : undefined;
+    }
     return errorFor(field) ? `${field}-error` : undefined;
   }
 
@@ -141,7 +162,20 @@ export function BootstrapSetupForm({
 
       <ErrorSummary errors={summaryErrors} />
 
-      <form action={formAction} className="form-grid auth-form" noValidate>
+      <form
+        action={formAction}
+        className="form-grid auth-form"
+        noValidate
+        onSubmit={(event) => {
+          // Enter-key submits bypass the disabled button; the match check must
+          // hold there too. The confirmation never leaves the client unless it
+          // matches, and the server still re-checks the match.
+          if (passwordsMismatch) {
+            event.preventDefault();
+            confirmPasswordRef.current?.focus();
+          }
+        }}
+      >
         <div className="field">
           <label className="field-label" htmlFor={FIELD_CONFIG.displayName.id}>
             {FIELD_CONFIG.displayName.label}
@@ -190,10 +224,13 @@ export function BootstrapSetupForm({
           </label>
           <input
             aria-describedby={describedBy("password")}
-            aria-invalid={errorFor("password") ? true : undefined}
+            aria-invalid={errorFor("password") || passwordsMismatch ? true : undefined}
             autoComplete="new-password"
             id={FIELD_CONFIG.password.id}
             name="password"
+            onChange={(event) =>
+              setCredentials((current) => ({ ...current, password: event.target.value }))
+            }
             ref={passwordRef}
             required
             type="password"
@@ -211,17 +248,27 @@ export function BootstrapSetupForm({
           </label>
           <input
             aria-describedby={describedBy("confirmPassword")}
-            aria-invalid={errorFor("confirmPassword") ? true : undefined}
+            aria-invalid={confirmPasswordError ? true : undefined}
             autoComplete="new-password"
             id={FIELD_CONFIG.confirmPassword.id}
             name="confirmPassword"
+            onChange={(event) =>
+              setCredentials((current) => ({
+                ...current,
+                confirmPassword: event.target.value,
+              }))
+            }
             ref={confirmPasswordRef}
             required
             type="password"
           />
-          {errorFor("confirmPassword") ? (
-            <p className="field-error-message" id="confirmPassword-error">
-              {errorFor("confirmPassword")}
+          {confirmPasswordError ? (
+            <p
+              className="field-error-message"
+              id="confirmPassword-error"
+              role={passwordsMismatch ? "alert" : undefined}
+            >
+              {confirmPasswordError}
             </p>
           ) : null}
         </div>
@@ -232,7 +279,11 @@ export function BootstrapSetupForm({
           </p>
         ) : null}
 
-        <button className="button button-primary" disabled={isPending || isBlocked} type="submit">
+        <button
+          className="button button-primary"
+          disabled={isPending || isBlocked || passwordsMismatch}
+          type="submit"
+        >
           {isPending ? "Creating account..." : "Create admin"}
         </button>
 

@@ -25,7 +25,7 @@ import {
   setWorkspacePolicyProfile,
 } from "@/server/administration/service";
 import { createLocalUser } from "@/server/auth/service";
-import { localUserSchema } from "@/server/auth/validation";
+import { localUserWithConfirmationSchema } from "@/server/auth/validation";
 import { CasefileCommandError } from "@/server/casefile/errors";
 import {
   AccountRoleChangeServiceError,
@@ -70,6 +70,9 @@ export type CreateUserInput = {
   displayName: string;
   email: string;
   password: string;
+  // Match-validation only: re-checked by the server schema below and never
+  // persisted or forwarded to account services.
+  confirmPassword: string;
   role: UserRole;
 };
 
@@ -241,7 +244,7 @@ export async function createUserAction(
   return runAdministrationAction(
     async (principal) => {
       requireAdmin(principal.role);
-      const parsed = localUserSchema.safeParse(input);
+      const parsed = localUserWithConfirmationSchema.safeParse(input);
       if (!parsed.success) {
         throw new CasefileCommandError(
           "VALIDATION_ERROR",
@@ -254,7 +257,9 @@ export async function createUserAction(
         );
       }
 
-      return createLocalUser(parsed.data);
+      // confirmPassword is validated for the match and ends here.
+      const { confirmPassword: _confirmPassword, ...accountInput } = parsed.data;
+      return createLocalUser(accountInput);
     },
     (value) => ({
       href: "/administration?section=accounts",
@@ -462,6 +467,7 @@ export async function createUserFormAction(formData: FormData) {
       displayName: asString(formData, "displayName"),
       email: asString(formData, "email"),
       password: asString(formData, "password"),
+      confirmPassword: asString(formData, "confirmPassword"),
       role: asString(formData, "role") as UserRole,
     }),
   );

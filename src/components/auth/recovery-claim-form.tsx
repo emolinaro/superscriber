@@ -1,8 +1,9 @@
 "use client";
 
-import { useActionState, useEffect, useMemo, useRef } from "react";
+import { useActionState, useEffect, useMemo, useRef, useState } from "react";
 import { ErrorSummary } from "@/components/ui/error-summary";
 import { claimRecoveryAdminAction } from "@/server/actions/auth-actions";
+import { PASSWORD_MISMATCH_MESSAGE } from "@/server/auth/validation";
 import {
   EMPTY_RECOVERY_CLAIM_FORM_STATE,
   type RecoveryClaimFieldName,
@@ -51,6 +52,15 @@ export function RecoveryClaimForm({
   const [state, formAction, isPending] = useActionState(action, EMPTY_RECOVERY_CLAIM_FORM_STATE);
   const passwordRef = useRef<HTMLInputElement>(null);
   const confirmPasswordRef = useRef<HTMLInputElement>(null);
+  // Live match check before any submit attempt; the confirm value reaches the
+  // server only as match-validation input, never as stored data.
+  const [credentials, setCredentials] = useState({ password: "", confirmPassword: "" });
+  const passwordsMismatch =
+    credentials.confirmPassword.length > 0 &&
+    credentials.password !== credentials.confirmPassword;
+  const confirmPasswordError = passwordsMismatch
+    ? PASSWORD_MISMATCH_MESSAGE
+    : state.fieldErrors?.confirmPassword;
 
   const summaryErrors = useMemo(
     () =>
@@ -79,6 +89,7 @@ export function RecoveryClaimForm({
     if (confirmPasswordRef.current) {
       confirmPasswordRef.current.value = "";
     }
+    setCredentials({ password: "", confirmPassword: "" });
   }, [state.formError, summaryErrors.length]);
 
   function errorFor(field: RecoveryClaimFieldName) {
@@ -86,6 +97,16 @@ export function RecoveryClaimForm({
   }
 
   function describedBy(field: RecoveryClaimFieldName) {
+    if (field === "confirmPassword") {
+      return confirmPasswordError ? "confirmPassword-error" : undefined;
+    }
+    if (field === "password") {
+      const ids = [
+        errorFor("password") ? "password-error" : null,
+        passwordsMismatch ? "confirmPassword-error" : null,
+      ].filter((id): id is string => Boolean(id));
+      return ids.length > 0 ? ids.join(" ") : undefined;
+    }
     return errorFor(field) ? `${field}-error` : undefined;
   }
 
@@ -99,7 +120,19 @@ export function RecoveryClaimForm({
 
       <ErrorSummary errors={summaryErrors} />
 
-      <form action={formAction} className="form-grid auth-form" noValidate>
+      <form
+        action={formAction}
+        className="form-grid auth-form"
+        noValidate
+        onSubmit={(event) => {
+          // Enter-key submits bypass the disabled button; the match check must
+          // hold there too.
+          if (passwordsMismatch) {
+            event.preventDefault();
+            confirmPasswordRef.current?.focus();
+          }
+        }}
+      >
         <div className="field">
           <label className="field-label" htmlFor={FIELD_CONFIG.displayName.id}>
             {FIELD_CONFIG.displayName.label}
@@ -148,10 +181,13 @@ export function RecoveryClaimForm({
           </label>
           <input
             aria-describedby={describedBy("password")}
-            aria-invalid={errorFor("password") ? true : undefined}
+            aria-invalid={errorFor("password") || passwordsMismatch ? true : undefined}
             autoComplete="new-password"
             id={FIELD_CONFIG.password.id}
             name="password"
+            onChange={(event) =>
+              setCredentials((current) => ({ ...current, password: event.target.value }))
+            }
             ref={passwordRef}
             required
             type="password"
@@ -169,17 +205,27 @@ export function RecoveryClaimForm({
           </label>
           <input
             aria-describedby={describedBy("confirmPassword")}
-            aria-invalid={errorFor("confirmPassword") ? true : undefined}
+            aria-invalid={confirmPasswordError ? true : undefined}
             autoComplete="new-password"
             id={FIELD_CONFIG.confirmPassword.id}
             name="confirmPassword"
+            onChange={(event) =>
+              setCredentials((current) => ({
+                ...current,
+                confirmPassword: event.target.value,
+              }))
+            }
             ref={confirmPasswordRef}
             required
             type="password"
           />
-          {errorFor("confirmPassword") ? (
-            <p className="field-error-message" id="confirmPassword-error">
-              {errorFor("confirmPassword")}
+          {confirmPasswordError ? (
+            <p
+              className="field-error-message"
+              id="confirmPassword-error"
+              role={passwordsMismatch ? "alert" : undefined}
+            >
+              {confirmPasswordError}
             </p>
           ) : null}
         </div>
@@ -219,7 +265,11 @@ export function RecoveryClaimForm({
           </p>
         ) : null}
 
-        <button className="button button-primary" disabled={isPending} type="submit">
+        <button
+          className="button button-primary"
+          disabled={isPending || passwordsMismatch}
+          type="submit"
+        >
           {isPending ? "Creating account..." : "Claim administrator"}
         </button>
 

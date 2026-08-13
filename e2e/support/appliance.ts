@@ -860,7 +860,8 @@ export async function ensureLocalAccount(page: Page, user: LocalUser) {
   await expect(dialog).toBeVisible();
   await dialog.getByLabel("Name").fill(user.displayName);
   await dialog.getByLabel("Email").fill(user.email);
-  await dialog.getByLabel("Password").fill(user.password);
+  await dialog.getByLabel("Password", { exact: true }).fill(user.password);
+  await dialog.getByLabel("Confirm password").fill(user.password);
   await dialog.getByLabel("Role").selectOption(user.role);
   await dialog.getByRole("button", { name: "Create local account" }).click();
 

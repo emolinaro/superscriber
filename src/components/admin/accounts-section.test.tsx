@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 
-import { cleanup, render, screen, waitFor, within } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { CommandResult } from "@/lib/command-result";
@@ -143,9 +143,20 @@ describe("AccountsSection", () => {
     await user.type(within(dialog).getByLabelText("Name"), "Reviewer Two");
     await user.type(within(dialog).getByLabelText("Email"), "reviewer2@example.com");
     await user.type(within(dialog).getByLabelText("Password"), "correct horse battery staple");
+    await user.type(
+      within(dialog).getByLabelText("Confirm password"),
+      "correct horse battery staple",
+    );
     await user.selectOptions(within(dialog).getByLabelText("Role"), "reviewer");
     await user.click(within(dialog).getByRole("button", { name: "Create local account" }));
 
+    expect(createUserAction).toHaveBeenCalledWith({
+      displayName: "Reviewer Two",
+      email: "reviewer2@example.com",
+      password: "correct horse battery staple",
+      confirmPassword: "correct horse battery staple",
+      role: "reviewer",
+    });
     expect(screen.getByRole("button", { name: "Creating account..." })).toBeDisabled();
 
     if (!resolveActionRef.current) {
@@ -230,7 +241,77 @@ describe("AccountsSection", () => {
     expect(within(resetDialog).getByLabelText("Name")).toHaveValue("");
     expect(within(resetDialog).getByLabelText("Email")).toHaveValue("");
     expect(within(resetDialog).getByLabelText("Password")).toHaveValue("");
+    expect(within(resetDialog).getByLabelText("Confirm password")).toHaveValue("");
     expect(within(resetDialog).getByLabelText("Role")).toHaveValue("reviewer");
+  });
+
+  it("sizes the create dialog to its content like the compact casefile modals", async () => {
+    const user = userEvent.setup();
+
+    render(<AccountsSection model={createModel()} phoneSafetyMode={false} />);
+
+    await user.click(screen.getByRole("button", { name: "Create account" }));
+    const dialog = screen.getByRole("dialog", { name: "Create local account" });
+    expect(dialog).toHaveClass("administration-drawer");
+    expect(dialog).toHaveClass("administration-drawer--compact");
+    expect(within(dialog).getByLabelText("Confirm password")).toBeInTheDocument();
+    expect(
+      within(dialog).getByLabelText("Confirm password"),
+    ).toHaveAccessibleName("Confirm password");
+  });
+
+  it("blocks a password confirmation mismatch before submit and announces the copy", async () => {
+    const user = userEvent.setup();
+    const createUserAction = vi.fn();
+
+    render(
+      <AccountsSection
+        createUserAction={createUserAction}
+        model={createModel()}
+        phoneSafetyMode={false}
+      />,
+    );
+
+    await user.click(screen.getByRole("button", { name: "Create account" }));
+    const dialog = screen.getByRole("dialog", { name: "Create local account" });
+
+    await user.type(within(dialog).getByLabelText("Name"), "Reviewer Two");
+    await user.type(within(dialog).getByLabelText("Email"), "reviewer2@example.com");
+    const passwordInput = within(dialog).getByLabelText("Password");
+    const confirmInput = within(dialog).getByLabelText("Confirm password");
+    await user.type(passwordInput, "correct horse battery staple");
+    await user.type(confirmInput, "different horse battery staple");
+
+    expect(within(dialog).getByText("Passwords must match.")).toHaveAttribute("role", "alert");
+    expect(confirmInput).toHaveAttribute("aria-invalid", "true");
+    expect(confirmInput).toHaveAttribute("aria-describedby", "confirmPassword-error");
+    expect(passwordInput).toHaveAttribute("aria-invalid", "true");
+    expect(passwordInput.getAttribute("aria-describedby")).toContain("confirmPassword-error");
+    const submitButton = within(dialog).getByRole("button", { name: "Create local account" });
+    expect(submitButton).toBeDisabled();
+
+    // Enter-key submits bypass the disabled button; the schema match check holds.
+    const form = confirmInput.closest("form");
+    if (!form) {
+      throw new Error("Expected the dialog form to render.");
+    }
+    await act(async () => {
+      fireEvent.submit(form);
+    });
+    expect(createUserAction).not.toHaveBeenCalled();
+    const summary = within(dialog).getByRole("alert", { name: "There is a problem" });
+    expect(
+      within(summary).getByText("Confirm password - Passwords must match."),
+    ).toBeVisible();
+
+    await user.clear(confirmInput);
+    await user.type(confirmInput, "correct horse battery staple");
+    await waitFor(() => {
+      expect(within(dialog).queryByText("Passwords must match.")).not.toBeInTheDocument();
+    });
+    expect(confirmInput).not.toHaveAttribute("aria-invalid");
+    expect(passwordInput).not.toHaveAttribute("aria-invalid");
+    expect(submitButton).toBeEnabled();
   });
 
   it("shares one dirty role state across table and card presentations and Cancel restores focus", async () => {
