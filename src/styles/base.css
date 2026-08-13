@@ -71,6 +71,18 @@ textarea {
   resize: vertical;
 }
 
+/* File inputs: the native chooser row (~24px in Chrome/WebKit) is shorter
+   than the shared 44px control target, and the browsers lay the shadow
+   content out at the top of the content box, leaving the slack below the
+   row (host-level flex/grid alignment cannot reach the shadow box). Absorb
+   the slack with symmetric block padding instead: (44px - 2px border -
+   ~24px native row) / 2 = 9px. box-sizing keeps the control at the 44px
+   target; on platforms with a taller native row the control simply grows
+   symmetrically rather than going top-heavy. */
+input[type="file"] {
+  padding-block: 9px;
+}
+
 input[aria-invalid="true"],
 select[aria-invalid="true"],
 textarea[aria-invalid="true"] {
