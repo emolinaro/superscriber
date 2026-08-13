@@ -1306,7 +1306,7 @@ exit 0
   );
 
   it(
-    "recovers a pre-quiescence intent before retrying preparation",
+    "recovers a pre-quiescence intent before rejecting an occupied candidate port",
     { timeout: 60_000 },
     async () => {
       testRoot = worktreeTestRoot();
@@ -1339,30 +1339,57 @@ exit 0
           "",
         ].join("\n"),
       );
-
-      const bootstrap = runScript(
-        BOOTSTRAP,
+      const holder = spawn(
+        "node",
         [
-          "--instance-root",
-          instance,
-          "--port",
-          port,
-          "--model-tier",
-          "medium",
-          "--skip-model-download",
-          "--skip-worker-deps",
+          "-e",
+          "const s=require('node:net').createServer().listen(0,'127.0.0.1',()=>{console.log(s.address().port)});setInterval(()=>{},1000)",
         ],
-        stubNpxEnv(testRoot),
+        { stdio: ["ignore", "pipe", "ignore"] },
+      );
+      const candidatePort = await new Promise<string>(
+        (resolvePromise, rejectPromise) => {
+          let buffer = "";
+          holder.stdout?.on("data", (chunk) => {
+            buffer += String(chunk);
+            if (buffer.trim().length > 0) resolvePromise(buffer.trim());
+          });
+          holder.on("error", rejectPromise);
+          setTimeout(
+            () => rejectPromise(new Error("candidate port holder never bound")),
+            10_000,
+          );
+        },
       );
 
-      expect(bootstrap.status).not.toBe(0);
-      expect(existsSync(join(instance, "quiesce.pending"))).toBe(false);
-      await waitForCondition(
-        () => runScript(RUN, [instance, "--app-running"]).status === 0,
-      );
-      await waitForCondition(
-        () => runScript(RUN, [instance, "--worker-ready"]).status === 0,
-      );
+      try {
+        const bootstrap = runScript(
+          BOOTSTRAP,
+          [
+            "--instance-root",
+            instance,
+            "--port",
+            candidatePort,
+            "--model-tier",
+            "medium",
+            "--skip-model-download",
+            "--skip-worker-deps",
+          ],
+          stubNpxEnv(testRoot),
+        );
+
+        expect(bootstrap.status).toBe(1);
+        expect(bootstrap.stderr).toContain("occupied by a foreign process");
+        expect(existsSync(join(instance, "quiesce.pending"))).toBe(false);
+        await waitForCondition(
+          () => runScript(RUN, [instance, "--app-running"]).status === 0,
+        );
+        await waitForCondition(
+          () => runScript(RUN, [instance, "--worker-ready"]).status === 0,
+        );
+      } finally {
+        holder.kill("SIGTERM");
+      }
     },
   );
 

@@ -189,16 +189,11 @@ activation_port_from_file() {
 }
 
 resolve_instance_root() {
-  local configured_port
   INSTANCE_ROOT="$(resolve_durable_instance_root "${INSTANCE_ROOT}")" || exit 1
   ACTIVATION_RECORD="${INSTANCE_ROOT}/activation.pending"
   ACTIVATION_BACKUP="${INSTANCE_ROOT}/activation.previous"
   ACTIVATION_CANDIDATE="${INSTANCE_ROOT}/activation.candidate"
   QUIESCE_RECORD="${INSTANCE_ROOT}/quiesce.pending"
-  case "${PORT}" in
-    ''|*[!0-9]*) fail "port must be a number, got '${PORT}'" ;;
-  esac
-  [[ "${PORT}" -ge 1024 && "${PORT}" -le 65535 ]] || fail "port ${PORT} is outside 1024-65535"
 
   if [[ -e "${INSTANCE_ROOT}" && ! -d "${INSTANCE_ROOT}" ]]; then
     fail "instance root exists but is not a directory: ${INSTANCE_ROOT}"
@@ -208,7 +203,14 @@ resolve_instance_root() {
     fail "existing instance root is non-empty but has no valid ${INSTANCE_MARKER_NAME} ownership marker. Pick an empty, dedicated instance root."
   fi
   reject_managed_instance_symlinks "${INSTANCE_ROOT}" || exit 1
+}
 
+validate_candidate_port() {
+  local configured_port
+  case "${PORT}" in
+    ''|*[!0-9]*) fail "port must be a number, got '${PORT}'" ;;
+  esac
+  [[ "${PORT}" -ge 1024 && "${PORT}" -le 65535 ]] || fail "port ${PORT} is outside 1024-65535"
   if [[ -d "${INSTANCE_ROOT}" ]] && bash "${SCRIPT_DIR}/instance-run.sh" "${INSTANCE_ROOT}" --status >/dev/null 2>&1; then
     configured_port="$(activation_port_from_file "${INSTANCE_ROOT}/app.env" 2>/dev/null || true)"
     if [[ "${configured_port}" != "${PORT}" ]] && ! port_is_free "${PORT}"; then
@@ -1092,6 +1094,7 @@ main() {
   check_python_venv
   log_dependencies
   prepare_instance_root
+  validate_candidate_port
   quiesce_instance
   acquire_repository_lock
   cleanup_interrupted_builds
