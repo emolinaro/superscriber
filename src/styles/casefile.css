@@ -1,6 +1,12 @@
-html {
-  scroll-padding-top: 132px;
-}
+/* Casefile scroll targeting (player-pinned-center): the follow-scroll
+   centers the active segment, and centering must aim at the VISIBLE
+   transcript region - the area below the pinned transport - not the raw
+   scrollport. Clearance therefore lives on scroll-padding (symmetric
+   boxes keep block:center honest) instead of per-row scroll-margin,
+   which would extend the row's box and push the centered line low. The
+   concrete floors live next to the rules that pin the transport:
+   responsive.css for window-scrolling widths, the containment block
+   below for the desktop scrollport. */
 
 .casefile-page {
   display: grid;
@@ -129,6 +135,7 @@ html {
    pointer seeks and section jumps share one surface. The translucent sages
    stay legible on both appearance tokens (bone light, dark bone). */
 .media-transport__wave {
+  --wave-height: 84px;
   position: relative;
   display: grid;
   gap: var(--space-2);
@@ -143,7 +150,11 @@ html {
   border-radius: var(--radius-control);
   background: var(--color-bone);
   cursor: pointer;
-  min-height: calc(84px + var(--space-4));
+  min-height: calc(var(--wave-height) + var(--space-4) + 2px);
+}
+
+.media-transport__wave-canvas {
+  height: var(--wave-height);
 }
 
 .media-transport__wave-stage:focus-visible {
@@ -161,7 +172,7 @@ html {
   top: calc(var(--space-2) + 1px);
   left: calc(var(--space-2) + 1px);
   right: calc(var(--space-2) + 1px);
-  height: 84px;
+  height: var(--wave-height);
   border-radius: var(--radius-control);
   pointer-events: none;
 }
@@ -333,7 +344,6 @@ html {
   border-radius: var(--radius-surface);
   background: var(--color-paper);
   box-shadow: var(--shadow-1);
-  scroll-margin-top: 176px;
 }
 
 .transcript-segment[data-active] {
@@ -609,7 +619,9 @@ html {
      over and the MAIN column is the single scrollport - the transcript has
      no nested mini-scroller, so follow-scroll and wheel scrolling just work
      and the full page can never run away. Applies only when a revision is
-     on screen; status-only and unresolved flows keep natural flow. */
+     on screen; status-only and unresolved flows keep natural flow. Within
+     that scrollport the transport is sticky (see player-pinned-center below)
+     so the playback surface and progress wave never scroll out of view. */
   .casefile-page:has(> .casefile-layout > .casefile-main[data-revision="true"]) {
     display: flex;
     flex-direction: column;
@@ -639,11 +651,16 @@ html {
     display: flex;
     flex-direction: column;
     gap: var(--space-4);
-    scroll-padding-block: 176px;
+    scroll-padding-block: var(--player-clearance, 328px) var(--space-3);
   }
 
+  /* Pinned player chrome (player-pinned-center): inside the bounded shell
+     the main column is the single scrollport, so the transport sticks to the
+     scrollport's leading edge while the transcript scrolls underneath. The
+     card stays fully opaque so the transcript reads as passing below. */
   .casefile-main[data-revision="true"] .media-transport {
-    position: static;
+    position: sticky;
+    top: 0;
     flex: 0 0 auto;
   }
 
@@ -825,7 +842,7 @@ html {
 
   .casefile-main[data-revision="true"] .media-transport__wave-stage {
     padding: var(--space-1);
-    min-height: calc(84px + var(--space-2));
+    min-height: calc(var(--wave-height) + var(--space-2) + 2px);
   }
 
   .casefile-main[data-revision="true"] .media-transport__wave-overlay {
@@ -844,5 +861,43 @@ html {
 
   .casefile-page:has(> .casefile-layout > .casefile-main[data-revision="true"]) .case-header__facts {
     gap: var(--space-2) var(--space-6);
+  }
+}
+
+@media (min-width: 1100px) and (max-height: 920px) {
+  /* Pinned-chrome vertical budget (player-pinned-center): once the transport
+     pins to the scrollport's leading edge, its full height (~300px) would
+     leave only a sliver of transcript visible on laptop-height windows. The
+     horizontal chip rail collapses (every segment still seeks from its
+     transcript row timestamp), the rate field goes inline, and the card
+     tightens - the wave progress surface itself stays full height. */
+  .casefile-main[data-revision="true"] .media-transport {
+    padding: var(--space-2);
+    gap: var(--space-2);
+  }
+
+  .casefile-main[data-revision="true"] .media-transport__rail {
+    display: none;
+  }
+
+  .casefile-main[data-revision="true"] .media-transport__rate-field {
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
+    min-width: 0;
+  }
+
+  .casefile-main[data-revision="true"] .media-transport__rate-field .field-label {
+    white-space: nowrap;
+  }
+
+  /* Cap-height scrollport padding tracks the compacted transport (~198px)
+     so block:center still lands the active line mid-visible-region. */
+  .casefile-main[data-revision="true"] {
+    scroll-padding-block: var(--player-clearance, 216px) var(--space-3);
+  }
+  .casefile-page:has(> .casefile-layout > .casefile-main[data-revision="true"]) .case-header__body {
+    padding: var(--space-2) var(--space-3);
+    gap: var(--space-2);
   }
 }

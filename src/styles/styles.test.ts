@@ -139,6 +139,77 @@ describe("product css contract", () => {
     expect(shell).toContain(".account-menu__appearance-option");
   });
 
+  it("pins the playback transport on both the desktop scrollport and the phone viewport", () => {
+    // player-pinned-center: the playback surface and progress wave must never
+    // scroll out of view on either surface.
+    const casefile = readFileSync(resolve(STYLES_DIR, "casefile.css"), "utf8");
+    const desktopTransport = casefile.match(
+      /\.casefile-main\[data-revision="true"\] \.media-transport\s*\{([^}]*)\}/,
+    );
+    expect(desktopTransport?.[1]).toContain("position: sticky");
+    expect(desktopTransport?.[1]).toContain("top: 0");
+    const desktopScrollport = casefile.match(
+      /\.casefile-main\[data-revision="true"\]\s*\{([^}]*)\}/,
+    );
+    expect(desktopScrollport?.[1]).toContain(
+      "scroll-padding-block: var(--player-clearance",
+    );
+    const desktopDensityStart = casefile.lastIndexOf("@media (min-width: 1100px) {");
+    const compactHeightStart = casefile.indexOf(
+      "@media (min-width: 1100px) and (max-height: 920px)",
+    );
+    expect(compactHeightStart).toBeGreaterThan(desktopDensityStart);
+    const compactHeight = casefile.slice(compactHeightStart);
+    expect(compactHeight).toMatch(
+      /\.media-transport\s*\{[^}]*padding: var\(--space-2\)/,
+    );
+    expect(compactHeight).toMatch(
+      /\.case-header__body\s*\{[^}]*padding: var\(--space-2\) var\(--space-3\)/,
+    );
+
+    const responsive = readFileSync(resolve(STYLES_DIR, "responsive.css"), "utf8");
+    const windowScrollMedia = responsive.match(
+      /@media \(max-width: 1099px\) \{([\s\S]*?)\n\}\n/,
+    );
+    expect(windowScrollMedia?.[1]).toContain("body:has(.casefile-page) .app-shell__header");
+    expect(windowScrollMedia?.[1]).toContain("body:has(.casefile-page) .banner-emergency");
+    const windowTransport = windowScrollMedia?.[1].match(/\.media-transport\s*\{([^}]*)\}/);
+    expect(windowTransport?.[1]).toContain("position: sticky");
+    expect(windowTransport?.[1]).toContain("top: 0");
+    expect(windowScrollMedia?.[1]).toContain(
+      "scroll-padding-top: var(--player-clearance",
+    );
+    expect(windowScrollMedia?.[1]).toContain(
+      "scroll-padding-bottom: var(--action-bar-clearance",
+    );
+    const compactVideo = windowScrollMedia?.[1].match(
+      /\.media-transport__controls video\s*\{([^}]*)\}/,
+    );
+    expect(compactVideo?.[1]).toContain("max-height: 42vh");
+    expect(compactVideo?.[1]).toContain("object-fit: contain");
+    // The case header must not double-park above the pinned transport on
+    // window-scrolling surfaces.
+    expect(windowScrollMedia?.[1]).toMatch(/\.case-header[\s,\{][^}]*position: static/);
+    expect(windowScrollMedia?.[1]).toMatch(
+      /\.media-transport__rail\s*\{[^}]*display: none/,
+    );
+    const compactRate = windowScrollMedia?.[1].match(
+      /\.media-transport__rate-field\s*\{([^}]*)\}/,
+    );
+    expect(compactRate?.[1]).toContain("display: flex");
+    expect(compactRate?.[1]).toContain("min-width: 0");
+
+    const phoneMedia = responsive.match(
+      /@media \(max-width: 767px\), \(max-height: 767px\) and \(pointer: coarse\) \{([\s\S]*?)\n\}/,
+    );
+    expect(phoneMedia?.[1]).toMatch(
+      /\.media-transport__actions\s*\{[^}]*grid-template-columns: 1fr 1fr/,
+    );
+    expect(responsive).toContain(
+      "@media (max-width: 1099px) and (max-height: 767px) and (pointer: coarse) and (orientation: landscape)",
+    );
+  });
+
   it("keeps the exact responsive, sticky, reduced-motion, and export rules", () => {
     const css = readAllProductCss();
 

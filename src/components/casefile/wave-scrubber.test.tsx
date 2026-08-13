@@ -1,7 +1,6 @@
 // @vitest-environment jsdom
 
-import { act } from "react";
-import { cleanup, render, screen } from "@testing-library/react";
+import { act, cleanup, render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { baseSegments } from "./test-fixtures";
 import { WaveScrubber } from "./wave-scrubber";

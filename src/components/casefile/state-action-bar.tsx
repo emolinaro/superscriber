@@ -1,4 +1,6 @@
-import { useId } from "react";
+"use client";
+
+import { useEffect, useId, useRef } from "react";
 
 type StateActionBarProps = {
   assignmentLabel: string;
@@ -48,11 +50,59 @@ export function StateActionBar({
   onExport,
 }: StateActionBarProps) {
   const exportDisabledReasonId = useId();
+  const actionBarRef = useRef<HTMLElement | null>(null);
   const hasGovernedActions =
     canSubmit || canWithdraw || canApprove || canRequestChanges || canReopen || canExport;
 
+  useEffect(() => {
+    const actionBar = actionBarRef.current;
+    if (!actionBar) {
+      return;
+    }
+
+    const page = actionBar.closest<HTMLElement>(".casefile-page");
+    const root = document.documentElement;
+    const previousPageClearance =
+      page?.style.getPropertyValue("--action-bar-clearance") ?? "";
+    const previousRootClearance = root.style.getPropertyValue("--action-bar-clearance");
+    const updateClearance = () => {
+      const height = Math.ceil(actionBar.getBoundingClientRect().height);
+      if (height <= 0) {
+        return;
+      }
+      const value = `${height}px`;
+      page?.style.setProperty("--action-bar-clearance", value);
+      root.style.setProperty("--action-bar-clearance", value);
+    };
+
+    updateClearance();
+    const observer =
+      typeof ResizeObserver === "undefined" ? null : new ResizeObserver(updateClearance);
+    observer?.observe(actionBar);
+
+    return () => {
+      observer?.disconnect();
+      if (page) {
+        if (previousPageClearance) {
+          page.style.setProperty("--action-bar-clearance", previousPageClearance);
+        } else {
+          page.style.removeProperty("--action-bar-clearance");
+        }
+      }
+      if (previousRootClearance) {
+        root.style.setProperty("--action-bar-clearance", previousRootClearance);
+      } else {
+        root.style.removeProperty("--action-bar-clearance");
+      }
+    };
+  }, []);
+
   return (
-    <section className="casefile-action-bar" aria-label="Case actions">
+    <section
+      aria-label="Case actions"
+      className="casefile-action-bar"
+      ref={actionBarRef}
+    >
       <div className="casefile-action-bar__meta">
         <strong>{stageLabel}</strong>
         <span>{assignmentLabel}</span>

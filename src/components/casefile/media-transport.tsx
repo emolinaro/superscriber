@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import type { SyntheticEvent } from "react";
 import type { Recording, TranscriptSegment } from "@/domain/models";
 import { formatSegmentWindow } from "@/lib/format";
 import { InlineNotice } from "@/components/ui/inline-notice";
@@ -20,6 +21,7 @@ type MediaTransportProps = {
    */
   seekRequest: { segmentId: string; startMs: number; endMs: number } | null;
   onSeekHandled: () => void;
+  onMediaSeek?: () => void;
   onActiveSegmentChange: (segmentId: string | null) => void;
   /** Mirrors the media element's playing state so the transcript document
    * renders the active segment button as a truthful play/pause toggle. */
@@ -50,10 +52,12 @@ export function MediaTransport({
   activeSegmentId,
   seekRequest,
   onSeekHandled,
+  onMediaSeek,
   onActiveSegmentChange,
   onLocateSegment,
   onPlayingChange,
 }: MediaTransportProps) {
+  const transportRef = useRef<HTMLElement | null>(null);
   const mediaRef = useRef<HTMLAudioElement | HTMLVideoElement | null>(null);
   const [mediaEl, setMediaEl] = useState<HTMLAudioElement | HTMLVideoElement | null>(null);
   // Wave scrubber (demo-waveform-player): decoded-wave progress bar replaces
@@ -65,6 +69,50 @@ export function MediaTransport({
 
   const handleWaveReady = useCallback(() => setNativeControls(false), []);
   const handleWaveUnavailable = useCallback(() => setNativeControls(true), []);
+
+  useEffect(() => {
+    const transport = transportRef.current;
+    if (!transport) {
+      return;
+    }
+
+    const page = transport.closest<HTMLElement>(".casefile-page");
+    const root = document.documentElement;
+    const previousPageClearance = page?.style.getPropertyValue("--player-clearance") ?? "";
+    const previousRootClearance = root.style.getPropertyValue("--player-clearance");
+    const updateClearance = () => {
+      const height = Math.ceil(transport.getBoundingClientRect().height);
+      if (height <= 0) {
+        return;
+      }
+      const value = `${height}px`;
+      page?.style.setProperty("--player-clearance", value);
+      root.style.setProperty("--player-clearance", value);
+    };
+
+    updateClearance();
+    const observer =
+      typeof ResizeObserver === "undefined"
+        ? null
+        : new ResizeObserver(updateClearance);
+    observer?.observe(transport);
+
+    return () => {
+      observer?.disconnect();
+      if (page) {
+        if (previousPageClearance) {
+          page.style.setProperty("--player-clearance", previousPageClearance);
+        } else {
+          page.style.removeProperty("--player-clearance");
+        }
+      }
+      if (previousRootClearance) {
+        root.style.setProperty("--player-clearance", previousRootClearance);
+      } else {
+        root.style.removeProperty("--player-clearance");
+      }
+    };
+  }, []);
 
   // The Play/Pause state follows the media element itself so rail-chip seeks
   // and marker clicks (which autoplay) also flip the toggle label.
@@ -139,7 +187,11 @@ export function MediaTransport({
 
   if (!mediaUrl) {
     return (
-      <section className="media-transport media-transport--empty" aria-label="Recording playback">
+      <section
+        aria-label="Recording playback"
+        className="media-transport media-transport--empty"
+        ref={transportRef}
+      >
         <InlineNotice tone="info">
           {mediaDenialReason ?? "Media playback is unavailable for this recording."}
         </InlineNotice>
@@ -154,6 +206,11 @@ export function MediaTransport({
   function syncActiveSegment(currentTimeSeconds: number) {
     const match = segmentAtTime(segments, currentTimeSeconds);
     onActiveSegmentChange(match?.id ?? null);
+  }
+
+  function handleSeeking(event: SyntheticEvent<HTMLMediaElement>) {
+    syncActiveSegment(event.currentTarget.currentTime);
+    onMediaSeek?.();
   }
 
   function togglePlayback() {
@@ -185,7 +242,12 @@ export function MediaTransport({
   }
 
   return (
-    <section className="media-transport" aria-label="Recording playback" role="group">
+    <section
+      aria-label="Recording playback"
+      className="media-transport"
+      ref={transportRef}
+      role="group"
+    >
       <div className="media-transport__controls">
         {mediaKind === "audio" && mediaUrl ? (
           <WaveScrubber
@@ -201,6 +263,7 @@ export function MediaTransport({
         {mediaKind === "video" ? (
           <video
             controls
+            onSeeking={handleSeeking}
             onTimeUpdate={(event) => syncActiveSegment(event.currentTarget.currentTime)}
             ref={attachMedia}
             src={mediaUrl}
@@ -208,6 +271,7 @@ export function MediaTransport({
         ) : (
           <audio
             controls={nativeControls || undefined}
+            onSeeking={handleSeeking}
             onTimeUpdate={(event) => syncActiveSegment(event.currentTarget.currentTime)}
             preload="metadata"
             ref={attachMedia}

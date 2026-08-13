@@ -3,11 +3,17 @@ import type { TranscriptSegment } from "@/domain/models";
 import { listSpeakers } from "@/domain/speakers";
 import { formatSegmentWindow } from "@/lib/format";
 import { InlineNotice } from "@/components/ui/inline-notice";
+import {
+  FOLLOW_SCROLL_PAUSE_KEYS,
+  decideFollowScroll,
+  isRowInScrollView,
+} from "./follow-scroll";
 
 type TranscriptDocumentProps = {
   activeSegmentId: string | null;
   editable: boolean;
   phoneSafetyMode: boolean;
+  followResumeNonce?: number;
   /** True when phone safety (not permissions or history) removed the editors. */
   safetyStripped?: boolean;
   summary: string;
@@ -40,9 +46,19 @@ type TranscriptDocumentProps = {
   reviewFocus?: { segmentId: string; nonce: number } | null;
 };
 
+const FOLLOW_SCROLL_IGNORED_TARGETS =
+  ".media-transport__rail, input, textarea, select, [contenteditable], [role='slider']";
+
+function isFollowScrollIgnoredTarget(target: EventTarget | null): boolean {
+  return (
+    target instanceof Element && target.closest(FOLLOW_SCROLL_IGNORED_TARGETS) !== null
+  );
+}
+
 export function TranscriptDocument({
   activeSegmentId,
   editable,
+  followResumeNonce = 0,
   phoneSafetyMode,
   summary,
   segments,
@@ -65,35 +81,48 @@ export function TranscriptDocument({
   // `safetyStripped` when editing would otherwise be possible - permission-
   // or history-based read-only states keep their own, separate story.
   const segmentsRef = useRef<HTMLDivElement>(null);
+  // Non-fighting playback follow (player-pinned-center): a user scroll
+  // gesture pauses follow; follow re-engages when the active line is visible
+  // in the scrollport again, or on any explicit seek.
+  const followPausedRef = useRef(false);
 
-  // Playback follow: keep the active segment visible inside the nearest
-  // scrollport (the bounded .casefile-main scrollport on desktop, the window
-  // elsewhere). The segments list itself is never a scroller - the bounded
-  // shell keeps .casefile-main as the single scrollport.
+  // Pause follow on user scroll gestures: wheel, touch drag, or page-scroll
+  // keys pressed outside editors/sliders (keyboard editing never pauses).
+  // Programmatic scrolls never fire these events, so follow-scrolls cannot
+  // pause themselves.
   useEffect(() => {
-    const container = segmentsRef.current;
-    if (!container || !activeSegmentId) {
-      return;
-    }
-    const row = container.querySelector<HTMLElement>("[data-active]");
-    if (!row) {
-      return;
-    }
-
-    const reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
-    row.scrollIntoView({
-      block: "nearest",
-      behavior: reducedMotion ? "auto" : "smooth",
-    });
-  }, [activeSegmentId]);
+    const pauseFollow = (event: Event) => {
+      if (isFollowScrollIgnoredTarget(event.target)) {
+        return;
+      }
+      followPausedRef.current = true;
+    };
+    const pauseFollowForScrollKey = (event: KeyboardEvent) => {
+      if (FOLLOW_SCROLL_PAUSE_KEYS.has(event.key)) {
+        pauseFollow(event);
+      }
+    };
+    window.addEventListener("wheel", pauseFollow, { capture: true, passive: true });
+    window.addEventListener("touchmove", pauseFollow, { capture: true, passive: true });
+    window.addEventListener("keydown", pauseFollowForScrollKey, true);
+    return () => {
+      window.removeEventListener("wheel", pauseFollow, true);
+      window.removeEventListener("touchmove", pauseFollow, true);
+      window.removeEventListener("keydown", pauseFollowForScrollKey, true);
+    };
+  }, []);
 
   // Rail/marker-initiated jump: bring the segment into view inside the
   // nearest scrollport (same single-scrollport model as playback follow),
-  // then focus its inline review affordance.
+  // then focus its inline review affordance. Declared BEFORE the playback
+  // follow effect so a locate re-engages follow before playback advances.
   useEffect(() => {
     if (!reviewFocus) {
       return;
     }
+    // An explicit locate (rail chip or wave marker) is a seek: it always
+    // re-engages playback follow.
+    followPausedRef.current = false;
     const container = segmentsRef.current;
     if (!container) {
       return;
@@ -107,7 +136,7 @@ export function TranscriptDocument({
 
     const reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
     row.scrollIntoView({
-      block: "nearest",
+      block: "center",
       behavior: reducedMotion ? "auto" : "smooth",
     });
 
@@ -117,8 +146,41 @@ export function TranscriptDocument({
       row.querySelector<HTMLElement>("[data-editor-key^='text:']") ??
       row.querySelector<HTMLElement>("[data-editor-key^='speaker:']") ??
       row.querySelector<HTMLElement>(".transcript-segment__timestamp");
-    affordance?.focus();
+    affordance?.focus({ preventScroll: true });
   }, [reviewFocus]);
+
+  useEffect(() => {
+    followPausedRef.current = false;
+  }, [followResumeNonce]);
+
+  // Playback follow: CENTER the active segment inside the nearest scrollport
+  // (the bounded .casefile-main scrollport on desktop, the window elsewhere)
+  // so roughly half a screen of context sits on both sides of the playing
+  // line. The segments list itself is never a scroller - the bounded shell
+  // keeps .casefile-main as the single scrollport. The pause contract is
+  // decided by follow-scroll.ts so the whole matrix stays unit-tested.
+  useEffect(() => {
+    const container = segmentsRef.current;
+    if (!container || !activeSegmentId) {
+      return;
+    }
+    const row = container.querySelector<HTMLElement>("[data-active]");
+    if (!row) {
+      return;
+    }
+
+    const decision = decideFollowScroll(followPausedRef.current, isRowInScrollView(row));
+    if (decision === "skip") {
+      return;
+    }
+    followPausedRef.current = false;
+
+    const reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    row.scrollIntoView({
+      block: "center",
+      behavior: reducedMotion ? "auto" : "smooth",
+    });
+  }, [activeSegmentId, followResumeNonce]);
 
   return (
     <section aria-label="Transcript document" className="transcript-document" data-testid="transcript-start">
@@ -199,7 +261,12 @@ export function TranscriptDocument({
                 }
                 aria-pressed={active ? activeSegmentPlaying : undefined}
                 className="transcript-segment__timestamp"
-                onClick={() => onSeek(segment)}
+                onClick={() => {
+                  // Explicit seek from the transcript: always re-engage
+                  // playback follow, then seek.
+                  followPausedRef.current = false;
+                  onSeek(segment);
+                }}
                 type="button"
               >
                 {windowLabel}

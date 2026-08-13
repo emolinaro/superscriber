@@ -7,6 +7,62 @@ import { StateActionBar } from "./state-action-bar";
 describe("StateActionBar", () => {
   afterEach(() => {
     cleanup();
+    vi.unstubAllGlobals();
+    document.documentElement.style.removeProperty("--action-bar-clearance");
+  });
+
+  it("publishes the rendered action bar height as bottom clearance", () => {
+    let resizeCallback: ResizeObserverCallback = () => undefined;
+    const observe = vi.fn();
+    vi.stubGlobal(
+      "ResizeObserver",
+      class {
+        constructor(callback: ResizeObserverCallback) {
+          resizeCallback = callback;
+        }
+
+        observe = observe;
+        disconnect = vi.fn();
+        unobserve = vi.fn();
+      },
+    );
+
+    const { container } = render(
+      <div className="casefile-page">
+        <StateActionBar
+          assignmentLabel="Assigned reviewer"
+          canApprove={false}
+          canExport={false}
+          canReopen={false}
+          canRequestChanges={false}
+          canSave
+          canSubmit
+          canWithdraw={false}
+          dirty={false}
+          onApprove={vi.fn()}
+          onExport={vi.fn()}
+          onReopen={vi.fn()}
+          onRequestChanges={vi.fn()}
+          onSave={vi.fn()}
+          onSubmit={vi.fn()}
+          onWithdraw={vi.fn()}
+          phoneSafetyMode={false}
+          saving={false}
+          stageLabel="Draft review"
+        />
+      </div>,
+    );
+
+    const page = container.querySelector<HTMLElement>(".casefile-page")!;
+    const actionBar = container.querySelector<HTMLElement>(".casefile-action-bar")!;
+    actionBar.getBoundingClientRect = () => ({ height: 96 } as DOMRect);
+    resizeCallback([], {} as ResizeObserver);
+
+    expect(observe).toHaveBeenCalledWith(actionBar);
+    expect(page.style.getPropertyValue("--action-bar-clearance")).toBe("96px");
+    expect(
+      document.documentElement.style.getPropertyValue("--action-bar-clearance"),
+    ).toBe("96px");
   });
 
   it("enables save only while dirty and submit only when allowed", () => {

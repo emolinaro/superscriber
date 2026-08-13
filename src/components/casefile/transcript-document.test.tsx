@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 
 import userEvent from "@testing-library/user-event";
-import { cleanup, render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { baseSegments } from "./test-fixtures";
 import { TranscriptDocument } from "./transcript-document";
@@ -28,6 +28,7 @@ describe("TranscriptDocument", () => {
 
   afterEach(() => {
     cleanup();
+    vi.restoreAllMocks();
   });
 
   it("renders aligned transcript labels, active row state, and confidence text", () => {
@@ -193,7 +194,7 @@ describe("TranscriptDocument", () => {
     ).toBeNull();
   });
 
-  it("scrolls the active row into the nearest scrollport as playback advances", () => {
+  it("centers the active row in the scrollport as playback advances", () => {
     const { rerender } = render(
       <TranscriptDocument
         activeSegmentId={null}
@@ -226,7 +227,7 @@ describe("TranscriptDocument", () => {
 
     expect(scrollIntoViewMock).toHaveBeenCalledTimes(1);
     expect(scrollIntoViewMock).toHaveBeenCalledWith({
-      block: "nearest",
+      block: "center",
       behavior: "smooth",
     });
   });
@@ -248,8 +249,264 @@ describe("TranscriptDocument", () => {
     );
 
     expect(scrollIntoViewMock).toHaveBeenCalledWith({
-      block: "nearest",
+      block: "center",
       behavior: "auto",
+    });
+  });
+
+  it("pauses follow after a user scroll gesture and resumes when the active line is back in view", () => {
+    // jsdom reports zero geometry, so a row reads as out of view unless the
+    // rect is stubbed - exactly what the pause contract needs for this test.
+    const { rerender } = render(
+      <TranscriptDocument
+        activeSegmentId="seg-1"
+        editable={false}
+        onSeek={vi.fn()}
+        onUpdateSpeaker={vi.fn()}
+        onUpdateText={vi.fn()}
+        phoneSafetyMode={false}
+        segments={baseSegments}
+        summary="Ready for review."
+        onSummaryChange={vi.fn()}
+      />,
+    );
+    expect(scrollIntoViewMock).toHaveBeenCalledTimes(1);
+    scrollIntoViewMock.mockClear();
+
+    // A wheel gesture anywhere outside the transport rail is a manual
+    // transcript scroll: follow pauses.
+    fireEvent(window, new Event("wheel"));
+    rerender(
+      <TranscriptDocument
+        activeSegmentId="seg-2"
+        editable={false}
+        onSeek={vi.fn()}
+        onUpdateSpeaker={vi.fn()}
+        onUpdateText={vi.fn()}
+        phoneSafetyMode={false}
+        segments={baseSegments}
+        summary="Ready for review."
+        onSummaryChange={vi.fn()}
+      />,
+    );
+    expect(scrollIntoViewMock).not.toHaveBeenCalled();
+
+    // When the active line intersects the scrollport again, follow
+    // re-engages and centers it. The coming active row is segment 1, so
+    // give that row a rect that visibly intersects the window viewport.
+    const row = screen.getByRole("article", { name: /Transcript segment 1,/ });
+    const zeroRect = row.getBoundingClientRect();
+    row.getBoundingClientRect = () =>
+      ({ ...zeroRect, top: 120, bottom: 180, height: 60, y: 120 }) as DOMRect;
+    rerender(
+      <TranscriptDocument
+        activeSegmentId="seg-1"
+        editable={false}
+        onSeek={vi.fn()}
+        onUpdateSpeaker={vi.fn()}
+        onUpdateText={vi.fn()}
+        phoneSafetyMode={false}
+        segments={baseSegments}
+        summary="Ready for review."
+        onSummaryChange={vi.fn()}
+      />,
+    );
+    expect(scrollIntoViewMock).toHaveBeenCalledTimes(1);
+    expect(scrollIntoViewMock).toHaveBeenCalledWith({
+      block: "center",
+      behavior: "smooth",
+    });
+  });
+
+  it("ignores pause gestures inside the horizontal segment rail", () => {
+    function RailHarness() {
+      return (
+        <div className="media-transport__rail">
+          <TranscriptDocument
+            activeSegmentId="seg-1"
+            editable={false}
+            onSeek={vi.fn()}
+            onUpdateSpeaker={vi.fn()}
+            onUpdateText={vi.fn()}
+            phoneSafetyMode={false}
+            segments={baseSegments}
+            summary="Ready for review."
+            onSummaryChange={vi.fn()}
+          />
+        </div>
+      );
+    }
+    const { rerender } = render(<RailHarness />);
+    scrollIntoViewMock.mockClear();
+
+    const rail = document.querySelector(".media-transport__rail")!;
+    fireEvent(rail, new Event("wheel", { bubbles: true }));
+    fireEvent.touchMove(rail);
+    fireEvent.keyDown(rail, { key: "PageDown" });
+    rerender(
+      <div className="media-transport__rail">
+        <TranscriptDocument
+          activeSegmentId="seg-2"
+          editable={false}
+          onSeek={vi.fn()}
+          onUpdateSpeaker={vi.fn()}
+          onUpdateText={vi.fn()}
+          phoneSafetyMode={false}
+          segments={baseSegments}
+          summary="Ready for review."
+          onSummaryChange={vi.fn()}
+        />
+      </div>,
+    );
+    expect(scrollIntoViewMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("ignores pause gestures inside editors and sliders", () => {
+    function EditorHarness({ activeSegmentId }: { activeSegmentId: string }) {
+      return (
+        <>
+          <div aria-label="Playback scrubber" role="slider" tabIndex={0} />
+          <TranscriptDocument
+            activeSegmentId={activeSegmentId}
+            editable
+            onSeek={vi.fn()}
+            onUpdateSpeaker={vi.fn()}
+            onUpdateText={vi.fn()}
+            phoneSafetyMode={false}
+            segments={baseSegments}
+            summary="Ready for review."
+            onSummaryChange={vi.fn()}
+          />
+        </>
+      );
+    }
+
+    const { rerender } = render(<EditorHarness activeSegmentId="seg-1" />);
+    scrollIntoViewMock.mockClear();
+
+    fireEvent.wheel(
+      screen.getByRole("textbox", { name: "Transcript for segment 1, 00:00-00:10" }),
+    );
+    fireEvent.touchMove(screen.getByRole("slider", { name: "Playback scrubber" }));
+    fireEvent.keyDown(
+      screen.getByRole("textbox", { name: "Speaker for segment 1, 00:00-00:10" }),
+      { key: "PageDown" },
+    );
+    rerender(<EditorHarness activeSegmentId="seg-2" />);
+
+    expect(scrollIntoViewMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("captures page-scroll keys before descendants stop propagation", () => {
+    function CaptureHarness({ activeSegmentId }: { activeSegmentId: string }) {
+      return (
+        <div onKeyDown={(event) => event.stopPropagation()}>
+          <button type="button">Manual page scroll</button>
+          <TranscriptDocument
+            activeSegmentId={activeSegmentId}
+            editable={false}
+            onSeek={vi.fn()}
+            onUpdateSpeaker={vi.fn()}
+            onUpdateText={vi.fn()}
+            phoneSafetyMode={false}
+            segments={baseSegments}
+            summary="Ready for review."
+            onSummaryChange={vi.fn()}
+          />
+        </div>
+      );
+    }
+
+    const { rerender } = render(<CaptureHarness activeSegmentId="seg-1" />);
+    scrollIntoViewMock.mockClear();
+
+    fireEvent.keyDown(screen.getByRole("button", { name: "Manual page scroll" }), {
+      key: "PageDown",
+    });
+    rerender(<CaptureHarness activeSegmentId="seg-2" />);
+
+    expect(scrollIntoViewMock).not.toHaveBeenCalled();
+  });
+
+  it("re-engages follow immediately on an explicit timestamp seek", async () => {
+    const user = userEvent.setup();
+    const onSeek = vi.fn();
+    const { rerender } = render(
+      <TranscriptDocument
+        activeSegmentId="seg-1"
+        editable={false}
+        onSeek={onSeek}
+        onUpdateSpeaker={vi.fn()}
+        onUpdateText={vi.fn()}
+        phoneSafetyMode={false}
+        segments={baseSegments}
+        summary="Ready for review."
+        onSummaryChange={vi.fn()}
+      />,
+    );
+    scrollIntoViewMock.mockClear();
+
+    fireEvent(window, new Event("wheel"));
+    await user.click(screen.getByRole("button", { name: "Play from 00:10-00:20" }));
+    expect(onSeek).toHaveBeenCalledWith(
+      expect.objectContaining({ id: "seg-2", startMs: 10_000 }),
+    );
+
+    rerender(
+      <TranscriptDocument
+        activeSegmentId="seg-2"
+        editable={false}
+        onSeek={onSeek}
+        onUpdateSpeaker={vi.fn()}
+        onUpdateText={vi.fn()}
+        phoneSafetyMode={false}
+        segments={baseSegments}
+        summary="Ready for review."
+        onSummaryChange={vi.fn()}
+      />,
+    );
+    expect(scrollIntoViewMock).toHaveBeenCalledWith({
+      block: "center",
+      behavior: "smooth",
+    });
+  });
+
+  it("re-engages paused follow after a shared media seek", () => {
+    const { rerender } = render(
+      <TranscriptDocument
+        activeSegmentId="seg-1"
+        editable={false}
+        followResumeNonce={0}
+        onSeek={vi.fn()}
+        onUpdateSpeaker={vi.fn()}
+        onUpdateText={vi.fn()}
+        phoneSafetyMode={false}
+        segments={baseSegments}
+        summary="Ready for review."
+        onSummaryChange={vi.fn()}
+      />,
+    );
+    scrollIntoViewMock.mockClear();
+
+    fireEvent(window, new Event("wheel"));
+    rerender(
+      <TranscriptDocument
+        activeSegmentId="seg-1"
+        editable={false}
+        followResumeNonce={1}
+        onSeek={vi.fn()}
+        onUpdateSpeaker={vi.fn()}
+        onUpdateText={vi.fn()}
+        phoneSafetyMode={false}
+        segments={baseSegments}
+        summary="Ready for review."
+        onSummaryChange={vi.fn()}
+      />,
+    );
+
+    expect(scrollIntoViewMock).toHaveBeenCalledWith({
+      block: "center",
+      behavior: "smooth",
     });
   });
 
@@ -277,11 +534,12 @@ describe("TranscriptDocument", () => {
     expect(second.querySelector(".transcript-segment__diff-flag")).toBeNull();
   });
 
-  it("scrolls and focuses the located segment's review affordance on review focus", () => {
+  it("centers repeat locates and focuses the segment review affordance", () => {
     reducedMotion = true;
-    render(
+    const focusSpy = vi.spyOn(HTMLElement.prototype, "focus");
+    const { rerender } = render(
       <TranscriptDocument
-        activeSegmentId={null}
+        activeSegmentId="seg-2"
         editable
         onSeek={vi.fn()}
         onUpdateSpeaker={vi.fn()}
@@ -295,12 +553,39 @@ describe("TranscriptDocument", () => {
     );
 
     expect(scrollIntoViewMock).toHaveBeenCalledWith({
-      block: "nearest",
+      block: "center",
       behavior: "auto",
     });
     expect(
       screen.getByRole("textbox", { name: "Transcript for segment 2, 00:10-00:20" }),
     ).toHaveFocus();
+    expect(focusSpy).toHaveBeenCalledWith({ preventScroll: true });
+
+    scrollIntoViewMock.mockClear();
+    rerender(
+      <TranscriptDocument
+        activeSegmentId="seg-2"
+        editable
+        onSeek={vi.fn()}
+        onUpdateSpeaker={vi.fn()}
+        onUpdateText={vi.fn()}
+        phoneSafetyMode={false}
+        reviewFocus={{ segmentId: "seg-2", nonce: 2 }}
+        segments={baseSegments}
+        summary="Ready for review."
+        onSummaryChange={vi.fn()}
+      />,
+    );
+
+    expect(scrollIntoViewMock).toHaveBeenCalledTimes(1);
+    expect(scrollIntoViewMock).toHaveBeenCalledWith({
+      block: "center",
+      behavior: "auto",
+    });
+    expect(
+      screen.getByRole("textbox", { name: "Transcript for segment 2, 00:10-00:20" }),
+    ).toHaveFocus();
+    expect(focusSpy).toHaveBeenLastCalledWith({ preventScroll: true });
   });
 
   it("flags segments edited versus the parent revision (demo-governance-bringback)", () => {
