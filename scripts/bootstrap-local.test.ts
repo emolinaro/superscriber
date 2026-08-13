@@ -253,6 +253,7 @@ describe("local deployment bootstrap scripts", () => {
     ["not-a-port", "port must be a number"],
     ["80", "port 80 is outside 1024-65535"],
     ["08080", "port must not contain leading zeros"],
+    ["18446744073709554616", "port must be at most five digits"],
   ])(
     "rejects invalid port %s before creating instance state",
     (port, expectedError) => {

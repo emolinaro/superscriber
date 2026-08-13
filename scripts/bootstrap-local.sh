@@ -208,6 +208,7 @@ resolve_instance_root() {
 validate_port_value() {
   case "${PORT}" in
     ''|*[!0-9]*) fail "port must be a number, got '${PORT}'" ;;
+    ??????*) fail "port must be at most five digits, got '${PORT}'" ;;
     0[0-9]*) fail "port must not contain leading zeros, got '${PORT}'" ;;
   esac
   [[ "${PORT}" -ge 1024 && "${PORT}" -le 65535 ]] || fail "port ${PORT} is outside 1024-65535"
