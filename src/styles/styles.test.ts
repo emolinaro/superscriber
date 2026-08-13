@@ -213,11 +213,8 @@ describe("product css contract", () => {
   it("centers the file-input chooser row with symmetric block padding", () => {
     const base = readFileSync(resolve(STYLES_DIR, "base.css"), "utf8");
 
-    // The native chooser row is ~24px tall inside the shared 44px control
-    // target, and Chrome/WebKit top-align the shadow content, leaving the
-    // slack below the row (host flex/grid alignment cannot reach it). The
-    // shared rule absorbs the slack with symmetric block padding:
-    // (44px - 2px border - ~24px native row) / 2 = 9px.
+    // base.css owns the browser-layout rationale; this test pins the accepted
+    // shared-rule contract.
     const rule = base.match(/input\[type="file"\]\s*\{([^}]*)\}/);
     expect(rule?.[1]).toContain("padding-block: 9px");
   });
