@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 
-import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { cleanup, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { BootstrapFormState } from "@/lib/auth-forms";
@@ -158,14 +158,10 @@ describe("BootstrapSetupForm", () => {
     const submit = screen.getByRole("button", { name: "Create admin" });
     expect(submit).toBeDisabled();
 
-    // Enter-key submits bypass the disabled button; the client match check holds.
-    const form = confirmInput.closest("form");
-    if (!form) {
-      throw new Error("Expected the bootstrap form to render.");
-    }
-    await act(async () => {
-      fireEvent.submit(form);
-    });
+    // A real Enter key from another single-line field must still surface the
+    // submit-attempt summary and move focus to the confirmation field even
+    // though the submit button is disabled during a live mismatch.
+    await user.type(screen.getByLabelText("Administrator email"), "{Enter}");
     const summary = screen.getByRole("alert", { name: "There is a problem" });
     expect(
       within(summary).getByText("Confirm password - Passwords must match."),

@@ -193,10 +193,21 @@ export function BootstrapSetupForm({
         action={formAction}
         className="form-grid auth-form"
         noValidate
+        onKeyDown={(event) => {
+          if (
+            event.key === "Enter" &&
+            event.target instanceof HTMLInputElement &&
+            passwordsMismatch
+          ) {
+            event.preventDefault();
+            setSubmittedConfirmPasswordError(PASSWORD_MISMATCH_MESSAGE);
+            confirmPasswordRef.current?.focus();
+          }
+        }}
         onSubmit={(event) => {
-          // Enter-key submits bypass the disabled button; the match check must
-          // hold there too. The confirmation never leaves the client unless it
-          // matches, and the server still re-checks the match.
+          // Direct form submissions must hold the same match guard. The
+          // confirmation never leaves the client unless it matches, and the
+          // server still re-checks the match.
           const submittedError =
             credentials.confirmPassword.length === 0
               ? CONFIRM_PASSWORD_REQUIRED_MESSAGE

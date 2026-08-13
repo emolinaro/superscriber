@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 
-import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { cleanup, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { CommandResult } from "@/lib/command-result";
@@ -290,14 +290,10 @@ describe("AccountsSection", () => {
     const submitButton = within(dialog).getByRole("button", { name: "Create local account" });
     expect(submitButton).toBeDisabled();
 
-    // Enter-key submits bypass the disabled button; the schema match check holds.
-    const form = confirmInput.closest("form");
-    if (!form) {
-      throw new Error("Expected the dialog form to render.");
-    }
-    await act(async () => {
-      fireEvent.submit(form);
-    });
+    // A real Enter key from another single-line field must still surface the
+    // submit-attempt summary and move focus to the confirmation field even
+    // though the submit button is disabled during a live mismatch.
+    await user.type(within(dialog).getByLabelText("Email"), "{Enter}");
     expect(createUserAction).not.toHaveBeenCalled();
     const summary = within(dialog).getByRole("alert", { name: "There is a problem" });
     expect(

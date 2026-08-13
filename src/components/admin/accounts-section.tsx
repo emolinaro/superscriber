@@ -747,7 +747,25 @@ export function AccountsSection({
       >
         <ErrorSummary errors={summaryErrors} />
 
-        <form className="form-grid" noValidate onSubmit={(event) => void submitAccount(event)}>
+        <form
+          className="form-grid"
+          noValidate
+          onKeyDown={(event) => {
+            if (
+              event.key === "Enter" &&
+              event.target instanceof HTMLInputElement &&
+              passwordsMismatch
+            ) {
+              event.preventDefault();
+              setFieldErrors((current) => ({
+                ...current,
+                confirmPassword: PASSWORD_MISMATCH_MESSAGE,
+              }));
+              confirmPasswordRef.current?.focus();
+            }
+          }}
+          onSubmit={(event) => void submitAccount(event)}
+        >
           <div className="field">
             <label className="field-label" htmlFor={FIELD_CONFIG.displayName.id}>
               Name

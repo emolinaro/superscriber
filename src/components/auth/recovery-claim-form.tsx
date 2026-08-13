@@ -151,9 +151,19 @@ export function RecoveryClaimForm({
         action={formAction}
         className="form-grid auth-form"
         noValidate
+        onKeyDown={(event) => {
+          if (
+            event.key === "Enter" &&
+            event.target instanceof HTMLInputElement &&
+            passwordsMismatch
+          ) {
+            event.preventDefault();
+            setSubmittedConfirmPasswordError(PASSWORD_MISMATCH_MESSAGE);
+            confirmPasswordRef.current?.focus();
+          }
+        }}
         onSubmit={(event) => {
-          // Enter-key submits bypass the disabled button; the match check must
-          // hold there too.
+          // Direct form submissions must hold the same match guard.
           const submittedError =
             credentials.confirmPassword.length === 0
               ? CONFIRM_PASSWORD_REQUIRED_MESSAGE

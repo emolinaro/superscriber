@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 
-import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { cleanup, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { RecoveryClaimFormState } from "@/lib/auth-forms";
@@ -145,13 +145,7 @@ describe("RecoveryClaimForm", () => {
     const submit = screen.getByRole("button", { name: "Claim administrator" });
     expect(submit).toBeDisabled();
 
-    const form = confirmInput.closest("form");
-    if (!form) {
-      throw new Error("Expected the claim form to render.");
-    }
-    await act(async () => {
-      fireEvent.submit(form);
-    });
+    await user.type(screen.getByLabelText("Administrator email"), "{Enter}");
     const summary = screen.getByRole("alert", { name: "There is a problem" });
     expect(
       within(summary).getByText("Confirm password - Passwords must match."),
