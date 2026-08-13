@@ -61,7 +61,8 @@ require_instance_marker() {
 reject_managed_instance_symlinks() {
   local root="$1" relative path found child target
   for relative in \
-    "${INSTANCE_MARKER_NAME}" app.env rollback.env instance.log \
+    "${INSTANCE_MARKER_NAME}" app.env rollback.env activation.pending \
+    activation.previous activation.candidate instance.log \
     data data/media data/uploads model-cache logs pids secrets venv build; do
     path="${root}/${relative}"
     if [[ -L "${path}" ]]; then
@@ -188,8 +189,9 @@ supervisor_lock_is_active() {
 }
 
 reclaim_slot_is_owned() {
-  local lock_dir="$1" expected="$2" current pid token started
-  current="$(cat "${lock_dir}.reclaim/identity" 2>/dev/null || true)"
+  local lock_dir="$1" expected="$2" current pid token started identity_file
+  identity_file="$(reclaim_identity_file "${lock_dir}.reclaim")"
+  current="$(cat "${identity_file}" 2>/dev/null || true)"
   [[ "${current}" == "${expected}" ]] || return 1
   read -r pid token started <<< "${current}"
   [[ "${pid}" =~ ^[0-9]+$ && "${token}" =~ ^[0-9a-f]{48}$ && "${started}" =~ ^[0-9]+-[0-9]+$ ]] || return 1
@@ -207,34 +209,32 @@ release_reclaim_slot() {
 }
 
 acquire_reclaim_slot() {
-  local lock_dir="$1" slot attempts=0 token started identity identity_tmp
-  local observed age stale moved
+  local lock_dir="$1" slot attempts=0 token started identity private identity_file
+  local observed age stale moved moved_identity_file
   slot="${lock_dir}.reclaim"
   while [[ "${attempts}" -lt 20 ]]; do
-    if mkdir "${slot}" 2>/dev/null; then
-      token="$(instance_random_token)"
-      started="$(process_start_fingerprint "$$")" || {
-        rmdir "${slot}" 2>/dev/null || true
-        return 1
-      }
-      identity="$$ ${token} ${started}"
-      identity_tmp="${slot}/identity.tmp.$$"
-      printf '%s\n' "${identity}" > "${identity_tmp}"
-      mv "${identity_tmp}" "${slot}/identity"
+    token="$(instance_random_token)"
+    started="$(process_start_fingerprint "$$")" || return 1
+    identity="$$ ${token} ${started}"
+    private="${slot}.pending.$$.$token"
+    [[ ! -e "${private}" && ! -L "${private}" ]] || return 1
+    mkdir "${private}"
+    printf '%s\n' "${identity}" > "${private}/identity"
+    chmod 600 "${private}/identity"
+    if ln "${private}/identity" "${slot}" 2>/dev/null; then
+      rm -rf -- "${private}"
       printf '%s\n' "${identity}"
       return 0
     fi
+    rm -rf -- "${private}"
 
     if [[ -L "${slot}" ]]; then
       printf 'lock reclaim path must not be a symlink: %s\n' "${slot}" >&2
       return 1
     fi
-    observed="$(cat "${slot}/identity" 2>/dev/null || true)"
-    if [[ -n "${observed}" ]] && ! read_process_lock_identity_file "${slot}/identity" >/dev/null; then
-      printf 'lock reclaim path has invalid ownership metadata: %s\n' "${slot}" >&2
-      return 1
-    fi
-    if process_lock_identity_is_active_file "${slot}/identity"; then
+    identity_file="$(reclaim_identity_file "${slot}")"
+    observed="$(cat "${identity_file}" 2>/dev/null || true)"
+    if process_lock_identity_is_active_file "${identity_file}"; then
       return 1
     fi
     age="$(path_age_ms "${slot}" 2>/dev/null || echo 0)"
@@ -244,9 +244,10 @@ acquire_reclaim_slot() {
 
     stale="${slot}.stale.$$.$RANDOM"
     if mv "${slot}" "${stale}" 2>/dev/null; then
-      moved="$(cat "${stale}/identity" 2>/dev/null || true)"
+      moved_identity_file="$(reclaim_identity_file "${stale}")"
+      moved="$(cat "${moved_identity_file}" 2>/dev/null || true)"
       if [[ "${moved}" == "${observed}" ]] && \
-         ! process_lock_identity_is_active_file "${stale}/identity"; then
+         ! process_lock_identity_is_active_file "${moved_identity_file}"; then
         rm -rf -- "${stale}"
       elif [[ ! -e "${slot}" && ! -L "${slot}" ]]; then
         mv "${stale}" "${slot}" 2>/dev/null || true
@@ -256,6 +257,14 @@ acquire_reclaim_slot() {
     sleep 0.05
   done
   return 1
+}
+
+reclaim_identity_file() {
+  if [[ -d "$1" && ! -L "$1" ]]; then
+    printf '%s/identity\n' "$1"
+  else
+    printf '%s\n' "$1"
+  fi
 }
 
 lock_reclaim_is_blocking() {

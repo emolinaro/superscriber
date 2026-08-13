@@ -2,6 +2,7 @@ import {
   createReadStream,
   createWriteStream,
   existsSync,
+  linkSync,
   lstatSync,
   mkdirSync,
   readFileSync,
@@ -110,7 +111,14 @@ function reclaimPath(root: string) {
 }
 
 function reclaimOwnerPath(root: string) {
-  return join(reclaimPath(root), LOCK_OWNER_FILE_NAME);
+  const path = reclaimPath(root);
+  try {
+    return lstatSync(path).isDirectory()
+      ? join(path, LOCK_OWNER_FILE_NAME)
+      : path;
+  } catch {
+    return path;
+  }
 }
 
 function processStartIdentity(pid: number) {
@@ -244,7 +252,6 @@ function staleReclaimSlotCanBeMoved(root: string) {
   const owner = readReclaimOwner(root);
   if (owner && processOwnsLock(owner)) return false;
   try {
-    if (!owner && existsSync(reclaimOwnerPath(root))) return false;
     return Date.now() - statSync(path).mtimeMs >= LOCK_INITIALIZATION_GRACE_MS;
   } catch {
     return true;
@@ -263,7 +270,9 @@ function moveStaleReclaimSlot(root: string) {
     throw error;
   }
 
-  const movedOwnerPath = join(stalePath, LOCK_OWNER_FILE_NAME);
+  const movedOwnerPath = lstatSync(stalePath).isDirectory()
+    ? join(stalePath, LOCK_OWNER_FILE_NAME)
+    : stalePath;
   const moved = pathGenerationSnapshot(movedOwnerPath);
   const movedOwner = readOwnerFile(movedOwnerPath);
   if (moved === observed && (!movedOwner || !processOwnsLock(movedOwner))) {
@@ -281,29 +290,32 @@ function moveStaleReclaimSlot(root: string) {
 function acquireReclaimSlot(root: string, tierId: string) {
   const path = reclaimPath(root);
   for (let attempt = 0; attempt < 5; attempt += 1) {
-    let created = false;
+    const processStart = processStartIdentity(process.pid);
+    if (!processStart) throw new Error("could not identify the reclaim process");
+    const owner: ProvisioningLockOwner = {
+      pid: process.pid,
+      processStart,
+      tierId,
+      token: randomBytes(24).toString("hex"),
+      createdAt: new Date().toISOString(),
+    };
+    const privatePath = `${path}.pending.${owner.pid}.${owner.token}`;
+    const privateOwnerPath = join(privatePath, LOCK_OWNER_FILE_NAME);
     try {
       if (pathIsSymbolicLink(path)) {
         throw new Error(`Provisioning reclaim path is a symlink: ${path}`);
       }
-      mkdirSync(path, { mode: 0o700 });
-      created = true;
-      const processStart = processStartIdentity(process.pid);
-      if (!processStart) throw new Error("could not identify the reclaim process");
-      const owner: ProvisioningLockOwner = {
-        pid: process.pid,
-        processStart,
-        tierId,
-        token: randomBytes(24).toString("hex"),
-        createdAt: new Date().toISOString(),
-      };
-      writeFileSync(reclaimOwnerPath(root), JSON.stringify(owner), {
+      mkdirSync(privatePath, { mode: 0o700 });
+      writeFileSync(privateOwnerPath, JSON.stringify(owner), {
         encoding: "utf8",
         mode: 0o600,
+        flag: "wx",
       });
+      linkSync(privateOwnerPath, path);
+      rmSync(privatePath, { recursive: true, force: true });
       return owner;
     } catch (error) {
-      if (created) rmSync(path, { recursive: true, force: true });
+      rmSync(privatePath, { recursive: true, force: true });
       if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
       const owner = readReclaimOwner(root);
       if (owner && processOwnsLock(owner)) return null;

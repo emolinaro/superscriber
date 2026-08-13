@@ -7,6 +7,7 @@ import {
   rmSync,
   symlinkSync,
   truncateSync,
+  utimesSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
@@ -507,6 +508,23 @@ describe("model provisioning service (model-tier-provisioning)", () => {
       expect((error as ProvisioningError).code).toBe("download_in_progress");
     }
     expect(existsSync(reclaim)).toBe(true);
+  });
+
+  it("recovers an aged reclaim slot with malformed ownership metadata", async () => {
+    const reclaim = join(modelRoot, ".provisioning.lock.reclaim");
+    mkdirSync(reclaim);
+    writeFileSync(join(reclaim, "owner.json"), "incomplete");
+    const staleTime = new Date(Date.now() - 10_000);
+    utimesSync(reclaim, staleTime, staleTime);
+
+    startTierDownload("tiny", {
+      transportFor: () => fakeTransport(),
+      probeDiskSpace: unlimitedDisk,
+    });
+    await waitForTierDownload("tiny");
+
+    expect(isModelProvisioned("tiny")).toBe(true);
+    expect(existsSync(reclaim)).toBe(false);
   });
 
   it("serializes downloads with a 409 while another tier is in flight", async () => {

@@ -5,6 +5,7 @@
 
 import {
   chmodSync,
+  cpSync,
   existsSync,
   mkdirSync,
   mkdtempSync,
@@ -13,6 +14,7 @@ import {
   rmSync,
   statSync,
   symlinkSync,
+  utimesSync,
   writeFileSync,
 } from "node:fs";
 import { spawn, spawnSync, type ChildProcess } from "node:child_process";
@@ -391,6 +393,7 @@ describe("local deployment bootstrap scripts", () => {
 
   it(
     "accepts the interpreter symlinks created by a standard Python venv",
+    { timeout: 15_000 },
     () => {
       testRoot = worktreeTestRoot();
       const instance = join(testRoot, "instance");
@@ -417,6 +420,31 @@ describe("local deployment bootstrap scripts", () => {
       expect(result.status, result.stderr).toBe(0);
     },
   );
+
+  it("recovers an aged malformed reclaim owner", () => {
+    testRoot = worktreeTestRoot();
+    const lock = join(testRoot, "resource.lock");
+    const reclaim = `${lock}.reclaim`;
+    mkdirSync(reclaim);
+    writeFileSync(join(reclaim, "identity"), "incomplete");
+    const staleTime = new Date(Date.now() - 10_000);
+    utimesSync(reclaim, staleTime, staleTime);
+
+    const result = spawnSync(
+      "bash",
+      [
+        "-c",
+        '. "$1"; claim="$(acquire_reclaim_slot "$2")"; reclaim_slot_is_owned "$2" "$claim"; release_reclaim_slot "$2" "$claim"',
+        "bash",
+        INSTANCE_PATHS,
+        lock,
+      ],
+      { encoding: "utf8" },
+    );
+
+    expect(result.status, result.stderr).toBe(0);
+    expect(existsSync(reclaim)).toBe(false);
+  });
 
   it("instance-run refuses a foreign process on the instance port", async () => {
     testRoot = mkdtempSync(join(tmpdir(), "superscriber-bootstrap-test-"));
@@ -779,6 +807,38 @@ describe("local deployment bootstrap scripts", () => {
     },
   );
 
+  it(
+    "terminates an app signaled during role identity publication",
+    { timeout: 20_000 },
+    async () => {
+      testRoot = worktreeTestRoot();
+      const instance = join(testRoot, "instance");
+      const appServer = join(testRoot, "server.js");
+      const appPidFile = join(testRoot, "app.pid");
+      const workerPython = join(testRoot, "worker-python");
+      writeFileSync(
+        appServer,
+        `require("node:fs").writeFileSync(${JSON.stringify(appPidFile)},String(process.pid));setInterval(()=>{},30000)\n`,
+      );
+      writeFileSync(workerPython, "#!/bin/sh\nexec sleep 30\n");
+      chmodSync(workerPython, 0o700);
+      prepareRunnableInstance(instance, freePort(), appServer, workerPython, [
+        "SUPERSCRIBER_TEST_PAUSE_ROLE_IDENTITY=app",
+      ]);
+      runningInstances.add(instance);
+
+      const start = runScript(RUN, [instance]);
+      expect(start.status, start.stderr + start.stdout).toBe(0);
+      await waitForCondition(() => existsSync(appPidFile));
+      const appPid = Number(readFileSync(appPidFile, "utf8"));
+      expect(processIsRunning(appPid)).toBe(true);
+
+      const stop = runScript(STOP, [instance]);
+      expect(stop.status, stop.stderr + stop.stdout).toBe(0);
+      await waitForCondition(() => !processIsRunning(appPid));
+    },
+  );
+
   it("launches only a hash-verified active bundle", () => {
     testRoot = worktreeTestRoot();
     const instance = join(testRoot, "instance");
@@ -940,6 +1000,80 @@ describe("local deployment bootstrap scripts", () => {
   );
 
   it(
+    "recovers a persisted interrupted activation before the next build",
+    { timeout: 30_000 },
+    async () => {
+      testRoot = worktreeTestRoot();
+      const instance = join(testRoot, "instance");
+      const port = freePort();
+      const oldServer = join(testRoot, "old-server.js");
+      const oldWorker = join(testRoot, "old-worker");
+      writeFileSync(oldServer, "setInterval(()=>{},30000)\n");
+      writeFileSync(oldWorker, "#!/bin/sh\nexec sleep 30\n");
+      chmodSync(oldWorker, 0o700);
+      prepareRunnableInstance(instance, port, oldServer, oldWorker);
+      const previousEnv = readFileSync(join(instance, "app.env"), "utf8");
+      const previousId = activationIdFrom(instance);
+      const candidateId = `${"c".repeat(40)}-${"d".repeat(48)}`;
+      const previousBundle = join(instance, "build", previousId);
+      const candidateBundle = join(instance, "build", candidateId);
+      cpSync(previousBundle, candidateBundle, { recursive: true });
+      const candidateEnv = previousEnv
+        .replace(previousId, candidateId)
+        .replace(previousBundle, candidateBundle);
+      writeFileSync(join(instance, "activation.previous"), previousEnv);
+      writeFileSync(join(instance, "app.env"), candidateEnv);
+      const modelDir = join(instance, "model-cache", "medium");
+      mkdirSync(modelDir, { recursive: true });
+      writeModelTier(modelDir, "txt");
+      prepareBootstrapVenv(instance, true);
+      runningInstances.add(instance);
+      const candidateStart = runScript(RUN, [instance]);
+      expect(
+        candidateStart.status,
+        candidateStart.stderr + candidateStart.stdout,
+      ).toBe(0);
+      await waitForCondition(
+        () => runScript(RUN, [instance, "--status"]).status === 0,
+      );
+      writeFileSync(
+        join(instance, "activation.pending"),
+        [
+          "FORMAT=superscriber-activation-v1",
+          `CANDIDATE=${candidateId}`,
+          `PREVIOUS=${previousId}`,
+          "PREVIOUS_WAS_RUNNING=1",
+          "",
+        ].join("\n"),
+      );
+
+      const result = runScript(
+        BOOTSTRAP,
+        [
+          "--instance-root",
+          instance,
+          "--port",
+          port,
+          "--model-tier",
+          "medium",
+          "--skip-model-download",
+          "--skip-worker-deps",
+        ],
+        stubNpxEnv(testRoot),
+      );
+
+      expect(result.status).not.toBe(0);
+      expect(readFileSync(join(instance, "app.env"), "utf8")).toBe(previousEnv);
+      expect(existsSync(join(instance, "activation.pending"))).toBe(false);
+      expect(existsSync(join(instance, "activation.previous"))).toBe(false);
+      expect(existsSync(candidateBundle)).toBe(false);
+      await waitForCondition(
+        () => runScript(RUN, [instance, "--status"]).status === 0,
+      );
+    },
+  );
+
+  it(
     "reports a worker startup failure instead of app-only readiness",
     { timeout: 20_000 },
     async () => {
@@ -1066,6 +1200,13 @@ function healthyServerSource() {
     "r.writeHead(200,{'content-type':'application/json'});" +
     "r.end('{\"ok\":true}')}).listen(Number(process.env.PORT),'127.0.0.1')\n"
   );
+}
+
+function processIsRunning(pid: number) {
+  const result = spawnSync("ps", ["-p", String(pid), "-o", "stat="], {
+    encoding: "utf8",
+  });
+  return result.status === 0 && !result.stdout.includes("Z");
 }
 
 function worktreeTestRoot() {

@@ -200,6 +200,9 @@ prepare_runtime_files() {
   chmod 700 "${INSTANCE_ROOT}" "${LOG_DIR}" "${PID_DIR}"
   [[ ! -f "${INSTANCE_ROOT}/app.env" ]] || chmod 600 "${INSTANCE_ROOT}/app.env"
   [[ ! -f "${INSTANCE_ROOT}/rollback.env" ]] || chmod 600 "${INSTANCE_ROOT}/rollback.env"
+  [[ ! -f "${INSTANCE_ROOT}/activation.pending" ]] || chmod 600 "${INSTANCE_ROOT}/activation.pending"
+  [[ ! -f "${INSTANCE_ROOT}/activation.previous" ]] || chmod 600 "${INSTANCE_ROOT}/activation.previous"
+  [[ ! -f "${INSTANCE_ROOT}/activation.candidate" ]] || chmod 600 "${INSTANCE_ROOT}/activation.candidate"
   [[ ! -f "${INSTANCE_ROOT}/secrets/auth.secret" ]] || chmod 600 "${INSTANCE_ROOT}/secrets/auth.secret"
   [[ ! -f "${INSTANCE_ROOT}/secrets/engine.secret" ]] || chmod 600 "${INSTANCE_ROOT}/secrets/engine.secret"
   touch "${INSTANCE_LOG}" "${LOG_DIR}/supervisor.log" "${LOG_DIR}/app.log" "${LOG_DIR}/worker.log"
@@ -235,6 +238,12 @@ start_instance() {
     fi
     return 1
   fi
+  if [[ -e "${INSTANCE_ROOT}/activation.pending" || -L "${INSTANCE_ROOT}/activation.pending" ]]; then
+    valid_maintenance_authorization || {
+      echo "refusing to start an interrupted activation; re-run scripts/bootstrap-local.sh for ${INSTANCE_ROOT}" >&2
+      return 1
+    }
+  fi
   prepare_runtime_files
   while true; do
     if lock_reclaim_is_blocking "${LOCK_DIR}"; then
@@ -242,7 +251,7 @@ start_instance() {
       continue
     fi
     if mkdir "${LOCK_DIR}" 2>/dev/null; then
-      if [[ -d "${LOCK_DIR}.reclaim" || -L "${LOCK_DIR}.reclaim" ]]; then
+      if [[ -e "${LOCK_DIR}.reclaim" || -L "${LOCK_DIR}.reclaim" ]]; then
         rmdir "${LOCK_DIR}" 2>/dev/null || true
         sleep 0.05
         continue
@@ -414,6 +423,10 @@ write_role_identity() {
     : > "${test_marker}" || return 2
     return 2
   fi
+  if [[ "${SUPERSCRIBER_INSTANCE_TEST_MODE:-0}" == "1" && \
+        "${SUPERSCRIBER_TEST_PAUSE_ROLE_IDENTITY:-}" == "${role}" ]]; then
+    sleep 5
+  fi
   started="$(process_start_fingerprint "${pid}")" || return 3
   sleep 0.05
   command="$(process_command_fingerprint "${pid}")" || return 3
@@ -449,11 +462,22 @@ run_role() {
   trap - EXIT INT TERM
   local role="$1"
   shift
-  local log consecutive=0
+  local log consecutive=0 child_pid="" role_token=""
   if [[ "${role}" == "app" ]]; then log="${LOG_DIR}/app.log"; else log="${LOG_DIR}/worker.log"; fi
 
+  trap 'trap - INT TERM
+    if [[ -n "${child_pid}" ]]; then
+      kill "${child_pid}" 2>/dev/null || true
+      wait "${child_pid}" 2>/dev/null || true
+    fi
+    if [[ -n "${role_token}" ]]; then
+      rm -f "${PID_DIR}/${role}.identity.tmp.$$" "${PID_DIR}/${role}.pid.tmp.$$"
+      clear_role_state "${role}" "${role_token}"
+    fi
+    exit 0' INT TERM
+
   while true; do
-    local started child_pid status ended wait_s role_token ready_tmp failed_tmp was_ready identity_failed identity_failure_tmp identity_status process_state
+    local started status ended wait_s ready_tmp failed_tmp was_ready identity_failed identity_failure_tmp identity_status process_state
     started="$(date +%s)"
     role_token="$(random_token)"
     say_supervisor "${role} starting: $*"
@@ -477,6 +501,7 @@ run_role() {
       rm -f "${PID_DIR}/${role}.identity-failed"
       wait "${child_pid}"
       status=$?
+      child_pid=""
     else
       identity_status=$?
       process_state="$(ps -p "${child_pid}" -o stat= 2>/dev/null || true)"
@@ -486,6 +511,7 @@ run_role() {
       fi
       wait "${child_pid}" 2>/dev/null
       status=$?
+      child_pid=""
       [[ "${status}" -ne 0 ]] || status=1
       rm -f "${PID_DIR}/${role}.identity.tmp.$$" "${PID_DIR}/${role}.pid.tmp.$$"
       clear_role_state "${role}" "${role_token}"
@@ -521,7 +547,15 @@ WORKER_LOOP_PID=""
 
 terminate_children() {
   local name identity pid token started command
+  [[ -z "${APP_LOOP_PID}" ]] || kill "${APP_LOOP_PID}" 2>/dev/null || true
+  [[ -z "${WORKER_LOOP_PID}" ]] || kill "${WORKER_LOOP_PID}" 2>/dev/null || true
   for name in app worker; do
+    if [[ "${name}" == "app" && -n "${APP_LOOP_PID}" ]] && process_is_live "${APP_LOOP_PID}"; then
+      continue
+    fi
+    if [[ "${name}" == "worker" && -n "${WORKER_LOOP_PID}" ]] && process_is_live "${WORKER_LOOP_PID}"; then
+      continue
+    fi
     identity="$(cat "${PID_DIR}/${name}.identity" 2>/dev/null || true)"
     [[ -n "${identity}" ]] || continue
     read -r pid token started command <<< "${identity}"
@@ -529,8 +563,6 @@ terminate_children() {
     process_matches_role_identity "${pid}" "${started}" "${command}" || continue
     kill "${pid}" 2>/dev/null || true
   done
-  [[ -z "${APP_LOOP_PID}" ]] || kill "${APP_LOOP_PID}" 2>/dev/null || true
-  [[ -z "${WORKER_LOOP_PID}" ]] || kill "${WORKER_LOOP_PID}" 2>/dev/null || true
 }
 
 cleanup_identity() {

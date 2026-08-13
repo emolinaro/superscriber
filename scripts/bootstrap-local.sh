@@ -21,7 +21,9 @@ BUNDLE_DIR=""
 BUILD_OUTPUT_DIR=""
 REPOSITORY_LOCK_DIR="${REPO_ROOT}/.superscriber-bootstrap-repository.lock"
 REPOSITORY_LOCK_IDENTITY=""
+ACTIVATION_RECORD=""
 ACTIVATION_BACKUP=""
+ACTIVATION_CANDIDATE=""
 ACTIVATION_PENDING=0
 INSTANCE_WAS_RUNNING=0
 INSTANCE_RESTORED=0
@@ -126,6 +128,9 @@ port_is_free() {
 resolve_instance_root() {
   local configured_port
   INSTANCE_ROOT="$(resolve_durable_instance_root "${INSTANCE_ROOT}")" || exit 1
+  ACTIVATION_RECORD="${INSTANCE_ROOT}/activation.pending"
+  ACTIVATION_BACKUP="${INSTANCE_ROOT}/activation.previous"
+  ACTIVATION_CANDIDATE="${INSTANCE_ROOT}/activation.candidate"
   case "${PORT}" in
     ''|*[!0-9]*) fail "port must be a number, got '${PORT}'" ;;
   esac
@@ -230,6 +235,9 @@ normalize_runtime_permissions() {
   [[ ! -f "${INSTANCE_ROOT}/instance.log" ]] || chmod 600 "${INSTANCE_ROOT}/instance.log"
   [[ ! -f "${INSTANCE_ROOT}/app.env" ]] || chmod 600 "${INSTANCE_ROOT}/app.env"
   [[ ! -f "${INSTANCE_ROOT}/rollback.env" ]] || chmod 600 "${INSTANCE_ROOT}/rollback.env"
+  [[ ! -f "${ACTIVATION_RECORD}" ]] || chmod 600 "${ACTIVATION_RECORD}"
+  [[ ! -f "${ACTIVATION_BACKUP}" ]] || chmod 600 "${ACTIVATION_BACKUP}"
+  [[ ! -f "${ACTIVATION_CANDIDATE}" ]] || chmod 600 "${ACTIVATION_CANDIDATE}"
   chmod 600 "${INSTANCE_ROOT}/${INSTANCE_MARKER_NAME}"
 }
 
@@ -263,6 +271,13 @@ prepare_instance_root() {
       > "${INSTANCE_ROOT}/secrets/engine.secret"
   fi
   chmod 600 "${INSTANCE_ROOT}/secrets/auth.secret" "${INSTANCE_ROOT}/secrets/engine.secret"
+  if [[ -e "${ACTIVATION_RECORD}" || -L "${ACTIVATION_RECORD}" ]]; then
+    recover_pending_activation || fail "could not recover the interrupted activation at ${ACTIVATION_RECORD}"
+  else
+    rm -f -- "${ACTIVATION_BACKUP}" "${ACTIVATION_CANDIDATE}"
+  fi
+  INSTANCE_WAS_RUNNING=0
+  INSTANCE_RESTORED=0
 }
 
 MAINTENANCE_LOCK_DIR=""
@@ -302,7 +317,7 @@ acquire_maintenance_lock() {
       continue
     fi
     if mkdir "${MAINTENANCE_LOCK_DIR}" 2>/dev/null; then
-      if [[ -d "${MAINTENANCE_LOCK_DIR}.reclaim" || -L "${MAINTENANCE_LOCK_DIR}.reclaim" ]]; then
+      if [[ -e "${MAINTENANCE_LOCK_DIR}.reclaim" || -L "${MAINTENANCE_LOCK_DIR}.reclaim" ]]; then
         rmdir "${MAINTENANCE_LOCK_DIR}" 2>/dev/null || true
         attempts=$((attempts + 1))
         sleep 0.1
@@ -367,7 +382,7 @@ acquire_repository_lock() {
       continue
     fi
     if mkdir "${REPOSITORY_LOCK_DIR}" 2>/dev/null; then
-      if [[ -d "${REPOSITORY_LOCK_DIR}.reclaim" || -L "${REPOSITORY_LOCK_DIR}.reclaim" ]]; then
+      if [[ -e "${REPOSITORY_LOCK_DIR}.reclaim" || -L "${REPOSITORY_LOCK_DIR}.reclaim" ]]; then
         rmdir "${REPOSITORY_LOCK_DIR}" 2>/dev/null || true
         attempts=$((attempts + 1))
         sleep 0.1
@@ -423,15 +438,104 @@ cleanup_bundle_staging() {
 }
 
 remove_bundle_generation() {
+  local bundle_id="$1"
+  [[ "${bundle_id}" =~ ^[0-9a-f]{40}-[0-9a-f]{48}$ ]] || return 0
+  [[ "${bundle_id}" == "${BUNDLE_ID}" && "${INSTANCE_ROOT}/build/${bundle_id}" == "${BUNDLE_DIR}" ]] || return 0
+  remove_inactive_bundle_generation "${bundle_id}"
+}
+
+remove_inactive_bundle_generation() {
   local bundle_id="$1" path active_id
   [[ "${bundle_id}" =~ ^[0-9a-f]{40}-[0-9a-f]{48}$ ]] || return 0
   path="${INSTANCE_ROOT}/build/${bundle_id}"
-  [[ "${bundle_id}" == "${BUNDLE_ID}" && "${path}" == "${BUNDLE_DIR}" ]] || return 0
+  [[ "${path}" == "${INSTANCE_ROOT}/build/"* ]] || return 0
   active_id="$(activation_id_from_file "${INSTANCE_ROOT}/app.env" 2>/dev/null || true)"
   [[ "${active_id}" != "${bundle_id}" ]] || return 0
   if [[ -d "${path}" && ! -L "${path}" ]]; then
     rm -rf -- "${path}"
   fi
+}
+
+read_activation_record() {
+  local format candidate previous was_running
+  [[ -f "${ACTIVATION_RECORD}" && ! -L "${ACTIVATION_RECORD}" ]] || return 1
+  format="$(sed -n 's/^FORMAT=//p' "${ACTIVATION_RECORD}")"
+  candidate="$(sed -n 's/^CANDIDATE=//p' "${ACTIVATION_RECORD}")"
+  previous="$(sed -n 's/^PREVIOUS=//p' "${ACTIVATION_RECORD}")"
+  was_running="$(sed -n 's/^PREVIOUS_WAS_RUNNING=//p' "${ACTIVATION_RECORD}")"
+  [[ "${format}" == "superscriber-activation-v1" ]] || return 1
+  [[ "${candidate}" =~ ^[0-9a-f]{40}-[0-9a-f]{48}$ ]] || return 1
+  [[ "${previous}" == "none" || "${previous}" =~ ^[0-9a-f]{40}-[0-9a-f]{48}$ ]] || return 1
+  [[ "${previous}" != "${candidate}" ]] || return 1
+  [[ "${was_running}" == "0" || "${was_running}" == "1" ]] || return 1
+  [[ "${previous}" != "none" || "${was_running}" == "0" ]] || return 1
+  printf '%s %s %s\n' "${candidate}" "${previous}" "${was_running}"
+}
+
+write_activation_record() {
+  local candidate="$1" previous="$2" was_running="$3" tmp
+  tmp="${ACTIVATION_RECORD}.tmp.$$"
+  [[ ! -e "${tmp}" && ! -L "${tmp}" ]] || fail "refusing to overwrite an activation record staging file"
+  {
+    printf 'FORMAT=superscriber-activation-v1\n'
+    printf 'CANDIDATE=%s\n' "${candidate}"
+    printf 'PREVIOUS=%s\n' "${previous}"
+    printf 'PREVIOUS_WAS_RUNNING=%s\n' "${was_running}"
+  } > "${tmp}"
+  chmod 600 "${tmp}"
+  mv "${tmp}" "${ACTIVATION_RECORD}"
+}
+
+recover_pending_activation() {
+  local record candidate previous was_running current source="" restored_tmp
+  record="$(read_activation_record)" || return 1
+  read -r candidate previous was_running <<< "${record}"
+  current="$(activation_id_from_file "${INSTANCE_ROOT}/app.env" 2>/dev/null || true)"
+  if [[ "${current}" != "${candidate}" && "${current}" != "${previous}" ]]; then
+    [[ -z "${current}" && "${previous}" == "none" ]] || return 1
+  fi
+
+  if [[ "${previous}" != "none" ]]; then
+    if [[ "${current}" == "${previous}" ]] && resolve_active_bundle "${INSTANCE_ROOT}" >/dev/null 2>&1; then
+      source="${INSTANCE_ROOT}/app.env"
+    elif [[ "$(activation_id_from_file "${ACTIVATION_BACKUP}" 2>/dev/null || true)" == "${previous}" ]] && \
+         resolve_activation_bundle "${INSTANCE_ROOT}" "${ACTIVATION_BACKUP}" >/dev/null 2>&1; then
+      source="${ACTIVATION_BACKUP}"
+    elif [[ "$(activation_id_from_file "${INSTANCE_ROOT}/rollback.env" 2>/dev/null || true)" == "${previous}" ]] && \
+         resolve_activation_bundle "${INSTANCE_ROOT}" "${INSTANCE_ROOT}/rollback.env" >/dev/null 2>&1; then
+      source="${INSTANCE_ROOT}/rollback.env"
+    else
+      return 1
+    fi
+  fi
+
+  if bash "${SCRIPT_DIR}/instance-run.sh" "${INSTANCE_ROOT}" --status >/dev/null 2>&1; then
+    bash "${SCRIPT_DIR}/instance-stop.sh" "${INSTANCE_ROOT}" >/dev/null 2>&1 || return 1
+  fi
+
+  if [[ "${previous}" == "none" ]]; then
+    rm -f -- "${INSTANCE_ROOT}/app.env"
+  elif [[ "${source}" != "${INSTANCE_ROOT}/app.env" ]]; then
+    restored_tmp="${INSTANCE_ROOT}/app.env.recovered.$$"
+    cp "${source}" "${restored_tmp}"
+    chmod 600 "${restored_tmp}"
+    mv "${restored_tmp}" "${INSTANCE_ROOT}/app.env"
+  fi
+  if [[ "${previous}" != "none" ]]; then
+    resolve_active_bundle "${INSTANCE_ROOT}" >/dev/null 2>&1 || return 1
+  fi
+
+  remove_inactive_bundle_generation "${candidate}"
+  rm -f -- "${ACTIVATION_CANDIDATE}"
+  if [[ "${was_running}" == "1" ]]; then
+    SUPERSCRIBER_MAINTENANCE_IDENTITY="${MAINTENANCE_IDENTITY}" \
+      bash "${SCRIPT_DIR}/instance-run.sh" "${INSTANCE_ROOT}" >/dev/null 2>&1 || return 1
+    bash "${SCRIPT_DIR}/instance-run.sh" "${INSTANCE_ROOT}" --status >/dev/null 2>&1 || return 1
+  fi
+  rm -f -- "${ACTIVATION_RECORD}" "${ACTIVATION_BACKUP}"
+  ACTIVATION_PENDING=0
+  INSTANCE_RESTORED=1
+  log "recovered the previous activation after an interrupted bootstrap"
 }
 
 restart_quiesced_instance() {
@@ -448,44 +552,44 @@ restart_quiesced_instance() {
 }
 
 restore_previous_activation() {
-  [[ "${ACTIVATION_PENDING}" -eq 1 ]] || return 0
-  bash "${SCRIPT_DIR}/instance-stop.sh" "${INSTANCE_ROOT}" >/dev/null 2>&1 || true
-  if [[ -n "${ACTIVATION_BACKUP}" && -f "${ACTIVATION_BACKUP}" && ! -L "${ACTIVATION_BACKUP}" ]]; then
-    mv "${ACTIVATION_BACKUP}" "${INSTANCE_ROOT}/app.env"
-  else
-    rm -f "${INSTANCE_ROOT}/app.env"
-  fi
-  ACTIVATION_PENDING=0
-  ACTIVATION_BACKUP=""
-  remove_bundle_generation "${BUNDLE_ID}"
-  restart_quiesced_instance
+  [[ "${ACTIVATION_PENDING}" -eq 1 || -e "${ACTIVATION_RECORD}" || -L "${ACTIVATION_RECORD}" ]] || return 0
+  recover_pending_activation
 }
 
 cleanup_bootstrap_state() {
   cleanup_build_output
   cleanup_bundle_staging
   release_repository_lock
-  if [[ "${ACTIVATION_PENDING}" -eq 1 ]]; then
-    restore_previous_activation
+  if [[ "${ACTIVATION_PENDING}" -eq 1 || -e "${ACTIVATION_RECORD}" || -L "${ACTIVATION_RECORD}" ]]; then
+    if ! restore_previous_activation; then
+      printf '[bootstrap] ERROR: could not restore the previous activation; inspect %s\n' "${ACTIVATION_RECORD}" >&2
+    fi
   else
     restart_quiesced_instance
   fi
   remove_bundle_generation "${BUNDLE_ID}"
-  [[ -z "${ACTIVATION_BACKUP}" ]] || rm -f -- "${ACTIVATION_BACKUP}"
+  if [[ ! -e "${ACTIVATION_RECORD}" && ! -L "${ACTIVATION_RECORD}" ]]; then
+    rm -f -- "${ACTIVATION_BACKUP}" "${ACTIVATION_CANDIDATE}"
+  fi
   release_maintenance_lock
 }
 
 write_app_env() {
-  local env_file="${INSTANCE_ROOT}/app.env.tmp.$$"
+  local env_file="${ACTIVATION_CANDIDATE}" previous_id="none" backup_tmp
   reject_managed_instance_symlinks "${INSTANCE_ROOT}" || exit 1
   [[ -n "${BUNDLE_ID}" && -n "${BUNDLE_DIR}" ]] || fail "production bundle was not published"
+  [[ ! -e "${ACTIVATION_RECORD}" && ! -L "${ACTIVATION_RECORD}" ]] || fail "an earlier activation still requires recovery"
+  [[ ! -e "${env_file}" && ! -L "${env_file}" ]] || fail "refusing to overwrite an activation candidate"
   if resolve_active_bundle "${INSTANCE_ROOT}" >/dev/null 2>&1; then
-    ACTIVATION_BACKUP="${INSTANCE_ROOT}/.activation-previous.$$"
-    [[ ! -e "${ACTIVATION_BACKUP}" && ! -L "${ACTIVATION_BACKUP}" ]] || \
-      fail "refusing to overwrite an existing activation backup"
-    cp "${INSTANCE_ROOT}/app.env" "${ACTIVATION_BACKUP}"
-    chmod 600 "${ACTIVATION_BACKUP}"
+    previous_id="$(activation_id_from_file "${INSTANCE_ROOT}/app.env")"
+    backup_tmp="${ACTIVATION_BACKUP}.tmp.$$"
+    [[ ! -e "${backup_tmp}" && ! -L "${backup_tmp}" ]] || fail "refusing to overwrite an activation backup staging file"
+    cp "${INSTANCE_ROOT}/app.env" "${backup_tmp}"
+    chmod 600 "${backup_tmp}"
+    mv "${backup_tmp}" "${ACTIVATION_BACKUP}"
     activation_id_from_file "${ACTIVATION_BACKUP}" >/dev/null
+  else
+    rm -f -- "${ACTIVATION_BACKUP}"
   fi
   : > "${env_file}"
   write_env_assignment "${env_file}" SUPERSCRIBER_ACTIVATION_ID "${BUNDLE_ID}"
@@ -505,8 +609,9 @@ write_app_env() {
   write_env_assignment "${env_file}" PORT "${PORT}"
   write_env_assignment "${env_file}" HOSTNAME 127.0.0.1
   chmod 600 "${env_file}"
-  mv "${env_file}" "${INSTANCE_ROOT}/app.env"
+  write_activation_record "${BUNDLE_ID}" "${previous_id}" "${INSTANCE_WAS_RUNNING}"
   ACTIVATION_PENDING=1
+  mv "${env_file}" "${INSTANCE_ROOT}/app.env"
   rm -f "${INSTANCE_ROOT}/active-bundle"
   log "instance root ready at ${INSTANCE_ROOT} (db: data/superscriber.db, models: model-cache/, logs: logs/)"
 }
@@ -528,12 +633,20 @@ prune_inactive_bundles() {
 }
 
 commit_activation() {
-  if [[ -n "${ACTIVATION_BACKUP}" && -f "${ACTIVATION_BACKUP}" && ! -L "${ACTIVATION_BACKUP}" ]]; then
+  local record candidate previous was_running
+  record="$(read_activation_record)" || fail "active candidate has no valid pending activation record"
+  read -r candidate previous was_running <<< "${record}"
+  [[ "${candidate}" == "${BUNDLE_ID}" ]] || fail "pending activation does not match the running candidate"
+  [[ "$(activation_id_from_file "${INSTANCE_ROOT}/app.env" 2>/dev/null || true)" == "${candidate}" ]] || \
+    fail "active activation does not match the running candidate"
+  if [[ "${previous}" != "none" ]]; then
+    [[ "$(activation_id_from_file "${ACTIVATION_BACKUP}" 2>/dev/null || true)" == "${previous}" ]] || \
+      fail "pending activation lost its previous generation"
     mv "${ACTIVATION_BACKUP}" "${INSTANCE_ROOT}/rollback.env"
   else
-    rm -f "${INSTANCE_ROOT}/rollback.env"
+    rm -f -- "${INSTANCE_ROOT}/rollback.env" "${ACTIVATION_BACKUP}"
   fi
-  ACTIVATION_BACKUP=""
+  rm -f -- "${ACTIVATION_RECORD}" "${ACTIVATION_CANDIDATE}"
   ACTIVATION_PENDING=0
   INSTANCE_RESTORED=1
   prune_inactive_bundles
@@ -612,7 +725,7 @@ build_app() {
 }
 
 launch_failure() {
-  restore_previous_activation
+  restore_previous_activation || fail "$1; restoring the previous activation also failed"
   fail "$1"
 }
 
