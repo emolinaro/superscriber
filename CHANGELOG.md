@@ -18,6 +18,7 @@ All notable changes to this project will be documented in this file.
 - Expanded governed admin ledger access and restored case links across ledger rows (PRs #24, #25).
 - Added operator-gated admin recovery: an on-host single-use claim-token ceremony that re-admins an instance whose accounts survived but which has no active administrator (PR #26).
 - Added governed bulk speaker rename with a confirmed count summary and merge-onto-existing behavior (PR #35).
+- Added a one-shot local deployment bootstrap with idempotent setup, model-tier provisioning, and crash-supervised app and worker processes (PR #40).
 - Restored demo governance controls (PR #18).
 
 ### Changed
@@ -31,7 +32,7 @@ All notable changes to this project will be documented in this file.
 - Required password confirmation in the account dialog and compacted its layout (PR #39).
 - Vertically centered the ingest file input chooser row (PR #38).
 
-## [0.4.0] - 2026-08-09
+## [0.4.0] - 2026-08-06
 
 ### Added
 - Added Authentik OIDC integration as a central identity provider with a revocable session registry, strength-scaled authorization, and external identity links with strict role mapping (PR #4).
