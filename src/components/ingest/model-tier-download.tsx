@@ -92,7 +92,7 @@ export function ModelTierDownloadAction({
         </span>
       ) : null}
       <button
-        className="button button-secondary interactive-target"
+        className="ingest-model-download__action"
         disabled={busy}
         onClick={onStart}
         type="button"
