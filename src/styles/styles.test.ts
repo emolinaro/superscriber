@@ -132,6 +132,31 @@ describe("product css contract", () => {
     expect(brand).toContain("--logo-wordmark");
   });
 
+  it("keeps the active segment rail chip on theme tokens so dark mode stays WCAG AA", () => {
+    // Pre-regression the active chip used literal light fills
+    // (rgba(232, 246, 239, 0.8) on rgba(42, 118, 94, *)), a pale sage card
+    // that left the pale dark-mode text far below the 4.5:1 AA bar PR #12 set.
+    const casefile = readFileSync(resolve(STYLES_DIR, "casefile.css"), "utf8");
+    const activeChip = casefile.match(
+      /\.media-transport__rail-chip\[data-active\]\s*\{([^}]*)\}/,
+    );
+    expect(activeChip?.[1]).toContain("background: var(--color-selected)");
+    expect(activeChip?.[1]).toContain("var(--color-teal-700)");
+    expect(activeChip?.[1]).not.toContain("rgba(232, 246, 239");
+    expect(activeChip?.[1]).not.toContain("rgba(42, 118, 94");
+  });
+
+  it("caps the standalone auth doors (auth-shell) to a centered readable column", () => {
+    // /reset-request and /reset/[token] render a bare main.auth-shell outside
+    // the app shell; unstyled it ran edge to edge and clipped at the left.
+    const auth = readFileSync(resolve(STYLES_DIR, "auth.css"), "utf8");
+    const shell = auth.match(/\.auth-shell\s*\{([^}]*)\}/);
+    expect(shell?.[1]).toContain("var(--form-max)");
+    expect(shell?.[1]).toContain("margin-inline: auto");
+    const tokens = readFileSync(resolve(STYLES_DIR, "tokens.css"), "utf8");
+    expect(tokens).toMatch(/:root\s*\{[^}]*--form-max:/m);
+  });
+
   it("keeps the account menu appearance picker styled", () => {
     const shell = readFileSync(resolve(STYLES_DIR, "shell.css"), "utf8");
 
