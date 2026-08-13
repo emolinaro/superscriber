@@ -20,7 +20,8 @@ data/*.secret
 *plan*.md
 *design*.md
 !/DESIGN.md
-docs/superpowers/
+# Internal-only working tree (relocated from docs/superpowers/; never published)
+/.fm-internal/
 
 .gstack/
 .superpowers/

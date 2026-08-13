@@ -6,6 +6,7 @@
 - Unmanageable-instance recovery (accounts exist, no active admin): operator-claim ceremony on the sign-up door gated by an on-host single-use token (`src/server/auth/recovery-claim.ts`, runbook `docs/operators/admin-recovery.md`).
 - One-shot local deployment: `scripts/bootstrap-local.sh` (idempotent; supervisor `scripts/instance-run.sh`, model provisioning CLI `scripts/provision-model-tier.ts` over `src/server/models/provisioning.ts`). Docs: README "Local deployment".
 - Full validation gate: `npm run typecheck`, `npm test`, `npm run build`, `npm run worker:check`, `npm run e2e`, `npm run e2e:container`.
+- Internal spec/plan tree (formerly `docs/superpowers/`) is gitignored at `.fm-internal/docs-superpowers/`, local-only; DESIGN.md and other refs intentionally point there. Do not recreate `docs/superpowers/`. See `docs/superpowers-relocated.md`.
 
 ## GBrain Configuration (configured by /setup-gbrain)
 - Engine: pglite
