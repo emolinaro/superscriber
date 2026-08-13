@@ -74,7 +74,8 @@ export function MediaTransport({
   // seek that does not change the active segment still re-centers the chip.
   const railFollowPausedRef = useRef(false);
   const [railFollowResumeNonce, setRailFollowResumeNonce] = useState(0);
-  const hasRail = segments.length > 0;
+  const [railWidth, setRailWidth] = useState(0);
+  const hasRail = Boolean(mediaUrl) && segments.length > 0;
   const mediaRef = useRef<HTMLAudioElement | HTMLVideoElement | null>(null);
   const [mediaEl, setMediaEl] = useState<HTMLAudioElement | HTMLVideoElement | null>(null);
   // Wave scrubber (demo-waveform-player): decoded-wave progress bar replaces
@@ -212,6 +213,27 @@ export function MediaTransport({
     };
   }, [hasRail]);
 
+  useEffect(() => {
+    const rail = railRef.current;
+    if (!rail) {
+      return;
+    }
+    const updateRailWidth = () => {
+      const nextWidth = rail.clientWidth;
+      setRailWidth((currentWidth) =>
+        currentWidth === nextWidth ? currentWidth : nextWidth,
+      );
+    };
+
+    updateRailWidth();
+    const observer =
+      typeof ResizeObserver === "undefined"
+        ? null
+        : new ResizeObserver(updateRailWidth);
+    observer?.observe(rail);
+    return () => observer?.disconnect();
+  }, [hasRail]);
+
   // Horizontal playback follow: keep the active segment's chip centered-ish
   // in the rail scrollport as playback advances and after explicit seeks.
   // Vertical scrollports are deliberately untouched here (direct scrollLeft
@@ -251,7 +273,7 @@ export function MediaTransport({
       left: centeredHorizontalScrollLeft(scrollport, target),
       behavior: reducedMotion ? "auto" : "smooth",
     });
-  }, [activeSegmentId, railFollowResumeNonce]);
+  }, [activeSegmentId, railFollowResumeNonce, railWidth]);
 
   function resumeRailFollow() {
     railFollowPausedRef.current = false;

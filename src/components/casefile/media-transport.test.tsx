@@ -1,7 +1,14 @@
 // @vitest-environment jsdom
 
 import userEvent from "@testing-library/user-event";
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import {
+  act,
+  cleanup,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+} from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { baseSegments } from "./test-fixtures";
 import { MediaTransport } from "./media-transport";
@@ -151,17 +158,22 @@ describe("MediaTransport", () => {
   });
 
   it("publishes the rendered transport height as player clearance", () => {
-    let resizeCallback: ResizeObserverCallback = () => undefined;
+    const resizeCallbacks = new Map<Element, ResizeObserverCallback>();
     const observe = vi.fn();
     const disconnect = vi.fn();
     vi.stubGlobal(
       "ResizeObserver",
       class {
+        callback: ResizeObserverCallback;
+
         constructor(callback: ResizeObserverCallback) {
-          resizeCallback = callback;
+          this.callback = callback;
         }
 
-        observe = observe;
+        observe = (target: Element) => {
+          observe(target);
+          resizeCallbacks.set(target, this.callback);
+        };
         disconnect = disconnect;
         unobserve = vi.fn();
       },
@@ -185,7 +197,7 @@ describe("MediaTransport", () => {
     const transport = container.querySelector<HTMLElement>(".media-transport")!;
     transport.getBoundingClientRect = () =>
       ({ height: 287, width: 800 } as DOMRect);
-    resizeCallback([], {} as ResizeObserver);
+    resizeCallbacks.get(transport)!([], {} as ResizeObserver);
 
     expect(observe).toHaveBeenCalledWith(transport);
     expect(page.style.getPropertyValue("--player-clearance")).toBe("287px");
@@ -537,6 +549,42 @@ describe("MediaTransport", () => {
       rerender(<MediaTransport {...railProps()} activeSegmentId="rail-seg-6" />);
 
       expect(railScrollToMock).toHaveBeenCalledWith({ left: 888, behavior: "auto" });
+    });
+
+    it("recenters the active chip when the rail reappears at a new width", () => {
+      let railResizeCallback: ResizeObserverCallback | null = null;
+      const observe = vi.fn();
+      vi.stubGlobal(
+        "ResizeObserver",
+        class {
+          callback: ResizeObserverCallback;
+
+          constructor(callback: ResizeObserverCallback) {
+            this.callback = callback;
+          }
+
+          observe = (target: Element) => {
+            observe(target);
+            if (target.classList.contains("media-transport__rail")) {
+              railResizeCallback = this.callback;
+            }
+          };
+          disconnect = vi.fn();
+          unobserve = vi.fn();
+        },
+      );
+
+      const { container } = render(
+        <MediaTransport {...railProps()} activeSegmentId="rail-seg-6" />,
+      );
+      const rail = container.querySelector<HTMLElement>(".media-transport__rail")!;
+      stubRailStrip(rail);
+      railScrollToMock.mockClear();
+
+      expect(observe).toHaveBeenCalledWith(rail);
+      act(() => railResizeCallback!([], {} as ResizeObserver));
+
+      expect(railScrollToMock).toHaveBeenCalledWith({ left: 888, behavior: "smooth" });
     });
 
     it("pauses its own follow on a rail gesture and resumes once the active chip is in view again", () => {
