@@ -1124,6 +1124,89 @@ exit 0
   });
 
   it(
+    "keeps app readiness valid after the runtime changes its process title",
+    { timeout: 20_000 },
+    async () => {
+      testRoot = worktreeTestRoot();
+      const instance = join(testRoot, "instance");
+      const port = freePort();
+      const appServer = join(testRoot, "server.js");
+      const workerPython = join(testRoot, "worker-python");
+      const appIdentity = join(instance, "pids", "app.identity");
+      writeFileSync(
+        appServer,
+        `const fs=require('node:fs');const identity=${JSON.stringify(appIdentity)};require('node:http').createServer((_q,r)=>{r.end('ok')}).listen(Number(process.env.PORT),'127.0.0.1',()=>{const timer=setInterval(()=>{if(fs.existsSync(identity)){clearInterval(timer);process.title='next-server (v16.2.4)'}},10)})\n`,
+      );
+      writeFileSync(workerPython, readyWorkerScript());
+      chmodSync(workerPython, 0o700);
+      prepareRunnableInstance(instance, port, appServer, workerPython);
+      runningInstances.add(instance);
+
+      const start = runScript(RUN, [instance]);
+      expect(start.status, start.stderr + start.stdout).toBe(0);
+      await waitForCondition(() => {
+        const pidFile = join(instance, "pids", "app.pid");
+        if (!existsSync(pidFile)) return false;
+        const pid = readFileSync(pidFile, "utf8").trim();
+        const process = spawnSync("ps", ["-ww", "-p", pid, "-o", "args="], {
+          encoding: "utf8",
+        });
+        return process.stdout.trim() === "next-server (v16.2.4)";
+      });
+
+      expect(runScript(RUN, [instance, "--app-running"]).status).toBe(0);
+    },
+  );
+
+  it(
+    "publishes static assets under the standalone server's custom dist directory",
+    { timeout: 30_000 },
+    () => {
+      testRoot = worktreeTestRoot();
+      const instance = join(testRoot, "instance");
+      const port = freePort();
+      markInstanceRoot(instance);
+      const modelDir = join(instance, "model-cache", "medium");
+      mkdirSync(modelDir, { recursive: true });
+      writeModelTier(modelDir, "txt");
+      prepareBootstrapVenv(instance, true);
+
+      const result = runScript(
+        BOOTSTRAP,
+        [
+          "--instance-root",
+          instance,
+          "--port",
+          port,
+          "--model-tier",
+          "medium",
+          "--skip-model-download",
+          "--skip-worker-deps",
+        ],
+        stubSuccessfulBuildEnv(testRoot, healthyServerSource()),
+      );
+      expect(result.status, result.stderr + result.stdout).toBe(0);
+      runningInstances.add(instance);
+      const activationId = activationIdFrom(instance);
+
+      expect(
+        readFileSync(
+          join(
+            instance,
+            "build",
+            activationId,
+            ".superscriber-build-output",
+            activationId,
+            "static",
+            "fixture.css",
+          ),
+          "utf8",
+        ),
+      ).toBe("static asset");
+    },
+  );
+
+  it(
     "activates one record while retaining only active and rollback bundles",
     { timeout: 30_000 },
     async () => {
@@ -1594,6 +1677,7 @@ if [ "\${1:-}" = "run" ] && [ "\${2:-}" = "build" ]; then
   output="$PWD/$SUPERSCRIBER_NEXT_DIST_DIR"
   mkdir -p "$output/standalone" "$output/static"
   cp ${shellQuote(serverFixture)} "$output/standalone/server.js"
+  printf 'static asset' > "$output/static/fixture.css"
 fi
 exit 0
 `,

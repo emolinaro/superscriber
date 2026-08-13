@@ -74,8 +74,9 @@ The bootstrap is idempotent and safe to re-run. It:
    the worker's offline-model readiness signal before reporting success
 
 Options: `--instance-root DIR` (default `~/.local/share/superscriber`),
-`--port N` (default `3000`), `--model-tier TIER`, `--skip-model-download`,
-`--skip-worker-deps`.
+`--port N` (default `3000`; valid range `1024-65535`),
+`--model-tier TIER`, `--skip-model-download`, `--skip-worker-deps`, and
+`--check-deps-only` for a preflight without changing the instance.
 
 Instance layout (all under the instance root): `.superscriber-instance`
 (bootstrap ownership marker), `app.env` (the atomic active deployment record),
@@ -90,8 +91,8 @@ new build starts. Existing managed directories and
 leaf files, including database/WAL files, secrets, logs, PID/readiness files,
 and model-tier directories, must not be symlinks; bootstrap refuses them
 before writing. Standard interpreter symlinks created inside a generation's
-`venv/bin/` are allowed, but each `venv` root and every nonstandard venv path
-must be real.
+`venv/bin/` and the standard `venv/lib64 -> lib` link are allowed, but each
+`venv` root and every nonstandard venv path must be real.
 
 Operate the instance:
 
@@ -240,6 +241,7 @@ The default build prefetches the configured model into the image. Runtime downlo
 - `npm run auth:revoke` - revoke all sessions for a user (incident response)
 - `npm run break-glass:designate` - designate the single break-glass admin
 - `npm run break-glass:transfer` - atomically transfer the break-glass designation
+- `npm run bootstrap:local` - bootstrap or update a durable local instance
 - `npm run worker:check` — syntax-check the Python worker
 - `npm run worker:prefetch` — download the configured speech model into the local worker cache
 - `npm run worker:python` — run the Python worker against a live app

@@ -195,7 +195,11 @@ process_matches_start_fingerprint() {
 process_command_fingerprint() {
   local pid="$1" command
   process_is_live "${pid}" || return 1
-  command="$(ps -ww -p "${pid}" -o args= 2>/dev/null)"
+  # Node runtimes such as Next.js legitimately rewrite argv/process.title
+  # after startup. ucomm identifies the executable without following that
+  # mutable display title, so a live role keeps the identity the supervisor
+  # published for it.
+  command="$(ps -ww -p "${pid}" -o ucomm= 2>/dev/null)"
   [[ -n "${command}" ]] || return 1
   printf '%s' "${command}" | cksum | awk '{ printf "%s-%s\n", $1, $2 }'
 }

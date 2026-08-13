@@ -993,9 +993,9 @@ build_app() {
   (cd "${REPO_ROOT}" && \
     NEXT_TELEMETRY_DISABLED=1 SUPERSCRIBER_NEXT_DIST_DIR="${dist_relative}" npm run build)
   [[ -f "${BUILD_OUTPUT_DIR}/standalone/server.js" ]] || fail "Next standalone build did not produce server.js"
-  mkdir -p "${staging}/.next/static" "${staging}/public" "${staging}/scripts"
+  mkdir -p "${staging}/${dist_relative}/static" "${staging}/public" "${staging}/scripts"
   cp -RL "${BUILD_OUTPUT_DIR}/standalone/." "${staging}/"
-  cp -RL "${BUILD_OUTPUT_DIR}/static/." "${staging}/.next/static/"
+  cp -RL "${BUILD_OUTPUT_DIR}/static/." "${staging}/${dist_relative}/static/"
   cp -RL "${REPO_ROOT}/public/." "${staging}/public/"
   cp -RL "${REPO_ROOT}/worker" "${staging}/worker"
   cp "${REPO_ROOT}/scripts/instance-run.sh" \
