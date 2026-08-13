@@ -78,7 +78,7 @@ reject_worker_venv_symlinks() {
 reject_managed_instance_symlinks() {
   local root="$1" relative path found child child_name
   for relative in \
-    "${INSTANCE_MARKER_NAME}" app.env rollback.env activation.pending \
+    "${INSTANCE_MARKER_NAME}" app.env rollback.env activation.pending quiesce.pending \
     activation.previous activation.candidate instance.log \
     data data/media data/uploads model-cache logs pids secrets venv build; do
     path="${root}/${relative}"

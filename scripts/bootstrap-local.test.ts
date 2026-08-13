@@ -357,6 +357,7 @@ describe("local deployment bootstrap scripts", () => {
     ["app log", join("logs", "app.log")],
     ["role identity", join("pids", "worker.identity")],
     ["model tier", join("model-cache", "small")],
+    ["quiesce recovery record", "quiesce.pending"],
   ])("rejects a symlinked managed %s leaf", (_label, relative) => {
     testRoot = worktreeTestRoot();
     const instance = join(testRoot, "instance");
@@ -685,18 +686,25 @@ describe("local deployment bootstrap scripts", () => {
         "build",
         `${"f".repeat(40)}-${"e".repeat(48)}`,
       );
+      const orphanBundle = join(
+        instance,
+        "build",
+        `${"d".repeat(40)}-${"c".repeat(48)}`,
+      );
       const outside = join(testRoot, "outside");
       const observed = join(testRoot, "stale-builds-cleared");
       markInstanceRoot(instance);
       mkdirSync(staleInstanceBuild, { recursive: true });
       mkdirSync(staleRepositoryBuild, { recursive: true });
       mkdirSync(incompleteBundle, { recursive: true });
+      mkdirSync(orphanBundle, { recursive: true });
       writeFileSync(join(staleInstanceBuild, "partial"), "partial");
       writeFileSync(join(staleRepositoryBuild, "partial"), "partial");
       writeFileSync(
         join(incompleteBundle, ".incomplete"),
         "superscriber-build-generation-v1\n",
       );
+      writeFileSync(join(orphanBundle, "server.js"), "orphan");
       writeFileSync(outside, "outside");
       symlinkSync(outside, join(staleInstanceBuild, "outside-link"));
       const modelDir = join(instance, "model-cache", "medium");
@@ -712,6 +720,7 @@ if [ "\${1:-}" = "ci" ]; then
   [ ! -e "$STALE_INSTANCE_BUILD" ] || exit 93
   [ ! -e "$STALE_REPOSITORY_BUILD" ] || exit 94
   [ ! -e "$INCOMPLETE_BUNDLE" ] || exit 97
+  [ ! -e "$ORPHAN_BUNDLE" ] || exit 98
   [ -d "$MAINTENANCE_LOCK" ] || exit 95
   [ -d "$REPOSITORY_LOCK" ] || exit 96
   : > "$SWEEP_OBSERVED"
@@ -741,6 +750,7 @@ exit 0
             STALE_INSTANCE_BUILD: staleInstanceBuild,
             STALE_REPOSITORY_BUILD: staleRepositoryBuild,
             INCOMPLETE_BUNDLE: incompleteBundle,
+            ORPHAN_BUNDLE: orphanBundle,
             SWEEP_OBSERVED: observed,
             MAINTENANCE_LOCK: join(instance, "pids", "maintenance.lock"),
             REPOSITORY_LOCK: join(
@@ -755,6 +765,7 @@ exit 0
         expect(existsSync(staleInstanceBuild)).toBe(false);
         expect(existsSync(staleRepositoryBuild)).toBe(false);
         expect(existsSync(incompleteBundle)).toBe(false);
+        expect(existsSync(orphanBundle)).toBe(false);
         expect(readFileSync(outside, "utf8")).toBe("outside");
       } finally {
         rmSync(join(REPO_ROOT, ".superscriber-build-output"), {
@@ -1070,6 +1081,8 @@ exit 0
       testRoot = worktreeTestRoot();
       const instance = join(testRoot, "instance");
       const port = freePort();
+      let candidatePort = freePort();
+      while (candidatePort === port) candidatePort = freePort();
       const oldServer = join(testRoot, "old-server.js");
       const oldWorker = join(testRoot, "old-worker");
       writeFileSync(oldServer, healthyServerSource());
@@ -1098,7 +1111,7 @@ exit 0
           "--instance-root",
           instance,
           "--port",
-          port,
+          candidatePort,
           "--model-tier",
           "medium",
           "--skip-model-download",
@@ -1111,6 +1124,7 @@ exit 0
       expect(readFileSync(join(instance, "app.env"), "utf8")).toBe(
         previousActivation,
       );
+      expect(existsSync(join(instance, "activation.pending"))).toBe(false);
       await waitForCondition(
         () => runScript(RUN, [instance, "--app-running"]).status === 0,
         15_000,
@@ -1288,6 +1302,67 @@ exit 0
       });
       const readiness = runScript(RUN, [instance, "--worker-ready"]);
       expect(readiness.status).toBe(2);
+    },
+  );
+
+  it(
+    "recovers a pre-quiescence intent before retrying preparation",
+    { timeout: 60_000 },
+    async () => {
+      testRoot = worktreeTestRoot();
+      const instance = join(testRoot, "instance");
+      const port = freePort();
+      const appServer = join(testRoot, "server.js");
+      const workerPython = join(testRoot, "worker-python");
+      writeFileSync(appServer, healthyServerSource());
+      writeFileSync(workerPython, readyWorkerScript());
+      chmodSync(workerPython, 0o700);
+      prepareRunnableInstance(instance, port, appServer, workerPython);
+      const activationId = activationIdFrom(instance);
+      const modelDir = join(instance, "model-cache", "medium");
+      mkdirSync(modelDir, { recursive: true });
+      writeModelTier(modelDir, "txt");
+      runningInstances.add(instance);
+      const start = runScript(RUN, [instance]);
+      expect(start.status, start.stderr + start.stdout).toBe(0);
+      await waitForCondition(
+        () => runScript(RUN, [instance, "--worker-ready"]).status === 0,
+      );
+      const stop = runScript(STOP, [instance]);
+      expect(stop.status, stop.stderr + stop.stdout).toBe(0);
+      writeFileSync(
+        join(instance, "quiesce.pending"),
+        [
+          "FORMAT=superscriber-quiesce-v1",
+          `ACTIVATION=${activationId}`,
+          "WAS_RUNNING=1",
+          "",
+        ].join("\n"),
+      );
+
+      const bootstrap = runScript(
+        BOOTSTRAP,
+        [
+          "--instance-root",
+          instance,
+          "--port",
+          port,
+          "--model-tier",
+          "medium",
+          "--skip-model-download",
+          "--skip-worker-deps",
+        ],
+        stubNpxEnv(testRoot),
+      );
+
+      expect(bootstrap.status).not.toBe(0);
+      expect(existsSync(join(instance, "quiesce.pending"))).toBe(false);
+      await waitForCondition(
+        () => runScript(RUN, [instance, "--app-running"]).status === 0,
+      );
+      await waitForCondition(
+        () => runScript(RUN, [instance, "--worker-ready"]).status === 0,
+      );
     },
   );
 

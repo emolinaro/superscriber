@@ -25,6 +25,7 @@ REPOSITORY_LOCK_IDENTITY=""
 ACTIVATION_RECORD=""
 ACTIVATION_BACKUP=""
 ACTIVATION_CANDIDATE=""
+QUIESCE_RECORD=""
 ACTIVATION_PENDING=0
 INSTANCE_WAS_RUNNING=0
 INSTANCE_RESTORED=0
@@ -178,12 +179,22 @@ port_is_free() {
   ' "$1"
 }
 
+activation_port_from_file() {
+  local activation_file="$1" port
+  [[ -f "${activation_file}" && ! -L "${activation_file}" ]] || return 1
+  port="$(sed -n 's/^PORT=\([1-9][0-9]*\)$/\1/p' "${activation_file}")"
+  [[ "${port}" =~ ^[1-9][0-9]{0,4}$ ]] || return 1
+  [[ "${port}" -ge 1024 && "${port}" -le 65535 ]] || return 1
+  printf '%s\n' "${port}"
+}
+
 resolve_instance_root() {
   local configured_port
   INSTANCE_ROOT="$(resolve_durable_instance_root "${INSTANCE_ROOT}")" || exit 1
   ACTIVATION_RECORD="${INSTANCE_ROOT}/activation.pending"
   ACTIVATION_BACKUP="${INSTANCE_ROOT}/activation.previous"
   ACTIVATION_CANDIDATE="${INSTANCE_ROOT}/activation.candidate"
+  QUIESCE_RECORD="${INSTANCE_ROOT}/quiesce.pending"
   case "${PORT}" in
     ''|*[!0-9]*) fail "port must be a number, got '${PORT}'" ;;
   esac
@@ -199,7 +210,7 @@ resolve_instance_root() {
   reject_managed_instance_symlinks "${INSTANCE_ROOT}" || exit 1
 
   if [[ -d "${INSTANCE_ROOT}" ]] && bash "${SCRIPT_DIR}/instance-run.sh" "${INSTANCE_ROOT}" --status >/dev/null 2>&1; then
-    configured_port="$(sed -n 's/^PORT=\([0-9][0-9]*\)$/\1/p' "${INSTANCE_ROOT}/app.env" 2>/dev/null | tail -1 || true)"
+    configured_port="$(activation_port_from_file "${INSTANCE_ROOT}/app.env" 2>/dev/null || true)"
     if [[ "${configured_port}" != "${PORT}" ]] && ! port_is_free "${PORT}"; then
       fail "port ${PORT} is occupied by a foreign process. Pick another with --port."
     fi
@@ -382,6 +393,7 @@ normalize_runtime_permissions() {
   [[ ! -f "${ACTIVATION_RECORD}" ]] || chmod 600 "${ACTIVATION_RECORD}"
   [[ ! -f "${ACTIVATION_BACKUP}" ]] || chmod 600 "${ACTIVATION_BACKUP}"
   [[ ! -f "${ACTIVATION_CANDIDATE}" ]] || chmod 600 "${ACTIVATION_CANDIDATE}"
+  [[ ! -f "${QUIESCE_RECORD}" ]] || chmod 600 "${QUIESCE_RECORD}"
   chmod 600 "${INSTANCE_ROOT}/${INSTANCE_MARKER_NAME}"
 }
 
@@ -415,13 +427,16 @@ prepare_instance_root() {
       > "${INSTANCE_ROOT}/secrets/engine.secret"
   fi
   chmod 600 "${INSTANCE_ROOT}/secrets/auth.secret" "${INSTANCE_ROOT}/secrets/engine.secret"
+  INSTANCE_WAS_RUNNING=0
+  INSTANCE_RESTORED=0
   if [[ -e "${ACTIVATION_RECORD}" || -L "${ACTIVATION_RECORD}" ]]; then
     recover_pending_activation || fail "could not recover the interrupted activation at ${ACTIVATION_RECORD}"
   else
-    rm -f -- "${ACTIVATION_BACKUP}" "${ACTIVATION_CANDIDATE}"
+    durable_remove_paths "${INSTANCE_ROOT}" "${ACTIVATION_BACKUP}" "${ACTIVATION_CANDIDATE}"
   fi
-  INSTANCE_WAS_RUNNING=0
-  INSTANCE_RESTORED=0
+  if [[ -e "${QUIESCE_RECORD}" || -L "${QUIESCE_RECORD}" ]]; then
+    recover_quiesced_activation || fail "could not recover the interrupted quiescence at ${QUIESCE_RECORD}"
+  fi
 }
 
 MAINTENANCE_LOCK_DIR=""
@@ -555,7 +570,8 @@ cleanup_build_output() {
 }
 
 cleanup_interrupted_builds() {
-  local path name changed=0 active_id rollback_id="" repository_output="${REPO_ROOT}/.superscriber-build-output"
+  local path name changed=0 active_id rollback_id="" pending_candidate="" pending_previous="" \
+    pending_record quiesce_id="" repository_output="${REPO_ROOT}/.superscriber-build-output"
   [[ -d "${INSTANCE_ROOT}/build" && ! -L "${INSTANCE_ROOT}/build" ]] || \
     fail "instance build root must be a real directory: ${INSTANCE_ROOT}/build"
   for path in "${INSTANCE_ROOT}/build"/.staging-*; do
@@ -566,15 +582,31 @@ cleanup_interrupted_builds() {
   done
   active_id="$(activation_id_from_file "${INSTANCE_ROOT}/app.env" 2>/dev/null || true)"
   rollback_id="$(activation_id_from_file "${INSTANCE_ROOT}/rollback.env" 2>/dev/null || true)"
+  if [[ -e "${ACTIVATION_RECORD}" || -L "${ACTIVATION_RECORD}" ]]; then
+    pending_record="$(read_activation_record)" || fail "pending activation record is invalid: ${ACTIVATION_RECORD}"
+    read -r pending_candidate pending_previous _ <<< "${pending_record}"
+    [[ "${pending_previous}" != "none" ]] || pending_previous=""
+  fi
+  if [[ -e "${QUIESCE_RECORD}" || -L "${QUIESCE_RECORD}" ]]; then
+    quiesce_id="$(read_quiesce_record)" || fail "pending quiescence record is invalid: ${QUIESCE_RECORD}"
+  fi
   for path in "${INSTANCE_ROOT}/build"/*; do
     [[ -d "${path}" && ! -L "${path}" ]] || continue
     name="${path##*/}"
     [[ "${name}" =~ ^[0-9a-f]{40}-[0-9a-f]{48}$ ]] || continue
-    [[ -e "${path}/.incomplete" || -L "${path}/.incomplete" ]] || continue
-    [[ -f "${path}/.incomplete" && ! -L "${path}/.incomplete" ]] || \
-      fail "incomplete bundle marker must be a regular file: ${path}/.incomplete"
-    [[ "${name}" != "${active_id}" && "${name}" != "${rollback_id}" ]] || \
-      fail "active or rollback activation references an incomplete bundle: ${name}"
+    if [[ -e "${path}/.incomplete" || -L "${path}/.incomplete" ]]; then
+      [[ -f "${path}/.incomplete" && ! -L "${path}/.incomplete" ]] || \
+        fail "incomplete bundle marker must be a regular file: ${path}/.incomplete"
+      if [[ "${name}" == "${active_id}" || "${name}" == "${rollback_id}" || \
+            "${name}" == "${pending_candidate}" || "${name}" == "${pending_previous}" || \
+            "${name}" == "${quiesce_id}" ]]; then
+        fail "activation state references an incomplete bundle: ${name}"
+      fi
+    elif [[ "${name}" == "${active_id}" || "${name}" == "${rollback_id}" || \
+            "${name}" == "${pending_candidate}" || "${name}" == "${pending_previous}" || \
+            "${name}" == "${quiesce_id}" ]]; then
+      continue
+    fi
     rm -rf -- "${path}"
     changed=1
   done
@@ -648,8 +680,53 @@ write_activation_record() {
   durable_replace_file "${tmp}" "${ACTIVATION_RECORD}" "${INSTANCE_ROOT}"
 }
 
+read_quiesce_record() {
+  local format activation was_running
+  [[ -f "${QUIESCE_RECORD}" && ! -L "${QUIESCE_RECORD}" ]] || return 1
+  format="$(sed -n 's/^FORMAT=//p' "${QUIESCE_RECORD}")"
+  activation="$(sed -n 's/^ACTIVATION=//p' "${QUIESCE_RECORD}")"
+  was_running="$(sed -n 's/^WAS_RUNNING=//p' "${QUIESCE_RECORD}")"
+  [[ "${format}" == "superscriber-quiesce-v1" ]] || return 1
+  [[ "${activation}" =~ ^[0-9a-f]{40}-[0-9a-f]{48}$ ]] || return 1
+  [[ "${was_running}" == "1" ]] || return 1
+  printf '%s\n' "${activation}"
+}
+
+write_quiesce_record() {
+  local activation="$1" tmp
+  [[ "${activation}" =~ ^[0-9a-f]{40}-[0-9a-f]{48}$ ]] || return 1
+  [[ ! -e "${QUIESCE_RECORD}" && ! -L "${QUIESCE_RECORD}" ]] || return 1
+  tmp="${QUIESCE_RECORD}.tmp.$$"
+  [[ ! -e "${tmp}" && ! -L "${tmp}" ]] || return 1
+  {
+    printf 'FORMAT=superscriber-quiesce-v1\n'
+    printf 'ACTIVATION=%s\n' "${activation}"
+    printf 'WAS_RUNNING=1\n'
+  } > "${tmp}"
+  chmod 600 "${tmp}"
+  durable_replace_file "${tmp}" "${QUIESCE_RECORD}" "${INSTANCE_ROOT}"
+}
+
+recover_quiesced_activation() {
+  local activation current
+  activation="$(read_quiesce_record)" || return 1
+  current="$(activation_id_from_file "${INSTANCE_ROOT}/app.env" 2>/dev/null || true)"
+  [[ "${current}" == "${activation}" ]] || return 1
+  resolve_active_bundle "${INSTANCE_ROOT}" >/dev/null 2>&1 || return 1
+  INSTANCE_WAS_RUNNING=1
+  INSTANCE_RESTORED=0
+  if ! bash "${SCRIPT_DIR}/instance-run.sh" "${INSTANCE_ROOT}" --status >/dev/null 2>&1; then
+    SUPERSCRIBER_MAINTENANCE_IDENTITY="${MAINTENANCE_IDENTITY}" \
+      bash "${SCRIPT_DIR}/instance-run.sh" "${INSTANCE_ROOT}" >/dev/null 2>&1 || return 1
+  fi
+  wait_for_instance_readiness || return 1
+  durable_remove_paths "${INSTANCE_ROOT}" "${QUIESCE_RECORD}"
+  INSTANCE_RESTORED=1
+  log "recovered the previously running activation after interrupted quiescence"
+}
+
 recover_pending_activation() {
-  local record candidate previous was_running current source="" restored_tmp
+  local record candidate previous was_running current source="" restored_tmp quiesce_activation
   record="$(read_activation_record)" || return 1
   read -r candidate previous was_running <<< "${record}"
   current="$(activation_id_from_file "${INSTANCE_ROOT}/app.env" 2>/dev/null || true)"
@@ -694,6 +771,11 @@ recover_pending_activation() {
       bash "${SCRIPT_DIR}/instance-run.sh" "${INSTANCE_ROOT}" >/dev/null 2>&1 || return 1
     wait_for_instance_readiness || return 1
   fi
+  if [[ -e "${QUIESCE_RECORD}" || -L "${QUIESCE_RECORD}" ]]; then
+    quiesce_activation="$(read_quiesce_record)" || return 1
+    [[ "${previous}" != "none" && "${quiesce_activation}" == "${previous}" ]] || return 1
+    durable_remove_paths "${INSTANCE_ROOT}" "${QUIESCE_RECORD}"
+  fi
   durable_remove_paths "${INSTANCE_ROOT}" "${ACTIVATION_RECORD}" "${ACTIVATION_BACKUP}"
   ACTIVATION_PENDING=0
   INSTANCE_RESTORED=1
@@ -701,13 +783,14 @@ recover_pending_activation() {
 }
 
 wait_for_instance_readiness() {
-  local attempts=0 app_ready worker_ready worker_status
+  local attempts=0 app_ready worker_ready worker_status probe_port
+  probe_port="$(activation_port_from_file "${INSTANCE_ROOT}/app.env")" || return 1
   while [[ "${attempts}" -lt 120 ]]; do
     app_ready=0
     worker_ready=0
     bash "${SCRIPT_DIR}/instance-run.sh" "${INSTANCE_ROOT}" --status >/dev/null 2>&1 || return 1
     if bash "${SCRIPT_DIR}/instance-run.sh" "${INSTANCE_ROOT}" --app-running >/dev/null 2>&1 && \
-       python3 "${REPO_ROOT}/scripts/http_probe.py" "http://127.0.0.1:${PORT}/api/health" >/dev/null 2>&1; then
+       python3 "${REPO_ROOT}/scripts/http_probe.py" "http://127.0.0.1:${probe_port}/api/health" >/dev/null 2>&1; then
       app_ready=1
     fi
     worker_status=1
@@ -728,16 +811,9 @@ wait_for_instance_readiness() {
 }
 
 restart_quiesced_instance() {
-  [[ "${INSTANCE_WAS_RUNNING}" -eq 1 && "${INSTANCE_RESTORED}" -eq 0 ]] || return 0
-  if ! bash "${SCRIPT_DIR}/instance-run.sh" "${INSTANCE_ROOT}" --status >/dev/null 2>&1; then
-    if ! SUPERSCRIBER_MAINTENANCE_IDENTITY="${MAINTENANCE_IDENTITY}" \
-      bash "${SCRIPT_DIR}/instance-run.sh" "${INSTANCE_ROOT}" >/dev/null 2>&1; then
-      printf '[bootstrap] ERROR: could not restart the previous instance; inspect %s/logs/supervisor.log\n' "${INSTANCE_ROOT}" >&2
-      return 0
-    fi
-  fi
-  if wait_for_instance_readiness; then
-    INSTANCE_RESTORED=1
+  [[ "${INSTANCE_WAS_RUNNING}" -eq 1 && "${INSTANCE_RESTORED}" -eq 0 && \
+     ( -e "${QUIESCE_RECORD}" || -L "${QUIESCE_RECORD}" ) ]] || return 0
+  if recover_quiesced_activation; then
     log "restored the previously running app and worker"
   else
     printf '[bootstrap] ERROR: the previous app and worker did not both become ready; inspect %s/logs/\n' "${INSTANCE_ROOT}" >&2
@@ -784,6 +860,12 @@ write_app_env() {
   else
     durable_remove_paths "${INSTANCE_ROOT}" "${ACTIVATION_BACKUP}"
   fi
+  if [[ "${INSTANCE_WAS_RUNNING}" -eq 1 ]]; then
+    [[ "${previous_id}" != "none" && "$(read_quiesce_record 2>/dev/null || true)" == "${previous_id}" ]] || \
+      fail "the running activation has no durable quiescence recovery record"
+  elif [[ -e "${QUIESCE_RECORD}" || -L "${QUIESCE_RECORD}" ]]; then
+    fail "unexpected quiescence recovery record: ${QUIESCE_RECORD}"
+  fi
   : > "${env_file}"
   write_env_assignment "${env_file}" SUPERSCRIBER_ACTIVATION_ID "${BUNDLE_ID}"
   write_env_assignment "${env_file}" SUPERSCRIBER_AUTH_MODE local
@@ -807,6 +889,7 @@ write_app_env() {
   write_activation_record "${BUNDLE_ID}" "${previous_id}" "${INSTANCE_WAS_RUNNING}"
   ACTIVATION_PENDING=1
   durable_replace_file "${env_file}" "${INSTANCE_ROOT}/app.env" "${INSTANCE_ROOT}"
+  durable_remove_paths "${INSTANCE_ROOT}" "${QUIESCE_RECORD}"
   durable_remove_paths "${INSTANCE_ROOT}" "${INSTANCE_ROOT}/active-bundle"
   log "instance root ready at ${INSTANCE_ROOT} (db: data/superscriber.db, models: model-cache/, logs: logs/)"
 }
@@ -863,8 +946,16 @@ provision_model() {
 }
 
 quiesce_instance() {
+  local active_id
   if bash "${SCRIPT_DIR}/instance-run.sh" "${INSTANCE_ROOT}" --status >/dev/null 2>&1; then
+    resolve_active_bundle "${INSTANCE_ROOT}" >/dev/null 2>&1 || \
+      fail "the running instance has no valid active bundle"
+    active_id="$(activation_id_from_file "${INSTANCE_ROOT}/app.env")" || \
+      fail "the running instance has no valid activation identity"
+    write_quiesce_record "${active_id}" || \
+      fail "could not persist quiescence recovery intent at ${QUIESCE_RECORD}"
     INSTANCE_WAS_RUNNING=1
+    INSTANCE_RESTORED=0
     log "quiescing the running instance before database and bundle activation"
     bash "${SCRIPT_DIR}/instance-stop.sh" "${INSTANCE_ROOT}"
   fi
