@@ -20,10 +20,16 @@ content="$repo_root/website/content"
 rm -rf "$content"
 mkdir -p "$content/operators"
 
-# Landing page: the README becomes the site index.
+# Landing page: the README becomes the site index. TODOS.md is deliberately
+# not staged: it is internal follow-on tracking, not product documentation
 cp README.md "$content/index.md"
-cp DESIGN.md CHANGELOG.md CONTRIBUTING.md TODOS.md "$content/"
-cp docs/operators/*.md "$content/operators/"
+cp DESIGN.md CHANGELOG.md CONTRIBUTING.md "$content/"
+# Operator runbooks, minus the internal OIDC acceptance report (an evidence
+# record from the OIDC lane, not an operator procedure)
+for runbook in docs/operators/*.md; do
+  [ "$(basename "$runbook")" = "oidc-acceptance-2026-08.md" ] && continue
+  cp "$runbook" "$content/operators/"
+done
 
 # User guide: docs/USER-GUIDE.md is staged automatically when present; it is
 # listed in website/sidebars.ts.
@@ -34,6 +40,10 @@ fi
 cd "$content"
 
 # Retarget links in the staged copies (sources are never touched):
+#  - internal-only docs stripped from the site (TODOS.md, the OIDC acceptance
+#    report) point at the repo blob instead
+perl -pi -e "s{\]\(\./TODOS\.md\)}{]($github_blob/TODOS.md)}g" *.md
+perl -pi -e "s{\]\(\./docs/operators/oidc-acceptance-2026-08\.md\)}{]($github_blob/docs/operators/oidc-acceptance-2026-08.md)}g" *.md
 #  - operator runbook links: ./docs/operators/x.md -> operators/x.md
 perl -pi -e 's{\]\(\./docs/operators/([A-Za-z0-9_.-]+\.md)\)}{](operators/$1)}g' *.md
 #  - the ./docs/operators/ directory link points at the repo tree
