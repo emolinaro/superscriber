@@ -316,8 +316,8 @@ test.describe.serial("demo governance bring-back", () => {
     await purgeDialog.getByLabel("Type the recording title to confirm").fill("Governance bring-back record");
     await purgeDialog.getByRole("button", { name: "Delete permanently" }).click();
 
-    // The danger zone hard-navigates away from the deleted casefile; the root
-    // page then client-redirects authenticated sessions to /workspace. Wait
+    // The governed delete flow hard-navigates away from the deleted casefile;
+    // the root page then client-redirects authenticated sessions to /workspace. Wait
     // for that chain to settle before driving further navigation.
     await expect(page).toHaveURL(/\/workspace(?:\?.*)?$/, { timeout: 15_000 });
     await page.waitForLoadState("networkidle");
