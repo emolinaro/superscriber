@@ -4,7 +4,7 @@
 
 # Superscriber
 
-Superscriber is a self-contained governed transcription appliance for sensitive audio and video. The current release is v0.4.0 (see [CHANGELOG.md](./CHANGELOG.md)).
+Superscriber is a self-contained governed transcription appliance for sensitive audio and video. Release history lives in [CHANGELOG.md](./CHANGELOG.md); the current version source is the `VERSION` file.
 
 The app models a regulated workflow:
 
@@ -272,7 +272,7 @@ Optional configuration:
 - [`CHANGELOG.md`](./CHANGELOG.md) — release history and shipped behavior notes
 - [`CONTRIBUTING.md`](./CONTRIBUTING.md) - contribution workflow, validation gate, commit style, and disclosure rules
 - [`DESIGN.md`](./DESIGN.md) — design record and behavioral contract for the governed casefile workspace
-- [`TODOS.md`](./TODOS.md) — deferred follow-on work after the current appliance release
+- [`TODOS.md`](./TODOS.md) — deferred follow-on work
 - [`docs/USER-GUIDE.md`](./docs/USER-GUIDE.md) - end-to-end user guide: sign-in, ingest, casefile review, governed workflow, export, and administration
 - [`docs/operators/`](./docs/operators/) - operator runbooks for authentication and account recovery, including [governed folder-watch ingest](./docs/operators/ingest-watch.md)
 
