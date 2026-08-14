@@ -4,6 +4,8 @@ Thanks for contributing. This file covers the workflow that gets a change from y
 
 Preserve the auth landing footer's shipped link placement: it always names this repository as the source and governance home, while the hosted user-guide link renders only when `SUPERSCRIBER_DOCS_URL` is configured. Operators should enable the guide only after docs PR #6 merges and GitHub Pages is enabled; the README's [Container Runtime](./README.md#container-runtime) section owns the configuration details.
 
+For a full local deployment to develop against, run `scripts/bootstrap-local.sh` (or `npm run bootstrap:local`): one idempotent command goes from a clean clone to a running, crash-supervised local instance - dependencies, worker venv, database migrations, a provisioned model tier, and an immutable production bundle under a supervisor. The [Local deployment](./README.md#local-deployment) section of the README documents everything the bootstrap wires up, and `scripts/instance-stop.sh` / `scripts/instance-run.sh` stop and restart the instance.
+
 ## The contribution workflow
 
 1. **Branch off `main`.** All work happens on a feature branch; never push to the default branch.

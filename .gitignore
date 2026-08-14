@@ -19,9 +19,10 @@ data/*.db*
 data/*.secret
 *plan*.md
 *design*.md
-!/DESIGN.md
+!**/DESIGN.md
 # Internal-only working tree (relocated from docs/superpowers/; never published)
 /.fm-internal/
+
 
 .gstack/
 .superpowers/
