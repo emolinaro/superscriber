@@ -280,9 +280,10 @@
 }
 
 .media-transport__rail-chip[data-active] {
-  border-color: rgba(42, 118, 94, 0.45);
-  background: rgba(232, 246, 239, 0.8);
-  box-shadow: inset 3px 0 0 rgba(42, 118, 94, 0.85);
+  /* Share the transcript active-state tokens so both themes remain WCAG AA. */
+  border-color: color-mix(in srgb, var(--color-teal-700) 45%, transparent);
+  background: var(--color-selected);
+  box-shadow: inset 3px 0 0 var(--color-teal-700);
 }
 
 .media-transport__rail-chip-index {

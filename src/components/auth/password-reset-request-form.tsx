@@ -68,7 +68,7 @@ export function PasswordResetRequestForm({
           </p>
         ) : null}
       </div>
-      <button className="button-primary" disabled={isPending} type="submit">
+      <button className="button button-primary" disabled={isPending} type="submit">
         {isPending ? "Starting reset..." : "Reset password"}
       </button>
     </form>

@@ -13,11 +13,15 @@ export default async function ResetCompletePage({
 
   return (
     <main className="auth-shell">
-      <h1>Choose a new password</h1>
-      <PasswordResetCompletionForm token={token} action={completePasswordResetAction} />
-      <p>
-        <Link href="/">Back to sign in</Link>
-      </p>
+      <section className="panel panel-strong auth-shell__card">
+        <div className="panel-inner stack">
+          <h1>Choose a new password</h1>
+          <PasswordResetCompletionForm token={token} action={completePasswordResetAction} />
+          <p>
+            <Link href="/">Back to sign in</Link>
+          </p>
+        </div>
+      </section>
     </main>
   );
 }

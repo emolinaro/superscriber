@@ -2,6 +2,23 @@
   gap: var(--space-4);
 }
 
+/* The standalone reset doors render outside the app shell, so this shared
+   shell owns the landing-style centering and readable form-width cap. */
+.auth-shell {
+  width: min(100% - calc(var(--page-gutter) * 2), var(--form-max));
+  margin-inline: auto;
+  padding-block: var(--space-8);
+  min-height: 100vh;
+  display: grid;
+  align-content: center;
+}
+
+/* Let the stack gap own card rhythm instead of adding default block margins. */
+.auth-shell__card > .panel-inner.stack > h1,
+.auth-shell__card > .panel-inner.stack > p {
+  margin: 0;
+}
+
 .auth-readiness {
   display: grid;
   gap: var(--space-3);

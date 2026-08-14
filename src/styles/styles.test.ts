@@ -132,6 +132,33 @@ describe("product css contract", () => {
     expect(brand).toContain("--logo-wordmark");
   });
 
+  it("keeps the active segment rail chip on theme tokens so dark mode stays WCAG AA", () => {
+    // Literal light fills previously stranded pale dark-mode text below the
+    // 4.5:1 contrast floor.
+    const casefile = readFileSync(resolve(STYLES_DIR, "casefile.css"), "utf8");
+    const activeChip = casefile.match(
+      /\.media-transport__rail-chip\[data-active\]\s*\{([^}]*)\}/,
+    );
+    expect(activeChip?.[1]).toContain("background: var(--color-selected)");
+    expect(activeChip?.[1]).toContain("var(--color-teal-700)");
+    expect(activeChip?.[1]).not.toContain("rgba(232, 246, 239");
+    expect(activeChip?.[1]).not.toContain("rgba(42, 118, 94");
+  });
+
+  it("caps standalone auth doors without resetting nested confirmation spacing", () => {
+    // Both reset routes render outside the app shell and share this width cap.
+    const auth = readFileSync(resolve(STYLES_DIR, "auth.css"), "utf8");
+    const shell = auth.match(/\.auth-shell\s*\{([^}]*)\}/);
+    expect(shell?.[1]).toContain("var(--form-max)");
+    expect(shell?.[1]).toContain("margin-inline: auto");
+    expect(auth).toMatch(
+      /\.auth-shell__card > \.panel-inner\.stack > h1,\s*\.auth-shell__card > \.panel-inner\.stack > p\s*\{[^}]*margin: 0;/,
+    );
+    expect(auth).not.toMatch(/\.auth-shell__card\s+(?:h1|p)/);
+    const tokens = readFileSync(resolve(STYLES_DIR, "tokens.css"), "utf8");
+    expect(tokens).toMatch(/:root\s*\{[^}]*--form-max:/m);
+  });
+
   it("keeps the account menu appearance picker styled", () => {
     const shell = readFileSync(resolve(STYLES_DIR, "shell.css"), "utf8");
 
