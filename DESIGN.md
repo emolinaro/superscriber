@@ -356,7 +356,6 @@ These requirements apply to the auth, work inbox, ingest, casefile, export, and 
 - Patch-based segment editing protocol (saves submit the complete current segment array)
 - Timing-edit tools for transcript alignment
 - Bulk workflow decisions or bulk assignment changes
-- Policy-profile authoring in the UI
 - Account deactivation
 - Raw media download
 - A separate reporting or export center
