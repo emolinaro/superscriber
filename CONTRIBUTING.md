@@ -2,6 +2,8 @@
 
 Thanks for contributing. This file covers the workflow that gets a change from your branch to a merged PR. Read [README.md](./README.md) for setup and runtime instructions, [DESIGN.md](./DESIGN.md) for the behavioral contract, [AGENTS.md](./AGENTS.md) for project orientation, and [docs/operators/](./docs/operators/) for operator runbooks - those are the authoritative sources; this document does not repeat them.
 
+One placement note that belongs here because contributors work on the auth landing surface: its footer always links to this repository as the source and governance home, and renders the hosted user-guide link only when `SUPERSCRIBER_DOCS_URL` is configured. The operator-facing switch and its go-live condition are documented in the README's Container Runtime section.
+
 ## The contribution workflow
 
 1. **Branch off `main`.** All work happens on a feature branch; never push to the default branch.

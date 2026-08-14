@@ -12,6 +12,8 @@ The app models a regulated workflow:
 
 It runs as a single-institution deployment with local accounts, SQLite persistence, mounted media storage, and an internal Python worker by default. The authenticated product is organized as a governed casefile: a role-aware work inbox leads into a transcript-first record whose state, assignment, actions, provenance, and audit history stay in agreement.
 
+The public authentication landing page footer always links back to this repository as the source and governance home (`Source & governance: github.com/emolinaro/superscriber`); an optional hosted user-guide link appears there only when the operator configures `SUPERSCRIBER_DOCS_URL` (see [Container Runtime](#container-runtime)).
+
 ## What It Includes
 
 - Bootstrap admin setup plus local accounts for `uploader`, `reviewer`, `approver`, and `admin`
@@ -227,7 +229,7 @@ The default build prefetches the configured model into the image. Runtime downlo
 
 Optional configuration:
 
-- `SUPERSCRIBER_DOCS_URL` - opt-in switch for the hosted user-guide link in the landing footer. Unset (the default) renders nothing and leaves no dead link; once the guide is published, set it (for example `SUPERSCRIBER_DOCS_URL=https://emolinaro.github.io/superscriber/`) and the guide link renders next to the source repository link.
+- `SUPERSCRIBER_DOCS_URL` - opt-in switch for the hosted user-guide link in the authentication landing footer, the same footer that always carries `Source & governance: github.com/emolinaro/superscriber`. The guide link renders only when the variable is set to a valid http(s) URL; unset (the default) or an invalid value renders nothing and leaves no dead link. The guide is expected to go live after docs PR #6 (the GitHub Pages site) merges and Pages is enabled; once live, set it (for example `SUPERSCRIBER_DOCS_URL=https://emolinaro.github.io/superscriber/`) and the guide link renders next to the source repository link.
 
 ## Available Scripts
 
