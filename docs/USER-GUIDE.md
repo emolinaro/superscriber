@@ -19,11 +19,8 @@ workspace policy; the page only ever shows controls you are allowed to use.
 Nothing important is silent: saves mint revisions, decisions carry their
 reasons, and everything lands in the casefile's audit history.
 
-This guide tracks the current development line (`main`), ahead of the
-latest published release. Anything that landed after the most recent tag is
-covered here as it will ship in the next release; for the frozen record of
-a tagged release, switch to that version in the site header's version menu.
-Release history lives in `CHANGELOG.md`; the version source is `VERSION`.
+This guide tracks the current development line (`main`). Release history
+lives in `CHANGELOG.md`; the current version is recorded in `VERSION`.
 
 ## Signing in
 
