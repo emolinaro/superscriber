@@ -7,8 +7,10 @@ import {themes as prismThemes} from 'prism-react-renderer';
 // Docs content lives in the repo's normal locations (README.md, DESIGN.md,
 // docs/operators/, ...) and is derived into website/content/ by
 // scripts/stage-docs.sh - the sources are never moved or edited. Versioning
-// is native Docusaurus versioning; versions.json is cut from repo release
-// tags (v0.4.0 and up). Search is fully local (@easyops-cn - Lunr index at
+// site publishes one tree only, tracking latest main (versioning flattened
+// by captain decision of 2026-08-14: no frozen release snapshots). Old
+// versioned URLs collapse onto the current tree via client redirects.
+// Search is fully local (@easyops-cn - Lunr index at
 // build time), no external keys.
 
 const config: Config = {
@@ -46,17 +48,13 @@ const config: Config = {
           path: 'content',
           routeBasePath: '/',
           sidebarPath: './sidebars.ts',
-          // Versioning follows repo release tags: cut with
-          // `cd website && npx docusaurus docs:version vX.Y.Z`.
-          lastVersion: 'v0.4.0',
+          // One unversioned tree tracking latest main: the single current
+          // version serves at routeBasePath itself (empty path), so no
+          // /next/ or /vX.Y.Z/ subtrees remain routable.
           versions: {
             current: {
-              label: 'next (main)',
-              path: 'next',
-              banner: 'unreleased',
-            },
-            'v0.4.0': {
-              label: 'v0.4.0',
+              label: 'latest (main)',
+              path: '',
             },
           },
         },
@@ -65,6 +63,23 @@ const config: Config = {
           customCss: ['./src/css/custom.css'],
         },
       } satisfies Preset.Options,
+    ],
+  ],
+
+  plugins: [
+    [
+      '@docusaurus/plugin-client-redirects',
+      {
+        // Collapse the retired versioned URL trees onto the current docs
+        // paths (/superscriber/next/x and /superscriber/v0.4.0/x become
+        // /superscriber/x). createRedirects receives and returns paths
+        // relative to baseUrl; the plugin prepends baseUrl when writing the
+        // redirect stubs.
+        createRedirects(existingPath: string) {
+          const suffix = existingPath === '/' ? '' : existingPath;
+          return [`/next${suffix}`, `/v0.4.0${suffix}`, `/0.4.0${suffix}`];
+        },
+      },
     ],
   ],
 
@@ -99,7 +114,8 @@ const config: Config = {
           label: 'Documentation',
         },
         {
-          type: 'docsVersionDropdown',
+          // Single-version site: a fixed label, not a switcher.
+          type: 'docsVersion',
           position: 'right',
         },
         {
