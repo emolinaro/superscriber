@@ -2,6 +2,8 @@
 
 Thanks for contributing. This file covers the workflow that gets a change from your branch to a merged PR. Read [README.md](./README.md) for setup and runtime instructions, [DESIGN.md](./DESIGN.md) for the behavioral contract, [AGENTS.md](./AGENTS.md) for project orientation, and [docs/operators/](./docs/operators/) for operator runbooks - those are the authoritative sources; this document does not repeat them.
 
+Preserve the auth landing footer's shipped link placement: it always names this repository as the source and governance home, while the hosted user-guide link renders only when `SUPERSCRIBER_DOCS_URL` is configured. Operators should enable the guide only after docs PR #6 merges and GitHub Pages is enabled; the README's [Container Runtime](./README.md#container-runtime) section owns the configuration details.
+
 ## The contribution workflow
 
 1. **Branch off `main`.** All work happens on a feature branch; never push to the default branch.
