@@ -173,7 +173,7 @@ services:
 Start the stack and wait for its API:
 
 ```bash
-cd authentik
+cd authentik || exit 1
 chmod 600 .env
 docker compose up -d
 bootstrap_token="$(sed -n 's/^AUTHENTIK_BOOTSTRAP_TOKEN=//p' .env)"
@@ -182,7 +182,7 @@ bootstrap_token="$(sed -n 's/^AUTHENTIK_BOOTSTRAP_TOKEN=//p' .env)"
   exit 1
 }
 authentik_ready=0
-for attempt in $(seq 1 60); do
+for _attempt in $(seq 1 60); do
   if curl -fsS http://localhost:9000/api/v3/core/users/me/ \
     -H "Authorization: Bearer $bootstrap_token" >/dev/null 2>&1; then
     authentik_ready=1
@@ -385,7 +385,7 @@ printf 'provider=%s application=%s issuer=%s\n' "$PROVIDER_PK" "$APP_PK" "$ISSUE
 Run it from the demo root after replacing the credential placeholders:
 
 ```bash
-cd authentik
+cd authentik || exit 1
 chmod 600 .env .env.creds
 chmod 700 provision.sh
 ./provision.sh
@@ -427,7 +427,7 @@ From the demo root, point `SOURCE_CHECKOUT` at a clean checkout of that exact
 commit and run:
 
 ```bash
-SOURCE_CHECKOUT=<absolute path to the Superscriber source checkout>
+SOURCE_CHECKOUT="<absolute path to the Superscriber source checkout>"
 EXPECTED_SOURCE_SHA=47228b986604d13311efdee4a1ed318dc5f644e3
 [ "$(git -C "$SOURCE_CHECKOUT" rev-parse HEAD)" = "$EXPECTED_SOURCE_SHA" ] || {
   echo "source checkout is not the pilot commit $EXPECTED_SOURCE_SHA" >&2
@@ -449,7 +449,7 @@ mkdir -p superscriber/repo superscriber/data/media superscriber/data/uploads \
   superscriber/logs superscriber/pids
 rsync -a --exclude .git --exclude .next --exclude node_modules \
   "$SOURCE_CHECKOUT/" superscriber/repo/
-cd superscriber/repo
+cd superscriber/repo || exit 1
 npm ci
 npm run build
 mkdir -p .next/standalone/.next
@@ -519,8 +519,8 @@ chmod 600 superscriber/app.env superscriber/auth.secret superscriber/engine.secr
 Initialize only the 3276 database:
 
 ```bash
-cd superscriber/repo
-SUPERSCRIBER_DB_PATH=<absolute demo root>/superscriber/data/superscriber.db \
+cd "<absolute demo root>/superscriber/repo" || exit 1
+SUPERSCRIBER_DB_PATH="<absolute demo root>/superscriber/data/superscriber.db" \
   npx tsx scripts/ensure-db.ts
 ```
 
@@ -578,9 +578,9 @@ console.log(JSON.stringify(ids, null, 2));
 ```
 
 ```bash
-cd <absolute demo root>
-SUPERSCRIBER_DB_PATH=<absolute demo root>/superscriber/data/superscriber.db \
-SUPERSCRIBER_REPO=<absolute demo root>/superscriber/repo \
+cd "<absolute demo root>" || exit 1
+SUPERSCRIBER_DB_PATH="<absolute demo root>/superscriber/data/superscriber.db" \
+SUPERSCRIBER_REPO="<absolute demo root>/superscriber/repo" \
   node superscriber/seed-users.cjs
 ```
 
@@ -610,12 +610,12 @@ the pilot:
 Dry-run and then apply the links against the same database:
 
 ```bash
-cd superscriber/repo
-SUPERSCRIBER_DB_PATH=<absolute demo root>/superscriber/data/superscriber.db \
+cd "<absolute demo root>/superscriber/repo" || exit 1
+SUPERSCRIBER_DB_PATH="<absolute demo root>/superscriber/data/superscriber.db" \
   npm run identity:import -- --file ../identity-mapping.json --dry-run
-SUPERSCRIBER_DB_PATH=<absolute demo root>/superscriber/data/superscriber.db \
+SUPERSCRIBER_DB_PATH="<absolute demo root>/superscriber/data/superscriber.db" \
   npm run identity:import -- --file ../identity-mapping.json --apply \
-  --linked-by <printed admin user id>
+  --linked-by "<printed admin user id>"
 ```
 
 ### Record the pilot's break-glass state accurately
@@ -623,9 +623,9 @@ SUPERSCRIBER_DB_PATH=<absolute demo root>/superscriber/data/superscriber.db \
 The pilot ran only this designation command, with the real 3276 database path:
 
 ```bash
-cd superscriber/repo
-SUPERSCRIBER_DB_PATH=<absolute demo root>/superscriber/data/superscriber.db \
-  npm run break-glass:designate -- --user <printed admin user id> \
+cd "<absolute demo root>/superscriber/repo" || exit 1
+SUPERSCRIBER_DB_PATH="<absolute demo root>/superscriber/data/superscriber.db" \
+  npm run break-glass:designate -- --user "<printed admin user id>" \
   --reason "Initial OIDC demo custodian"
 ```
 
@@ -1014,7 +1014,7 @@ echo "stopped supervisor $pid"
 Start and check the 3276 lane without exercising the live 3275 lane:
 
 ```bash
-export SUPERSCRIBER_ROOT=<absolute demo root>/superscriber
+export SUPERSCRIBER_ROOT="<absolute demo root>/superscriber"
 chmod 700 "$SUPERSCRIBER_ROOT/run.sh" "$SUPERSCRIBER_ROOT/stop.sh"
 worker_log="$SUPERSCRIBER_ROOT/logs/worker.log"
 mkdir -p "$SUPERSCRIBER_ROOT/logs"
@@ -1024,7 +1024,7 @@ bash "$SUPERSCRIBER_ROOT/run.sh"
 superscriber_ready=0
 api_ready=0
 worker_ready=0
-for attempt in $(seq 1 60); do
+for _attempt in $(seq 1 60); do
   if curl -fsS http://localhost:3276/api/health >/dev/null 2>&1; then
     api_ready=1
   fi
@@ -1069,9 +1069,9 @@ done
 4. Revoke the reviewer from the repository checkout:
 
    ```bash
-   cd <absolute demo root>/superscriber/repo
-   SUPERSCRIBER_DB_PATH=<absolute demo root>/superscriber/data/superscriber.db \
-     npm run auth:revoke -- --user <printed reviewer user id> \
+   cd "<absolute demo root>/superscriber/repo" || exit 1
+   SUPERSCRIBER_DB_PATH="<absolute demo root>/superscriber/data/superscriber.db" \
+     npm run auth:revoke -- --user "<printed reviewer user id>" \
      --reason "OIDC demo session revocation"
    ```
 
@@ -1085,9 +1085,9 @@ done
 Stop the same supervisor and compose project that this runbook started:
 
 ```bash
-export SUPERSCRIBER_ROOT=<absolute demo root>/superscriber
+export SUPERSCRIBER_ROOT="<absolute demo root>/superscriber"
 bash "$SUPERSCRIBER_ROOT/stop.sh"
-cd <absolute demo root>/authentik
+cd "<absolute demo root>/authentik" || exit 1
 docker compose down
 curl -fsS http://localhost:3275/api/health
 ```
