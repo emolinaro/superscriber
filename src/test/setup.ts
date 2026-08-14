@@ -22,3 +22,10 @@ if (
 ) {
   window.HTMLElement.prototype.scrollIntoView = () => {};
 }
+
+if (
+  typeof window !== "undefined" &&
+  typeof window.HTMLElement.prototype.scrollTo !== "function"
+) {
+  window.HTMLElement.prototype.scrollTo = () => {};
+}

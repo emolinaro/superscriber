@@ -6,6 +6,11 @@ import type { Recording, TranscriptSegment } from "@/domain/models";
 import { formatSegmentWindow } from "@/lib/format";
 import { InlineNotice } from "@/components/ui/inline-notice";
 import { WaveScrubber } from "@/components/casefile/wave-scrubber";
+import {
+  centeredHorizontalScrollLeft,
+  decideFollowScroll,
+  isTargetInHorizontalView,
+} from "./follow-scroll";
 
 type MediaTransportProps = {
   mediaKind: Recording["mediaKind"];
@@ -58,6 +63,19 @@ export function MediaTransport({
   onPlayingChange,
 }: MediaTransportProps) {
   const transportRef = useRef<HTMLElement | null>(null);
+  const railRef = useRef<HTMLOListElement | null>(null);
+  // Wave-track scroll sync: the rail is an independent horizontal scrollport
+  // that follows the same active segment the transcript centers. It runs the
+  // transcript's non-fighting contract on the inline axis: a user wheel or
+  // touch drag on the rail pauses ONLY the rail's follow; rail gestures
+  // never pause the transcript's vertical follow
+  // (FOLLOW_SCROLL_IGNORED_TARGETS), and any explicit seek re-engages both
+  // axes. The nonce mirrors the workspace's followResumeNonce so a repeated
+  // seek that does not change the active segment still re-centers the chip.
+  const railFollowPausedRef = useRef(false);
+  const [railFollowResumeNonce, setRailFollowResumeNonce] = useState(0);
+  const [railWidth, setRailWidth] = useState(0);
+  const hasRail = Boolean(mediaUrl) && segments.length > 0;
   const mediaRef = useRef<HTMLAudioElement | HTMLVideoElement | null>(null);
   const [mediaEl, setMediaEl] = useState<HTMLAudioElement | HTMLVideoElement | null>(null);
   // Wave scrubber (demo-waveform-player): decoded-wave progress bar replaces
@@ -170,10 +188,107 @@ export function MediaTransport({
     () => segments.find((segment) => segment.id === activeSegmentId) ?? null,
     [activeSegmentId, segments],
   );
+  const railLayoutSignature = useMemo(
+    () =>
+      JSON.stringify(
+        segments.map((segment) => [
+          segment.startMs,
+          segment.endMs,
+          segment.speakerLabel,
+        ]),
+      ),
+    [segments],
+  );
 
   function attachMedia(node: HTMLAudioElement | HTMLVideoElement | null) {
     mediaRef.current = node;
     setMediaEl(node);
+  }
+
+  useEffect(() => {
+    const rail = railRef.current;
+    if (!rail) {
+      return;
+    }
+    // User scroll gestures on the strip itself pause the horizontal follow.
+    // Programmatic follow scrolls never fire these events, so follow cannot
+    // pause itself - the same boundary the vertical contract documents.
+    const pauseRailFollow = () => {
+      railFollowPausedRef.current = true;
+    };
+    rail.addEventListener("wheel", pauseRailFollow, { passive: true });
+    rail.addEventListener("touchmove", pauseRailFollow, { passive: true });
+    return () => {
+      rail.removeEventListener("wheel", pauseRailFollow);
+      rail.removeEventListener("touchmove", pauseRailFollow);
+    };
+  }, [hasRail]);
+
+  useEffect(() => {
+    const rail = railRef.current;
+    if (!rail) {
+      return;
+    }
+    const updateRailWidth = () => {
+      const nextWidth = rail.clientWidth;
+      setRailWidth((currentWidth) =>
+        currentWidth === nextWidth ? currentWidth : nextWidth,
+      );
+    };
+
+    updateRailWidth();
+    const observer =
+      typeof ResizeObserver === "undefined"
+        ? null
+        : new ResizeObserver(updateRailWidth);
+    observer?.observe(rail);
+    return () => observer?.disconnect();
+  }, [hasRail]);
+
+  // Horizontal playback follow: keep the active segment's chip centered-ish
+  // in the rail scrollport as playback advances and after explicit seeks.
+  // Vertical scrollports are deliberately untouched here (direct scrollLeft
+  // writes, never scrollIntoView) so the rail cannot nudge the page or the
+  // transcript's bounded scrollport.
+  useEffect(() => {
+    const rail = railRef.current;
+    if (!rail || !activeSegmentId) {
+      return;
+    }
+    const chip = rail.querySelector<HTMLElement>("[data-active]");
+    if (!chip) {
+      return;
+    }
+
+    const railRect = rail.getBoundingClientRect();
+    const chipRect = chip.getBoundingClientRect();
+    const scrollport = { clientWidth: rail.clientWidth, scrollLeft: rail.scrollLeft };
+    const target = {
+      // rects are viewport-relative; add the current scroll back to reach
+      // the content-origin coordinates the helper contract requires.
+      offsetLeft: chipRect.left - railRect.left + rail.scrollLeft,
+      width: chipRect.width,
+    };
+
+    const decision = decideFollowScroll(
+      railFollowPausedRef.current,
+      isTargetInHorizontalView(scrollport, target),
+    );
+    if (decision === "skip") {
+      return;
+    }
+    railFollowPausedRef.current = false;
+
+    const reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    rail.scrollTo({
+      left: centeredHorizontalScrollLeft(scrollport, target),
+      behavior: reducedMotion ? "auto" : "smooth",
+    });
+  }, [activeSegmentId, railFollowResumeNonce, railLayoutSignature, railWidth]);
+
+  function resumeRailFollow() {
+    railFollowPausedRef.current = false;
+    setRailFollowResumeNonce((current) => current + 1);
   }
 
   function seekToSegment(segment: TranscriptSegment) {
@@ -182,6 +297,10 @@ export function MediaTransport({
       mediaRef.current.play().catch(() => undefined);
     }
     syncActiveSegment(segment.startMs / 1000);
+    // Rail chips and wave markers are explicit seeks: they re-engage the
+    // horizontal follow just like they re-engage the transcript's follow
+    // via onMediaSeek.
+    resumeRailFollow();
     onLocateSegment?.(segment);
   }
 
@@ -210,6 +329,9 @@ export function MediaTransport({
 
   function handleSeeking(event: SyntheticEvent<HTMLMediaElement>) {
     syncActiveSegment(event.currentTarget.currentTime);
+    // Shared media seeks (wave click/drag, native controls, transcript
+    // timestamps, jump-back) are explicit seeks on both axes.
+    resumeRailFollow();
     onMediaSeek?.();
   }
 
@@ -280,7 +402,7 @@ export function MediaTransport({
         )}
       </div>
       {segments.length > 0 ? (
-        <ol aria-label="Transcript segments" className="media-transport__rail">
+        <ol aria-label="Transcript segments" className="media-transport__rail" ref={railRef}>
           {segments.map((segment, index) => {
             const active = segment.id === activeSegmentId;
             const windowLabel = formatSegmentWindow(segment.startMs, segment.endMs);

@@ -136,7 +136,7 @@ A successful save atomically records the role-change audit, increments the accou
 
 ### Data discipline and destructive controls
 
-**Administration > Policy** lets an administrator switch the workspace policy profile (strict vs reviewable-approved-export); every change is applied immediately and audited with actor and before/after. **Administration > Data discipline** counts the governed ledger rows and hosts the typed-phrase (`RESET REQUIRED`) ledger reset, and each casefile shows administrators a **Danger zone** with a typed-title permanent purge. Both destructive controls write a JSON snapshot of every row they are about to delete into `data/ledger-snapshots/` (row-level copies outside the database, mode `0600`) before the delete transaction runs, and each leaves exactly one surviving security record (`ledger.reset` / `recording.deleted`) that names the snapshot path.
+**Administration > Policy** lets an administrator switch the workspace policy profile (strict vs reviewable-approved-export); every change is applied immediately and audited with actor and before/after. **Administration > Data discipline** counts the governed ledger rows and hosts the typed-phrase (`RESET REQUIRED`) ledger reset, and each casefile pins a **Delete recording** control in its state action bar for administrators, with a typed-title permanent purge. Both destructive controls write a JSON snapshot of every row they are about to delete into `data/ledger-snapshots/` (row-level copies outside the database, mode `0600`) before the delete transaction runs, and each leaves exactly one surviving security record (`ledger.reset` / `recording.deleted`) that names the snapshot path.
 
 ## Local Non-Docker Runtime
 

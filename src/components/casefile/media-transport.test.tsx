@@ -1,8 +1,15 @@
 // @vitest-environment jsdom
 
 import userEvent from "@testing-library/user-event";
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import {
+  act,
+  cleanup,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+} from "@testing-library/react";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { baseSegments } from "./test-fixtures";
 import { MediaTransport } from "./media-transport";
 
@@ -25,9 +32,32 @@ function stubMediaPlayback(media: HTMLMediaElement) {
 }
 
 describe("MediaTransport", () => {
+  let railScrollToMock: ReturnType<typeof vi.fn>;
+  let reducedMotion: boolean;
+
+  beforeEach(() => {
+    reducedMotion = false;
+    // jsdom implements neither Element.scrollTo nor window.matchMedia; the
+    // rail's horizontal follow (wave-track scroll sync) needs both.
+    railScrollToMock = vi.fn();
+    window.HTMLElement.prototype.scrollTo =
+      railScrollToMock as unknown as HTMLElement["scrollTo"];
+    window.matchMedia = vi.fn().mockImplementation((query: string) => ({
+      matches: reducedMotion,
+      media: query,
+      onchange: null,
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
+      addListener: vi.fn(),
+      removeListener: vi.fn(),
+      dispatchEvent: vi.fn(),
+    }));
+  });
+
   afterEach(() => {
     cleanup();
     vi.unstubAllGlobals();
+    vi.restoreAllMocks();
     document.documentElement.style.removeProperty("--player-clearance");
   });
 
@@ -128,17 +158,22 @@ describe("MediaTransport", () => {
   });
 
   it("publishes the rendered transport height as player clearance", () => {
-    let resizeCallback: ResizeObserverCallback = () => undefined;
+    const resizeCallbacks = new Map<Element, ResizeObserverCallback>();
     const observe = vi.fn();
     const disconnect = vi.fn();
     vi.stubGlobal(
       "ResizeObserver",
       class {
+        callback: ResizeObserverCallback;
+
         constructor(callback: ResizeObserverCallback) {
-          resizeCallback = callback;
+          this.callback = callback;
         }
 
-        observe = observe;
+        observe = (target: Element) => {
+          observe(target);
+          resizeCallbacks.set(target, this.callback);
+        };
         disconnect = disconnect;
         unobserve = vi.fn();
       },
@@ -162,7 +197,7 @@ describe("MediaTransport", () => {
     const transport = container.querySelector<HTMLElement>(".media-transport")!;
     transport.getBoundingClientRect = () =>
       ({ height: 287, width: 800 } as DOMRect);
-    resizeCallback([], {} as ResizeObserver);
+    resizeCallbacks.get(transport)!([], {} as ResizeObserver);
 
     expect(observe).toHaveBeenCalledWith(transport);
     expect(page.style.getPropertyValue("--player-clearance")).toBe("287px");
@@ -433,5 +468,215 @@ describe("MediaTransport", () => {
     expect(stub.pause).toHaveBeenCalledTimes(1);
     await waitFor(() => expect(toggle).toHaveAttribute("aria-pressed", "false"));
     expect(toggle).toHaveTextContent("Play");
+  });
+
+  describe("rail follow (wave-track scroll sync)", () => {
+    const railSegments = Array.from({ length: 6 }, (_, index) => ({
+      id: `rail-seg-${index + 1}`,
+      speakerLabel: `Speaker ${index + 1}`,
+      startMs: index * 10_000,
+      endMs: (index + 1) * 10_000,
+      text: `Line ${index + 1}.`,
+      confidence: 0.9,
+    }));
+    // jsdom reports zero geometry, so chip/layout geometry is stubbed per
+    // test: 200px chip stride, 176px chip width, 400px viewport.
+    const railOffsets = railSegments.map((_, index) => index * 200);
+
+    function railProps(segments = railSegments) {
+      return {
+        mediaKind: "audio" as const,
+        mediaUrl: "/api/media/rec-1",
+        onActiveSegmentChange: vi.fn(),
+        onSeekHandled: vi.fn(),
+        seekRequest: null,
+        segments,
+      };
+    }
+
+    function stubRailStrip(rail: HTMLElement) {
+      let scrollLeft = 0;
+      const offsets = [...railOffsets];
+      const widths = railSegments.map(() => 176);
+      Object.defineProperty(rail, "clientWidth", { configurable: true, value: 400 });
+      Object.defineProperty(rail, "scrollLeft", {
+        configurable: true,
+        get: () => scrollLeft,
+        set: (value: number) => {
+          scrollLeft = value;
+        },
+      });
+      rail.getBoundingClientRect = () =>
+        ({ left: 0, right: 400, width: 400 }) as DOMRect;
+      rail
+        .querySelectorAll<HTMLElement>(".media-transport__rail-chip")
+        .forEach((chip, index) => {
+          chip.getBoundingClientRect = () =>
+            ({
+              left: offsets[index] - scrollLeft,
+              right: offsets[index] - scrollLeft + widths[index],
+              width: widths[index],
+            }) as DOMRect;
+        });
+      return {
+        setChipGeometry(index: number, offsetLeft: number, width: number) {
+          offsets[index] = offsetLeft;
+          widths[index] = width;
+        },
+        setScrollLeft(value: number) {
+          scrollLeft = value;
+        },
+      };
+    }
+
+    it("centers the active chip in the rail as playback advances past the scrollport edge", () => {
+      const { container, rerender } = render(
+        <MediaTransport {...railProps()} activeSegmentId="rail-seg-1" />,
+      );
+      // Geometry is stubbed after mount; the initial zero-geometry center
+      // (scrollLeft 0 target) is not the assertion.
+      stubRailStrip(container.querySelector<HTMLElement>(".media-transport__rail")!);
+      railScrollToMock.mockClear();
+
+      rerender(<MediaTransport {...railProps()} activeSegmentId="rail-seg-6" />);
+
+      // Chip 6 spans content 1000-1176 in a 400px viewport: centered at 888.
+      expect(railScrollToMock).toHaveBeenCalledWith({ left: 888, behavior: "smooth" });
+    });
+
+    it("recenters the active chip when a speaker rename changes rail geometry", () => {
+      const renamedSegments = railSegments.map((segment, index) =>
+        index === 1
+          ? { ...segment, speakerLabel: "Speaker 2 with a substantially longer name" }
+          : segment,
+      );
+      const { container, rerender } = render(
+        <MediaTransport {...railProps()} activeSegmentId="rail-seg-6" />,
+      );
+      const strip = stubRailStrip(
+        container.querySelector<HTMLElement>(".media-transport__rail")!,
+      );
+      railScrollToMock.mockClear();
+
+      strip.setChipGeometry(5, 1120, 176);
+      rerender(
+        <MediaTransport
+          {...railProps(renamedSegments)}
+          activeSegmentId="rail-seg-6"
+        />,
+      );
+
+      expect(railScrollToMock).toHaveBeenCalledWith({ left: 1008, behavior: "smooth" });
+    });
+
+    it("uses an instant follow scroll under prefers-reduced-motion", () => {
+      reducedMotion = true;
+      const { container, rerender } = render(
+        <MediaTransport {...railProps()} activeSegmentId="rail-seg-1" />,
+      );
+      stubRailStrip(container.querySelector<HTMLElement>(".media-transport__rail")!);
+      railScrollToMock.mockClear();
+
+      rerender(<MediaTransport {...railProps()} activeSegmentId="rail-seg-6" />);
+
+      expect(railScrollToMock).toHaveBeenCalledWith({ left: 888, behavior: "auto" });
+    });
+
+    it("recenters the active chip when the rail reappears at a new width", () => {
+      let railResizeCallback: ResizeObserverCallback | null = null;
+      const observe = vi.fn();
+      vi.stubGlobal(
+        "ResizeObserver",
+        class {
+          callback: ResizeObserverCallback;
+
+          constructor(callback: ResizeObserverCallback) {
+            this.callback = callback;
+          }
+
+          observe = (target: Element) => {
+            observe(target);
+            if (target.classList.contains("media-transport__rail")) {
+              railResizeCallback = this.callback;
+            }
+          };
+          disconnect = vi.fn();
+          unobserve = vi.fn();
+        },
+      );
+
+      const { container } = render(
+        <MediaTransport {...railProps()} activeSegmentId="rail-seg-6" />,
+      );
+      const rail = container.querySelector<HTMLElement>(".media-transport__rail")!;
+      stubRailStrip(rail);
+      railScrollToMock.mockClear();
+
+      expect(observe).toHaveBeenCalledWith(rail);
+      act(() => railResizeCallback!([], {} as ResizeObserver));
+
+      expect(railScrollToMock).toHaveBeenCalledWith({ left: 888, behavior: "smooth" });
+    });
+
+    it("pauses its own follow on a rail gesture and resumes once the active chip is in view again", () => {
+      const { container, rerender } = render(
+        <MediaTransport {...railProps()} activeSegmentId="rail-seg-1" />,
+      );
+      const rail = container.querySelector<HTMLElement>(".media-transport__rail")!;
+      const strip = stubRailStrip(rail);
+      rerender(<MediaTransport {...railProps()} activeSegmentId="rail-seg-2" />);
+      railScrollToMock.mockClear();
+
+      // A user scroll gesture on the strip pauses ITS follow only.
+      fireEvent(rail, new Event("wheel"));
+      rerender(<MediaTransport {...railProps()} activeSegmentId="rail-seg-6" />);
+      // Chip 6 (1000-1176) is out of the 0-400 view: leave the user alone.
+      expect(railScrollToMock).not.toHaveBeenCalled();
+
+      // Playback advances while the user has scrolled the strip so the new
+      // active chip (600-776) intersects the 350-750 view: re-engage.
+      strip.setScrollLeft(350);
+      rerender(<MediaTransport {...railProps()} activeSegmentId="rail-seg-4" />);
+      expect(railScrollToMock).toHaveBeenCalledWith({ left: 488, behavior: "smooth" });
+    });
+
+    it("re-engages paused follow immediately on an explicit media seek", () => {
+      const onActiveSegmentChange = vi.fn();
+      const { container, rerender } = render(
+        <MediaTransport
+          {...railProps()}
+          activeSegmentId="rail-seg-1"
+          onActiveSegmentChange={onActiveSegmentChange}
+        />,
+      );
+      const rail = container.querySelector<HTMLElement>(".media-transport__rail")!;
+      stubRailStrip(rail);
+      railScrollToMock.mockClear();
+
+      fireEvent(rail, new Event("wheel"));
+
+      // A hard seek (wave click/drag, native controls, transcript timestamp)
+      // re-engages the horizontal follow even though the user just scrolled.
+      const audio = document.querySelector("audio")!;
+      audio.currentTime = 45;
+      fireEvent(audio, new Event("seeking"));
+      expect(onActiveSegmentChange).toHaveBeenCalledWith("rail-seg-5");
+      // The seek itself re-runs the follow against the still-current chip
+      // (seg-1 is in view) ...
+      expect(railScrollToMock).toHaveBeenCalledWith({ left: 0, behavior: "smooth" });
+      railScrollToMock.mockClear();
+
+      // ... and once the parent propagates the new active id, follow centers
+      // the newly active chip even though it is far out of view - the pause
+      // is gone, no visibility qualification.
+      rerender(
+        <MediaTransport
+          {...railProps()}
+          activeSegmentId="rail-seg-5"
+          onActiveSegmentChange={onActiveSegmentChange}
+        />,
+      );
+      expect(railScrollToMock).toHaveBeenCalledWith({ left: 688, behavior: "smooth" });
+    });
   });
 });

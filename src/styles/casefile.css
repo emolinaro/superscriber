@@ -775,29 +775,11 @@
   color: var(--color-success-fg);
 }
 
-/* Recording purge (demo-governance-bringback): admin danger zone on the
-   casefile. Red edge keeps it visually isolated from governed surfaces. */
-.danger-zone {
-  border: 1px solid color-mix(in srgb, var(--color-danger-fg) 55%, transparent);
-  border-radius: var(--radius-surface);
-  padding: var(--space-4);
-  margin-top: var(--space-6);
-  display: grid;
-  gap: var(--space-3);
-}
-
-.danger-zone__title {
-  font-size: 0.95rem;
-  letter-spacing: 0.02em;
-  text-transform: uppercase;
-  color: var(--color-danger-fg);
-  margin: 0;
-}
-
-.danger-zone__note {
-  margin: 0;
-  color: var(--color-muted);
-}
+/* Recording purge (demo-recording-remove): the governed destructive action
+   lives in the pinned state action bar (last in the buttons row, in the loud
+   .button-danger treatment) so it never scrolls away on any layout. Phone
+   safety mode withholds it with the rest of the governed row. The
+   confirmation modal itself is unchanged. */
 
 /* Export affordance (demo-governance-bringback): revision navigator next to
    the Revision fact. */
