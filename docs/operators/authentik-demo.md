@@ -63,9 +63,6 @@ Create `authentik/.env`, set mode 600, and replace every placeholder locally:
 
 ```dotenv
 AUTHENTIK_SECRET_KEY=<generate with: openssl rand -base64 60>
-AUTHENTIK_TAG=2025.10.3
-POSTGRES_TAG=16-alpine
-REDIS_TAG=7.2-alpine
 AUTHENTIK_POSTGRES_USER=authentik
 AUTHENTIK_POSTGRES_PASSWORD=<generate with: openssl rand -hex 24>
 AUTHENTIK_BOOTSTRAP_PASSWORD=<generated console administrator credential>
@@ -80,10 +77,21 @@ pilot ran. Authentik 2025.10 removed Redis and its related settings. The
 as an unused, harmless sidecar so this record matches the pinned 2025.10.3
 pilot. Do not copy this historical shape into a production deployment.
 
+The pilot resolved the displayed tags to these immutable image identities:
+
+- Authentik `2025.10.3`:
+  `ghcr.io/goauthentik/server@sha256:d2b66e851246e7299219b72a4ed43630a2c2bac3745eb665834b72963d836e64`
+- PostgreSQL `16-alpine`:
+  `docker.io/library/postgres@sha256:57c72fd2a128e416c7fcc499958864df5301e940bca0a56f58fddf30ffc07777`
+- Redis `7.2-alpine`:
+  `docker.io/library/redis@sha256:05a97a479bc73de66f087dc05b569010772880f778cc8671fa6b8aadee32e5c6`
+
+The compose file uses the digests, not the rolling tags.
+
 ```yaml
 services:
   postgresql:
-    image: docker.io/library/postgres:${POSTGRES_TAG}
+    image: docker.io/library/postgres@sha256:57c72fd2a128e416c7fcc499958864df5301e940bca0a56f58fddf30ffc07777
     restart: unless-stopped
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -d authentik -U $${POSTGRES_USER}"]
@@ -99,7 +107,7 @@ services:
       POSTGRES_DB: authentik
 
   redis:
-    image: docker.io/library/redis:${REDIS_TAG}
+    image: docker.io/library/redis@sha256:05a97a479bc73de66f087dc05b569010772880f778cc8671fa6b8aadee32e5c6
     command: --save 60 1 --loglevel warning
     restart: unless-stopped
     healthcheck:
@@ -112,7 +120,7 @@ services:
       - ./data/redis:/data
 
   server:
-    image: ghcr.io/goauthentik/server:${AUTHENTIK_TAG}
+    image: ghcr.io/goauthentik/server@sha256:d2b66e851246e7299219b72a4ed43630a2c2bac3745eb665834b72963d836e64
     restart: unless-stopped
     command: server
     environment:
@@ -137,7 +145,7 @@ services:
         condition: service_healthy
 
   worker:
-    image: ghcr.io/goauthentik/server:${AUTHENTIK_TAG}
+    image: ghcr.io/goauthentik/server@sha256:d2b66e851246e7299219b72a4ed43630a2c2bac3745eb665834b72963d836e64
     restart: unless-stopped
     command: worker
     environment:
@@ -168,9 +176,15 @@ Start the stack and wait for its API:
 cd authentik
 chmod 600 .env
 docker compose up -d
+bootstrap_token="$(sed -n 's/^AUTHENTIK_BOOTSTRAP_TOKEN=//p' .env)"
+[ -n "$bootstrap_token" ] || {
+  echo "AUTHENTIK_BOOTSTRAP_TOKEN is missing from .env" >&2
+  exit 1
+}
 authentik_ready=0
 for attempt in $(seq 1 60); do
-  if curl -fsS http://localhost:9000/api/v3/root/config/ >/dev/null 2>&1; then
+  if curl -fsS http://localhost:9000/api/v3/core/users/me/ \
+    -H "Authorization: Bearer $bootstrap_token" >/dev/null 2>&1; then
     authentik_ready=1
     break
   fi
@@ -183,7 +197,7 @@ for attempt in $(seq 1 60); do
 done
 [ "$authentik_ready" -eq 1 ] || {
   docker compose ps
-  echo "Authentik API did not become ready within 120 seconds" >&2
+  echo "Authentik authenticated API did not become ready within 120 seconds" >&2
   exit 1
 }
 ```
@@ -212,11 +226,25 @@ set -euo pipefail
 cd "$(dirname "$0")"
 
 BASE="${AUTHENTIK_BASE_URL:-http://localhost:9000}"
-TOKEN="$(sed -n 's/^AUTHENTIK_BOOTSTRAP_TOKEN=//p' .env)"
 APP_ORIGIN="${SUPERSCRIBER_APP_ORIGIN:-http://localhost:3276}"
-OAUTH_CLIENT_SECRET="${OAUTH_CLIENT_SECRET:-}"
-DEMO_ADMIN_PASSWORD="${DEMO_ADMIN_PASSWORD-}"
-DEMO_REVIEWER_PASSWORD="${DEMO_REVIEWER_PASSWORD-}"
+
+read_value() {
+  node -e '
+    const [file, key] = process.argv.slice(1);
+    const lines = require("fs").readFileSync(file, "utf8").split(/\r?\n/);
+    const matches = lines.filter((line) => line.startsWith(`${key}=`));
+    if (matches.length !== 1) {
+      console.error(`${file} must contain exactly one ${key}= entry`);
+      process.exit(1);
+    }
+    process.stdout.write(matches[0].slice(key.length + 1));
+  ' "$1" "$2"
+}
+
+TOKEN="$(read_value .env AUTHENTIK_BOOTSTRAP_TOKEN)"
+OAUTH_CLIENT_SECRET="$(read_value .env.creds OAUTH_CLIENT_SECRET)"
+DEMO_ADMIN_PASSWORD="$(read_value .env.creds DEMO_ADMIN_PASSWORD)"
+DEMO_REVIEWER_PASSWORD="$(read_value .env.creds DEMO_REVIEWER_PASSWORD)"
 
 [ -n "$TOKEN" ] || { echo "missing AUTHENTIK_BOOTSTRAP_TOKEN in .env" >&2; exit 1; }
 [ -n "$OAUTH_CLIENT_SECRET" ] || { echo "set OAUTH_CLIENT_SECRET" >&2; exit 1; }
@@ -310,13 +338,17 @@ if [ -z "$APP_PK" ]; then
 fi
 
 ensure_user() {
-  local username="$1" display_name="$2" password="$3" target_role="$4"
+  local username="$1" display_name="$2" password="$3" target_role="$4" password_body
   local target_group="${ROLE_GROUP[$target_role]}" pk group other_role
   pk="$(api GET "/core/users/?username=$username" | jqe "d.results[0]?.pk" || true)"
   if [ -z "$pk" ]; then
     pk="$(api POST "/core/users/" -d "{\"username\":\"$username\",\"name\":\"$display_name\",\"is_active\":true}" | jqe "d.pk")"
   fi
-  api POST "/core/users/$pk/set_password/" -d "{\"password\":\"$password\"}" >/dev/null
+  password_body="$(printf '%s' "$password" | node -e '
+    const password = require("fs").readFileSync(0, "utf8");
+    process.stdout.write(JSON.stringify({ password }));
+  ')"
+  api POST "/core/users/$pk/set_password/" -d "$password_body" >/dev/null
   api POST "/core/groups/$target_group/add_user/" -d "{\"pk\":$pk}" >/dev/null
   for other_role in uploader reviewer approver admin; do
     group="${ROLE_GROUP[$other_role]}"
@@ -356,9 +388,6 @@ Run it from the demo root after replacing the credential placeholders:
 cd authentik
 chmod 600 .env .env.creds
 chmod 700 provision.sh
-set -a
-. ./.env.creds
-set +a
 ./provision.sh
 ```
 
@@ -386,12 +415,36 @@ superscriber/
   venv/
 ```
 
-The pilot copied the source checkout into `repo/`, installed the pinned Node
-dependencies, built the standalone app, and created a Python worker
-environment. From the demo root, replace the source placeholder and run:
+The pilot built source commit
+`47228b986604d13311efdee4a1ed318dc5f644e3`, which was `origin/main` at build
+time. The host ran Node.js `v26.7.0` and Python `3.13.14`. The source
+`worker/requirements.txt` declared `faster-whisper>=1.1.0`; the installed
+version was `1.2.1`, so the build command constrains the declared worker
+dependency to that observed version. The Node dependency graph remains locked
+by the source commit's `package-lock.json` and `npm ci`.
+
+From the demo root, point `SOURCE_CHECKOUT` at a clean checkout of that exact
+commit and run:
 
 ```bash
 SOURCE_CHECKOUT=<absolute path to the Superscriber source checkout>
+EXPECTED_SOURCE_SHA=47228b986604d13311efdee4a1ed318dc5f644e3
+[ "$(git -C "$SOURCE_CHECKOUT" rev-parse HEAD)" = "$EXPECTED_SOURCE_SHA" ] || {
+  echo "source checkout is not the pilot commit $EXPECTED_SOURCE_SHA" >&2
+  exit 1
+}
+[ -z "$(git -C "$SOURCE_CHECKOUT" status --porcelain --untracked-files=all)" ] || {
+  echo "source checkout contains changes not present in the pilot commit" >&2
+  exit 1
+}
+[ "$(node --version)" = "v26.7.0" ] || {
+  echo "the pilot build requires Node.js v26.7.0" >&2
+  exit 1
+}
+[ "$(python3 --version 2>&1)" = "Python 3.13.14" ] || {
+  echo "the pilot build requires Python 3.13.14" >&2
+  exit 1
+}
 mkdir -p superscriber/repo superscriber/data/media superscriber/data/uploads \
   superscriber/logs superscriber/pids
 rsync -a --exclude .git --exclude .next --exclude node_modules \
@@ -403,7 +456,10 @@ mkdir -p .next/standalone/.next
 cp -R .next/static .next/standalone/.next/static
 cp -R public .next/standalone/public
 python3 -m venv ../venv
-../venv/bin/python3 -m pip install -r worker/requirements.txt
+printf 'faster-whisper==1.2.1\n' > ../worker-direct-constraints.txt
+../venv/bin/python3 -m pip install \
+  --constraint ../worker-direct-constraints.txt \
+  --requirement worker/requirements.txt
 cd ../..
 ```
 
@@ -889,20 +945,44 @@ process_matches_identity() {
   [[ "$current" == "$2" ]]
 }
 
+role_identity_if_live() {
+  local role="$1" role_file role_identity role_pid role_started
+  role_file="$ROOT/pids/$role.pid"
+  role_identity="$(cat "$role_file" 2>/dev/null || true)"
+  read -r role_pid role_started <<<"$role_identity"
+  if [[ "$role_pid" =~ ^[0-9]+$ && "$role_started" =~ ^[0-9]+-[0-9]+$ ]] && \
+     process_matches_identity "$role_pid" "$role_started"; then
+    printf '%s\n' "$role_identity"
+    return 0
+  fi
+  [[ "$(cat "$role_file" 2>/dev/null || true)" != "$role_identity" ]] || rm -f "$role_file"
+  return 1
+}
+
+verified_children_are_live() {
+  role_identity_if_live app >/dev/null && return 0
+  role_identity_if_live worker >/dev/null && return 0
+  return 1
+}
+
+report_verified_children() {
+  local role role_identity
+  for role in app worker; do
+    role_identity="$(role_identity_if_live "$role" 2>/dev/null || true)"
+    [ -z "$role_identity" ] || echo "verified $role process still running: $role_identity" >&2
+  done
+}
+
 identity="$(cat "$PID_FILE" 2>/dev/null || true)"
 read -r pid started <<<"$identity"
 if [[ ! "$pid" =~ ^[0-9]+$ || ! "$started" =~ ^[0-9]+-[0-9]+$ ]] || \
    ! process_matches_identity "$pid" "$started"; then
   [[ "$(cat "$PID_FILE" 2>/dev/null || true)" != "$identity" ]] || rm -f "$PID_FILE"
-  for role in app worker; do
-    role_file="$ROOT/pids/$role.pid"
-    role_identity="$(cat "$role_file" 2>/dev/null || true)"
-    read -r role_pid role_started <<<"$role_identity"
-    if [[ ! "$role_pid" =~ ^[0-9]+$ || ! "$role_started" =~ ^[0-9]+-[0-9]+$ ]] || \
-       ! process_matches_identity "$role_pid" "$role_started"; then
-      [[ "$(cat "$role_file" 2>/dev/null || true)" != "$role_identity" ]] || rm -f "$role_file"
-    fi
-  done
+  if verified_children_are_live; then
+    report_verified_children
+    echo "supervisor is absent but verified demo children remain" >&2
+    exit 1
+  fi
   echo "supervisor not running"
   exit 0
 fi
@@ -918,6 +998,16 @@ if process_matches_identity "$pid" "$started"; then
   exit 1
 fi
 [[ "$(cat "$PID_FILE" 2>/dev/null || true)" != "$identity" ]] || rm -f "$PID_FILE"
+attempts=0
+while [ "$attempts" -lt 50 ] && verified_children_are_live; do
+  attempts=$((attempts + 1))
+  sleep 0.1
+done
+if verified_children_are_live; then
+  report_verified_children
+  echo "verified demo children did not stop after supervisor exit" >&2
+  exit 1
+fi
 echo "stopped supervisor $pid"
 ```
 
@@ -926,10 +1016,23 @@ Start and check the 3276 lane without exercising the live 3275 lane:
 ```bash
 export SUPERSCRIBER_ROOT=<absolute demo root>/superscriber
 chmod 700 "$SUPERSCRIBER_ROOT/run.sh" "$SUPERSCRIBER_ROOT/stop.sh"
+worker_log="$SUPERSCRIBER_ROOT/logs/worker.log"
+mkdir -p "$SUPERSCRIBER_ROOT/logs"
+touch "$worker_log"
+worker_log_offset="$(wc -c < "$worker_log" | tr -d '[:space:]')"
 bash "$SUPERSCRIBER_ROOT/run.sh"
 superscriber_ready=0
+api_ready=0
+worker_ready=0
 for attempt in $(seq 1 60); do
   if curl -fsS http://localhost:3276/api/health >/dev/null 2>&1; then
+    api_ready=1
+  fi
+  if tail -c "+$((worker_log_offset + 1))" "$worker_log" | \
+    grep -Fq '[worker] ready with offline model'; then
+    worker_ready=1
+  fi
+  if [ "$api_ready" -eq 1 ] && [ "$worker_ready" -eq 1 ]; then
     superscriber_ready=1
     break
   fi
@@ -940,7 +1043,7 @@ for attempt in $(seq 1 60); do
   sleep 1
 done
 [ "$superscriber_ready" -eq 1 ] || {
-  echo "Superscriber API did not become ready within 60 seconds" >&2
+  echo "Superscriber API and offline worker did not both become ready within 60 seconds" >&2
   exit 1
 }
 ```
@@ -952,9 +1055,13 @@ done
    and verify that the callback lands on `/workspace`. `GET /api/auth/session`
    must report `"role":"admin"` and `"authSource":"authentik"`.
 2. Open `GET /api/admin/auth-health` as the administrator. Verify the active
-   mode, OIDC admission counters, identity-link counts, the expected blocked
-   Authentication readiness result, and the incomplete break-glass facts from
-   the preceding section.
+   mode, OIDC admission counters, identity-link counts, and these exact
+   break-glass facts: `designated` is `true`, `enrolledKeyCount` is `0`, and
+   `recoveryCodeCount` is `0`. The endpoint does not return the aggregate
+   Authentication readiness result. Open **Administration > Accounts** and
+   verify that **Emergency access (break-glass)** shows the same one-custodian,
+   zero-key, zero-code state. Those facts are the blocked readiness inputs
+   recorded by this pilot.
 3. Sign out of Superscriber, then visit Authentik's
    `/if/flow/default-invalidation-flow/`. Sign in as `demo-reviewer`. The
    Administration navigation must be absent, and `/administration` must show
