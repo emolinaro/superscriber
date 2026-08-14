@@ -4,7 +4,7 @@
 
 Superscriber is a calm, governed institutional workspace, not a generic AI dashboard and not a developer console. The core product promise is simple: sensitive recordings enter one controlled system, reviewers do careful work in the browser, and approvals happen against an explicit, traceable record.
 
-This file is the design record and the visual and interaction source of truth for the product as shipped on `main` (v0.4.0). It records both how the product looks and how its governed workflow behaves; code is authoritative for anything beyond what is written here.
+This file is the design record and the visual and interaction source of truth for the product as it stands on `main` (latest published release: v0.4.0, tagged 2026-08-06; post-release work tracked in the CHANGELOG `[Unreleased]` section). It records both how the product looks and how its governed workflow behaves; code is authoritative for anything beyond what is written here.
 
 ## The Governed Casefile Model
 
@@ -356,7 +356,6 @@ These requirements apply to the auth, work inbox, ingest, casefile, export, and 
 - Patch-based segment editing protocol (saves submit the complete current segment array)
 - Timing-edit tools for transcript alignment
 - Bulk workflow decisions or bulk assignment changes
-- Policy-profile authoring in the UI
 - Account deactivation
 - Raw media download
 - A separate reporting or export center

@@ -5,6 +5,7 @@ All notable changes to this project will be documented in this file.
 ## [Unreleased]
 
 ### Added
+- Added governed account role management: inline role edits with a required change reason, atomic role-change audit, authorization version bump, and revocation of the account's active sessions, completing the identity wave in-tree (PR #8).
 - Adopted an editorial single-voice wordmark and branded the sign-in and first-run surfaces, replayed as a two-door landing that also works without JavaScript (PRs #9, #10, #15, #29).
 - Added a landing footer source repository link with an opt-in hosted user-guide link behind `SUPERSCRIBER_DOCS_URL` (PR #31).
 - Added a per-user appearance system (Light / Dark / System) with a WCAG-AA dark theme (PR #12).
@@ -22,6 +23,7 @@ All notable changes to this project will be documented in this file.
 - Restored demo governance controls (PR #18).
 
 ### Changed
+- Recovered the 0.4.0 CHANGELOG section from the v0.4.0 release notes and aligned release metadata with the published tag (PRs #7, #41).
 - Applied a casefile UX batch: bounded shell, header governance trigger, Edited-vs badges, and phone-safety copy (PR #14).
 - Added CONTRIBUTING.md with the contribution workflow, validation gate, and security disclosure rules (PR #30).
 
@@ -38,17 +40,15 @@ All notable changes to this project will be documented in this file.
 - Added Authentik OIDC integration as a central identity provider with a revocable session registry, strength-scaled authorization, and external identity links with strict role mapping (PR #4).
 - Added an identity mode contract (local / dual-run / authentik-primary) enforced by startup invariants, with operator tooling, runbooks, and documentation (PR #4).
 - Added break-glass access: a designated emergency local admin protected by a WebAuthn ceremony and one-time codes (PR #4).
-- Added governed account role management: inline role edits with a required change reason, atomic role-change audit, authorization version bump, and revocation of the account's active sessions (PR #8).
 - Added container E2E failure-artifact uploads for CI debugging (PR #5).
 
 ### Changed
 - Aligned README, AGENTS, DESIGN, and TODOS with the v0.3.0.0 reality and untracked the superpowers specs (PR #3).
 - Hardened container E2E with navigation anchors and a pinned base image digest (PR #5).
-- Recovered this 0.4.0 CHANGELOG section from the v0.4.0 release notes (PR #7).
 
 ### Notes
+- This section covers exactly the contents of the `v0.4.0` tag (published 2026-08-06): documentation governance (PR #3), the Authentik OIDC identity wave with break-glass access (PR #4), and container E2E hardening (PR #5).
 - No live-target changes: all integration delivery qualified locally (unit and container E2E lanes).
-- The GitHub release and `v0.4.0` tag were published 2026-08-06 over the identity-provider, docs-alignment, and container-hardening commits; the governed account role management that completes the identity wave landed in-tree on 2026-08-09 under the same release line.
 
 ## [0.3.0.0] - 2026-08-02
 
