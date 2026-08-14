@@ -168,7 +168,24 @@ Start the stack and wait for its API:
 cd authentik
 chmod 600 .env
 docker compose up -d
-curl -fsS http://localhost:9000/api/v3/root/config/
+authentik_ready=0
+for attempt in $(seq 1 60); do
+  if curl -fsS http://localhost:9000/api/v3/root/config/ >/dev/null 2>&1; then
+    authentik_ready=1
+    break
+  fi
+  if [ -n "$(docker compose ps --status exited -q)" ]; then
+    docker compose ps
+    echo "an Authentik service exited before API readiness" >&2
+    exit 1
+  fi
+  sleep 2
+done
+[ "$authentik_ready" -eq 1 ] || {
+  docker compose ps
+  echo "Authentik API did not become ready within 120 seconds" >&2
+  exit 1
+}
 ```
 
 ## 2. Provision Authentik through its API
@@ -293,23 +310,28 @@ if [ -z "$APP_PK" ]; then
 fi
 
 ensure_user() {
-  local username="$1" display_name="$2" password="$3" target_group="$4" pk group
+  local username="$1" display_name="$2" password="$3" target_role="$4"
+  local target_group="${ROLE_GROUP[$target_role]}" pk group other_role
   pk="$(api GET "/core/users/?username=$username" | jqe "d.results[0]?.pk" || true)"
   if [ -z "$pk" ]; then
     pk="$(api POST "/core/users/" -d "{\"username\":\"$username\",\"name\":\"$display_name\",\"is_active\":true}" | jqe "d.pk")"
   fi
   api POST "/core/users/$pk/set_password/" -d "{\"password\":\"$password\"}" >/dev/null
   api POST "/core/groups/$target_group/add_user/" -d "{\"pk\":$pk}" >/dev/null
-  for group in "${ROLE_GROUP[@]}"; do
-    if [ "$group" != "$target_group" ]; then
-      api POST "/core/groups/$group/remove_user/" -d "{\"pk\":$pk}" >/dev/null 2>&1 || true
+  for other_role in uploader reviewer approver admin; do
+    group="${ROLE_GROUP[$other_role]}"
+    if [ "$other_role" != "$target_role" ]; then
+      if ! api POST "/core/groups/$group/remove_user/" -d "{\"pk\":$pk}" >/dev/null; then
+        echo "failed to remove $username from superscriber-$other_role ($group)" >&2
+        return 1
+      fi
     fi
   done
   printf '%s user_pk=%s group=%s\n' "$username" "$pk" "$target_group"
 }
 
-ensure_user "demo-admin" "Demo Admin" "$DEMO_ADMIN_PASSWORD" "${ROLE_GROUP[admin]}"
-ensure_user "demo-reviewer" "Demo Reviewer" "$DEMO_REVIEWER_PASSWORD" "${ROLE_GROUP[reviewer]}"
+ensure_user "demo-admin" "Demo Admin" "$DEMO_ADMIN_PASSWORD" admin
+ensure_user "demo-reviewer" "Demo Reviewer" "$DEMO_REVIEWER_PASSWORD" reviewer
 
 ISSUER="$BASE/application/o/superscriber/"
 mkdir -p ../superscriber/oidc
@@ -555,7 +577,7 @@ No usable break-glass credential was established: the seeded admin retained a
 null `password_hash`. No hardware keys were enrolled, no recovery codes were
 issued, and no emergency sign-in was attempted. The observed pilot state was
 one designation, zero keys, and zero unused recovery codes, so the
-Authentication readiness warning remained expected.
+Authentication readiness result remained blocked.
 
 An operational break-glass deployment requires a supported local custodian
 credential before designation, then two separately held security keys and a
@@ -592,6 +614,77 @@ say_supervisor() {
   printf '[%s] [supervisor] %s\n' "$(timestamp)" "$*" >>"$LANE_LOG"
 }
 
+process_is_live() {
+  local pid="$1" state
+  [[ "$pid" =~ ^[0-9]+$ ]] || return 1
+  kill -0 "$pid" 2>/dev/null || return 1
+  state="$(ps -p "$pid" -o stat= 2>/dev/null || true)"
+  [[ -n "$state" && "$state" != *Z* ]]
+}
+
+process_start_fingerprint() {
+  local pid="$1" started
+  process_is_live "$pid" || return 1
+  started="$(ps -ww -p "$pid" -o lstart= 2>/dev/null)"
+  [[ -n "${started//[[:space:]]/}" ]] || return 1
+  printf '%s' "$started" | cksum | awk '{ printf "%s-%s\n", $1, $2 }'
+}
+
+process_matches_identity() {
+  local pid="$1" expected="$2" current
+  current="$(process_start_fingerprint "$pid")" || return 1
+  [[ "$current" == "$expected" ]]
+}
+
+read_pid_identity() {
+  local file="$1" pid started
+  [[ -f "$file" ]] || return 1
+  read -r pid started <"$file" || return 1
+  [[ "$pid" =~ ^[0-9]+$ && "$started" =~ ^[0-9]+-[0-9]+$ ]] || return 1
+  printf '%s %s\n' "$pid" "$started"
+}
+
+clear_pid_identity() {
+  local file="$1" expected="$2"
+  [[ "$(cat "$file" 2>/dev/null || true)" != "$expected" ]] || rm -f "$file"
+}
+
+sweep_stale_pid_files() {
+  local file identity pid started
+  for file in "$PID_DIR/supervisor.pid" "$PID_DIR/app.pid" "$PID_DIR/worker.pid"; do
+    identity="$(read_pid_identity "$file" 2>/dev/null || true)"
+    if [ -z "$identity" ]; then
+      rm -f "$file"
+      continue
+    fi
+    read -r pid started <<<"$identity"
+    process_matches_identity "$pid" "$started" || clear_pid_identity "$file" "$identity"
+  done
+}
+
+signal_pid_file() {
+  local signal="$1" file="$2" identity pid started
+  identity="$(read_pid_identity "$file" 2>/dev/null || true)"
+  if [ -z "$identity" ]; then
+    rm -f "$file"
+    return 0
+  fi
+  read -r pid started <<<"$identity"
+  if process_matches_identity "$pid" "$started"; then
+    kill "-$signal" "$pid" 2>/dev/null || true
+  else
+    clear_pid_identity "$file" "$identity"
+  fi
+}
+
+pid_file_is_live() {
+  local identity pid started
+  identity="$(read_pid_identity "$1" 2>/dev/null || true)"
+  [ -n "$identity" ] || return 1
+  read -r pid started <<<"$identity"
+  process_matches_identity "$pid" "$started"
+}
+
 load_env() {
   set -a
   . "$ROOT/app.env"
@@ -613,7 +706,7 @@ next_backoff() {
 }
 
 run_role() {
-  local role="$1" log consecutive=0
+  local role="$1" log consecutive=0 child_started identity_tmp published_identity
   shift
   if [ "$role" = app ]; then log="$LOG_DIR/app.log"; else log="$LOG_DIR/worker.log"; fi
   while true; do
@@ -625,9 +718,17 @@ run_role() {
       printf '[%s] [%s] %s\n' "$(timestamp)" "$role" "$line" | tee -a "$log" >>"$LANE_LOG"
     done) 2>&1 &
     child_pid=$!
-    printf '%s\n' "$child_pid" >"$PID_DIR/$role.pid"
+    child_started="$(process_start_fingerprint "$child_pid" 2>/dev/null || true)"
+    published_identity=""
+    if [ -n "$child_started" ]; then
+      published_identity="$child_pid $child_started"
+      identity_tmp="$PID_DIR/$role.pid.tmp.$$"
+      printf '%s\n' "$published_identity" >"$identity_tmp"
+      mv "$identity_tmp" "$PID_DIR/$role.pid"
+    fi
     wait "$child_pid"
     status=$?
+    [ -z "$published_identity" ] || clear_pid_identity "$PID_DIR/$role.pid" "$published_identity"
     set -e
     ended="$(date +%s)"
     if [ $((ended - started)) -ge 60 ]; then consecutive=0; fi
@@ -638,19 +739,76 @@ run_role() {
   done
 }
 
-stop_children() {
-  say_supervisor "stop requested"
-  for name in app worker; do
-    if [ -f "$PID_DIR/$name.pid" ]; then
-      kill "$(cat "$PID_DIR/$name.pid")" 2>/dev/null || true
-    fi
-  done
-  kill "$APP_LOOP_PID" "$WORKER_LOOP_PID" 2>/dev/null || true
+SUPERVISOR_PID=""
+SUPERVISOR_STARTED=""
+SUPERVISOR_IDENTITY=""
+APP_LOOP_PID=""
+APP_LOOP_STARTED=""
+WORKER_LOOP_PID=""
+WORKER_LOOP_STARTED=""
+
+signal_loop() {
+  local signal="$1" pid="$2" started="$3"
+  [ -n "$pid" ] && [ -n "$started" ] || return 0
+  process_matches_identity "$pid" "$started" || return 0
+  kill "-$signal" "$pid" 2>/dev/null || true
 }
 
-if [ "${1:-}" != "--supervise" ]; then
-  if [ -f "$PID_DIR/supervisor.pid" ] && kill -0 "$(cat "$PID_DIR/supervisor.pid")" 2>/dev/null; then
-    echo "supervisor already running: pid $(cat "$PID_DIR/supervisor.pid")"
+owned_processes_are_live() {
+  pid_file_is_live "$PID_DIR/app.pid" && return 0
+  pid_file_is_live "$PID_DIR/worker.pid" && return 0
+  if [ -n "$APP_LOOP_PID" ] && process_matches_identity "$APP_LOOP_PID" "$APP_LOOP_STARTED"; then
+    return 0
+  fi
+  if [ -n "$WORKER_LOOP_PID" ] && process_matches_identity "$WORKER_LOOP_PID" "$WORKER_LOOP_STARTED"; then
+    return 0
+  fi
+  return 1
+}
+
+cleanup_state() {
+  signal_pid_file TERM "$PID_DIR/app.pid"
+  signal_pid_file TERM "$PID_DIR/worker.pid"
+  signal_loop TERM "$APP_LOOP_PID" "$APP_LOOP_STARTED"
+  signal_loop TERM "$WORKER_LOOP_PID" "$WORKER_LOOP_STARTED"
+  sweep_stale_pid_files
+  [ -z "$SUPERVISOR_IDENTITY" ] || clear_pid_identity "$PID_DIR/supervisor.pid" "$SUPERVISOR_IDENTITY"
+}
+
+shutdown() {
+  local attempts=0
+  trap - INT TERM
+  say_supervisor "stop requested"
+  signal_pid_file TERM "$PID_DIR/app.pid"
+  signal_pid_file TERM "$PID_DIR/worker.pid"
+  signal_loop TERM "$APP_LOOP_PID" "$APP_LOOP_STARTED"
+  signal_loop TERM "$WORKER_LOOP_PID" "$WORKER_LOOP_STARTED"
+  while [ "$attempts" -lt 50 ] && owned_processes_are_live; do
+    attempts=$((attempts + 1))
+    sleep 0.1
+  done
+  if owned_processes_are_live; then
+    say_supervisor "bounded shutdown expired with a verified child still running"
+    exit 1
+  fi
+  wait "$APP_LOOP_PID" 2>/dev/null || true
+  [ -z "$WORKER_LOOP_PID" ] || wait "$WORKER_LOOP_PID" 2>/dev/null || true
+  exit 0
+}
+
+supervisor_is_live() {
+  local identity pid started
+  identity="$(read_pid_identity "$PID_DIR/supervisor.pid" 2>/dev/null || true)"
+  [ -n "$identity" ] || return 1
+  read -r pid started <<<"$identity"
+  process_matches_identity "$pid" "$started"
+}
+
+start_supervisor() {
+  local child_pid child_started identity_tmp attempts=0
+  sweep_stale_pid_files
+  if supervisor_is_live; then
+    echo "supervisor already running: $(cat "$PID_DIR/supervisor.pid")"
     exit 0
   fi
   if lsof -nP -iTCP:3276 -sTCP:LISTEN >/dev/null; then
@@ -658,22 +816,45 @@ if [ "${1:-}" != "--supervise" ]; then
     exit 1
   fi
   nohup bash "$ROOT/run.sh" --supervise >>"$LANE_LOG" 2>&1 &
-  echo $! >"$PID_DIR/supervisor.pid"
-  echo "started supervisor $(cat "$PID_DIR/supervisor.pid")"
-  exit 0
-fi
+  child_pid=$!
+  child_started="$(process_start_fingerprint "$child_pid" 2>/dev/null || true)"
+  while [ -z "$child_started" ] && [ "$attempts" -lt 10 ]; do
+    attempts=$((attempts + 1))
+    sleep 0.05
+    child_started="$(process_start_fingerprint "$child_pid" 2>/dev/null || true)"
+  done
+  [ -n "$child_started" ] || {
+    echo "supervisor exited before publishing its process identity" >&2
+    return 1
+  }
+  identity_tmp="$PID_DIR/supervisor.pid.tmp.$$"
+  printf '%s %s\n' "$child_pid" "$child_started" >"$identity_tmp"
+  mv "$identity_tmp" "$PID_DIR/supervisor.pid"
+  echo "started supervisor $child_pid"
+}
+
+case "${1:-}" in
+  "") start_supervisor; exit $? ;;
+  --status) if supervisor_is_live; then exit 0; else exit 1; fi ;;
+  --supervise) ;;
+  *) echo "usage: run.sh [--status|--supervise]" >&2; exit 64 ;;
+esac
 
 load_env
 cd "$REPO"
-APP_LOOP_PID=""
-WORKER_LOOP_PID=""
-trap stop_children INT TERM
+SUPERVISOR_PID="$$"
+SUPERVISOR_STARTED="$(process_start_fingerprint "$SUPERVISOR_PID")"
+SUPERVISOR_IDENTITY="$SUPERVISOR_PID $SUPERVISOR_STARTED"
+trap cleanup_state EXIT
+trap shutdown INT TERM
 (run_role app node "$REPO/.next/standalone/server.js") &
 APP_LOOP_PID=$!
+APP_LOOP_STARTED="$(process_start_fingerprint "$APP_LOOP_PID")"
 (run_role worker env PYTHONUNBUFFERED=1 \
   SUPERSCRIBER_WORKER_PYTHON="$ROOT/venv/bin/python3" \
   bash scripts/run-worker-python.sh worker/main.py) &
 WORKER_LOOP_PID=$!
+WORKER_LOOP_STARTED="$(process_start_fingerprint "$WORKER_LOOP_PID")"
 say_supervisor "supervising app=$APP_LOOP_PID worker=$WORKER_LOOP_PID at http://127.0.0.1:3276"
 wait
 ```
@@ -685,12 +866,59 @@ wait
 set -euo pipefail
 ROOT="${SUPERSCRIBER_ROOT:?set SUPERSCRIBER_ROOT}"
 PID_FILE="$ROOT/pids/supervisor.pid"
-if [ -f "$PID_FILE" ] && kill -0 "$(cat "$PID_FILE")" 2>/dev/null; then
-  kill "$(cat "$PID_FILE")"
-  echo "sent TERM to supervisor $(cat "$PID_FILE")"
-else
+
+process_is_live() {
+  local pid="$1" state
+  [[ "$pid" =~ ^[0-9]+$ ]] || return 1
+  kill -0 "$pid" 2>/dev/null || return 1
+  state="$(ps -p "$pid" -o stat= 2>/dev/null || true)"
+  [[ -n "$state" && "$state" != *Z* ]]
+}
+
+process_start_fingerprint() {
+  local pid="$1" started
+  process_is_live "$pid" || return 1
+  started="$(ps -ww -p "$pid" -o lstart= 2>/dev/null)"
+  [[ -n "${started//[[:space:]]/}" ]] || return 1
+  printf '%s' "$started" | cksum | awk '{ printf "%s-%s\n", $1, $2 }'
+}
+
+process_matches_identity() {
+  local current
+  current="$(process_start_fingerprint "$1")" || return 1
+  [[ "$current" == "$2" ]]
+}
+
+identity="$(cat "$PID_FILE" 2>/dev/null || true)"
+read -r pid started <<<"$identity"
+if [[ ! "$pid" =~ ^[0-9]+$ || ! "$started" =~ ^[0-9]+-[0-9]+$ ]] || \
+   ! process_matches_identity "$pid" "$started"; then
+  [[ "$(cat "$PID_FILE" 2>/dev/null || true)" != "$identity" ]] || rm -f "$PID_FILE"
+  for role in app worker; do
+    role_file="$ROOT/pids/$role.pid"
+    role_identity="$(cat "$role_file" 2>/dev/null || true)"
+    read -r role_pid role_started <<<"$role_identity"
+    if [[ ! "$role_pid" =~ ^[0-9]+$ || ! "$role_started" =~ ^[0-9]+-[0-9]+$ ]] || \
+       ! process_matches_identity "$role_pid" "$role_started"; then
+      [[ "$(cat "$role_file" 2>/dev/null || true)" != "$role_identity" ]] || rm -f "$role_file"
+    fi
+  done
   echo "supervisor not running"
+  exit 0
 fi
+
+kill "$pid"
+attempts=0
+while [ "$attempts" -lt 50 ] && process_matches_identity "$pid" "$started"; do
+  attempts=$((attempts + 1))
+  sleep 0.1
+done
+if process_matches_identity "$pid" "$started"; then
+  echo "verified supervisor $pid did not stop within 5 seconds" >&2
+  exit 1
+fi
+[[ "$(cat "$PID_FILE" 2>/dev/null || true)" != "$identity" ]] || rm -f "$PID_FILE"
+echo "stopped supervisor $pid"
 ```
 
 Start and check the 3276 lane without exercising the live 3275 lane:
@@ -699,7 +927,22 @@ Start and check the 3276 lane without exercising the live 3275 lane:
 export SUPERSCRIBER_ROOT=<absolute demo root>/superscriber
 chmod 700 "$SUPERSCRIBER_ROOT/run.sh" "$SUPERSCRIBER_ROOT/stop.sh"
 bash "$SUPERSCRIBER_ROOT/run.sh"
-curl -fsS http://localhost:3276/api/health
+superscriber_ready=0
+for attempt in $(seq 1 60); do
+  if curl -fsS http://localhost:3276/api/health >/dev/null 2>&1; then
+    superscriber_ready=1
+    break
+  fi
+  if ! bash "$SUPERSCRIBER_ROOT/run.sh" --status; then
+    echo "Superscriber supervisor exited before API readiness" >&2
+    exit 1
+  fi
+  sleep 1
+done
+[ "$superscriber_ready" -eq 1 ] || {
+  echo "Superscriber API did not become ready within 60 seconds" >&2
+  exit 1
+}
 ```
 
 ## 4. Verify in a real browser
@@ -709,8 +952,9 @@ curl -fsS http://localhost:3276/api/health
    and verify that the callback lands on `/workspace`. `GET /api/auth/session`
    must report `"role":"admin"` and `"authSource":"authentik"`.
 2. Open `GET /api/admin/auth-health` as the administrator. Verify the active
-   mode, OIDC admission counters, identity-link counts, and the expected
-   incomplete break-glass facts from the preceding section.
+   mode, OIDC admission counters, identity-link counts, the expected blocked
+   Authentication readiness result, and the incomplete break-glass facts from
+   the preceding section.
 3. Sign out of Superscriber, then visit Authentik's
    `/if/flow/default-invalidation-flow/`. Sign in as `demo-reviewer`. The
    Administration navigation must be absent, and `/administration` must show
