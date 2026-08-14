@@ -1,5 +1,7 @@
 # TODOS
 
+> Last audit: 2026-08-14. Basis: everything shipped in `v0.4.0..origin/main` (PRs #7 through #43; PR #44 did not exist at audit time, and #42/#43 were the day's landings). Every remaining item below was re-verified against main on that date.
+
 ## Review
 
 ### Replace full-segment-array saves with patch-based transcript edits
@@ -8,11 +10,11 @@
 
 **Why:** This reduces payload size for long interviews, keeps worker-owned metadata server-controlled, and sets up cleaner autosave and conflict handling later.
 
-**Context:** The shipped casefile saves by sending the complete current segment array through a dedicated server action on save/submit; the payload is built at save time, not serialized per render. A patch protocol remains the more complete design for large transcripts and fine-grained auditability, and the governed-casefile spec deliberately left it out of v1.
+**Context (re-verified 2026-08-14):** Still open; no PR in #8-#43 changed the save protocol. The shipped casefile saves by sending the complete current segment array through `saveDraftAction` (`src/server/actions/casefile-actions.ts`) on save/submit; the payload is built at save time, not serialized per render. The full-array contract is enforced server-side by `assertCompleteSegments` in `src/server/casefile/commands.ts`, which rejects drafts whose segment count or any segment identity/timing differs from the prior revision. A patch protocol remains the more complete design for large transcripts and fine-grained auditability, and the governed-casefile spec deliberately left it out of v1. Note: the governed bulk speaker rename (#35) is a separate audited command path, not a browser save path, and does not relax the full-array draft requirement.
 
 **Effort:** M
 **Priority:** P2
-**Depends on:** Nothing structural; the casefile revision service and command surface are in place on main
+**Depends on:** Nothing structural; the casefile revision service and command surface (`src/server/casefile/commands.ts`) are in place on main
 
 ## Completed
 
