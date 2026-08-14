@@ -20,11 +20,10 @@ Nothing important is silent: saves mint revisions, decisions carry their
 reasons, and everything lands in the casefile's audit history.
 
 This guide tracks the current development line (`main`), ahead of the
-published release, **v0.4.0** - the Authentik OIDC identity wave. Anything
-that landed after that tag (for example, governed account role management)
-is covered here as it will ship in the next release; for the frozen record
-of the tagged release, switch to the **v0.4.0** version in the site
-header's version menu.
+latest published release. Anything that landed after the most recent tag is
+covered here as it will ship in the next release; for the frozen record of
+a tagged release, switch to that version in the site header's version menu.
+Release history lives in `CHANGELOG.md`; the version source is `VERSION`.
 
 ## Signing in
 
