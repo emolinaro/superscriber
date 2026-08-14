@@ -1,6 +1,6 @@
 ## Project At A Glance
 
-- Current published release: v0.4.0 (tag dated 2026-08-06: Authentik OIDC identity wave with break-glass access, docs governance, container E2E hardening). `main` carries post-0.4.0 work toward the next release - see the `[Unreleased]` CHANGELOG section. Version source: `VERSION`; release notes: `CHANGELOG.md`.
+- Current published release: v0.5.0 (tag dated 2026-08-14: identity and account role wave, appearance system, waveform player with pinned chrome and centered follow-scroll, batch upload, live progress, model tiers, folder watch, admin recovery, and the Docusaurus documentation site). `main` carries post-0.5.0 work toward the next release - see the `[Unreleased]` CHANGELOG section. Version source: `VERSION`; release notes: `CHANGELOG.md`.
 - Product overview, commands, and runtime: `README.md`. Design record and behavioral contract: `DESIGN.md`.
 - Domain workflow rules: `src/domain/workflow.ts`. Governed commands, capabilities, action mode, and access grants: `src/server/casefile/`. Authenticated routes: `app/(authenticated)/`.
 - Unmanageable-instance recovery (accounts exist, no active admin): operator-claim ceremony on the sign-up door gated by an on-host single-use token (`src/server/auth/recovery-claim.ts`, runbook `docs/operators/admin-recovery.md`).

@@ -4,6 +4,8 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-08-14
+
 ### Added
 - Added governed account role management: inline role edits with a required change reason, atomic role-change audit, authorization version bump, and revocation of the account's active sessions, completing the identity wave in-tree (PR #8).
 - Adopted an editorial single-voice wordmark and branded the sign-in and first-run surfaces, replayed as a two-door landing that also works without JavaScript (PRs #9, #10, #15, #29).
@@ -21,11 +23,19 @@ All notable changes to this project will be documented in this file.
 - Added governed bulk speaker rename with a confirmed count summary and merge-onto-existing behavior (PR #35).
 - Added a one-shot local deployment bootstrap with idempotent setup, model-tier provisioning, and crash-supervised app and worker processes (PR #40).
 - Restored demo governance controls (PR #18).
+- Added the Docusaurus documentation site with native versioning for GitHub Pages, including a full user guide from sign-in and bootstrap through review, approval, administration, and phone-safety operation (PR #6).
+- Pinned the governed Delete recording control into the sticky casefile chrome and synced the horizontal segment rail with the transcript's active-segment follow-scroll (PR #46).
 
 ### Changed
 - Recovered the 0.4.0 CHANGELOG section from the v0.4.0 release notes and aligned release metadata with the published tag (PRs #7, #41).
 - Applied a casefile UX batch: bounded shell, header governance trigger, Edited-vs badges, and phone-safety copy (PR #14).
 - Added CONTRIBUTING.md with the contribution workflow, validation gate, and security disclosure rules (PR #30).
+- Documented the shipped repository link placement in the auth landing footer and the `SUPERSCRIBER_DOCS_URL` go-live switch in README and CONTRIBUTING (PR #48).
+- Audited TODOS.md against the shipped wave so the remaining open item names current code truth (PR #47).
+
+### Removed
+- Relocated the internal superpowers specification and planning tree out of the public repository into a gitignored `.fm-internal` area (PR #43).
+- Removed the root CLAUDE.md symlink and the relocation tombstone it left behind, routing public references to AGENTS.md as the canonical identity (PR #44).
 
 ### Fixed
 - Stabilized OIDC sign-in, callback, and revocation flows under contention (PR #28).
@@ -33,6 +43,8 @@ All notable changes to this project will be documented in this file.
 - Restored governed export recovery for completed casefile snapshots (PR #34).
 - Required password confirmation in the account dialog and compacted its layout (PR #39).
 - Vertically centered the ingest file input chooser row (PR #38).
+- Restored dark-mode segment-card contrast to the WCAG bar and constrained the reset pages width budget (PR #42).
+- Corrected the v0.4.0 release record: the [0.4.0] section now equals tag v0.4.0 exactly, with post-tag work moved under the next-release section (PR #45).
 
 ## [0.4.0] - 2026-08-06
 
