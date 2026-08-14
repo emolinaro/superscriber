@@ -188,6 +188,17 @@ export function MediaTransport({
     () => segments.find((segment) => segment.id === activeSegmentId) ?? null,
     [activeSegmentId, segments],
   );
+  const railLayoutSignature = useMemo(
+    () =>
+      JSON.stringify(
+        segments.map((segment) => [
+          segment.startMs,
+          segment.endMs,
+          segment.speakerLabel,
+        ]),
+      ),
+    [segments],
+  );
 
   function attachMedia(node: HTMLAudioElement | HTMLVideoElement | null) {
     mediaRef.current = node;
@@ -273,7 +284,7 @@ export function MediaTransport({
       left: centeredHorizontalScrollLeft(scrollport, target),
       behavior: reducedMotion ? "auto" : "smooth",
     });
-  }, [activeSegmentId, railFollowResumeNonce, railWidth]);
+  }, [activeSegmentId, railFollowResumeNonce, railLayoutSignature, railWidth]);
 
   function resumeRailFollow() {
     railFollowPausedRef.current = false;

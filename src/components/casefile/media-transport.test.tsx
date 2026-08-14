@@ -483,19 +483,21 @@ describe("MediaTransport", () => {
     // test: 200px chip stride, 176px chip width, 400px viewport.
     const railOffsets = railSegments.map((_, index) => index * 200);
 
-    function railProps() {
+    function railProps(segments = railSegments) {
       return {
         mediaKind: "audio" as const,
         mediaUrl: "/api/media/rec-1",
         onActiveSegmentChange: vi.fn(),
         onSeekHandled: vi.fn(),
         seekRequest: null,
-        segments: railSegments,
+        segments,
       };
     }
 
     function stubRailStrip(rail: HTMLElement) {
       let scrollLeft = 0;
+      const offsets = [...railOffsets];
+      const widths = railSegments.map(() => 176);
       Object.defineProperty(rail, "clientWidth", { configurable: true, value: 400 });
       Object.defineProperty(rail, "scrollLeft", {
         configurable: true,
@@ -511,12 +513,16 @@ describe("MediaTransport", () => {
         .forEach((chip, index) => {
           chip.getBoundingClientRect = () =>
             ({
-              left: railOffsets[index] - scrollLeft,
-              right: railOffsets[index] - scrollLeft + 176,
-              width: 176,
+              left: offsets[index] - scrollLeft,
+              right: offsets[index] - scrollLeft + widths[index],
+              width: widths[index],
             }) as DOMRect;
         });
       return {
+        setChipGeometry(index: number, offsetLeft: number, width: number) {
+          offsets[index] = offsetLeft;
+          widths[index] = width;
+        },
         setScrollLeft(value: number) {
           scrollLeft = value;
         },
@@ -536,6 +542,31 @@ describe("MediaTransport", () => {
 
       // Chip 6 spans content 1000-1176 in a 400px viewport: centered at 888.
       expect(railScrollToMock).toHaveBeenCalledWith({ left: 888, behavior: "smooth" });
+    });
+
+    it("recenters the active chip when a speaker rename changes rail geometry", () => {
+      const renamedSegments = railSegments.map((segment, index) =>
+        index === 1
+          ? { ...segment, speakerLabel: "Speaker 2 with a substantially longer name" }
+          : segment,
+      );
+      const { container, rerender } = render(
+        <MediaTransport {...railProps()} activeSegmentId="rail-seg-6" />,
+      );
+      const strip = stubRailStrip(
+        container.querySelector<HTMLElement>(".media-transport__rail")!,
+      );
+      railScrollToMock.mockClear();
+
+      strip.setChipGeometry(5, 1120, 176);
+      rerender(
+        <MediaTransport
+          {...railProps(renamedSegments)}
+          activeSegmentId="rail-seg-6"
+        />,
+      );
+
+      expect(railScrollToMock).toHaveBeenCalledWith({ left: 1008, behavior: "smooth" });
     });
 
     it("uses an instant follow scroll under prefers-reduced-motion", () => {
