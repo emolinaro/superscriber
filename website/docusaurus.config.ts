@@ -61,7 +61,9 @@ const config: Config = {
           },
         },
         blog: false,
-        theme: {},
+        theme: {
+          customCss: ['./src/css/custom.css'],
+        },
       } satisfies Preset.Options,
     ],
   ],
@@ -137,7 +139,9 @@ const config: Config = {
     },
     prism: {
       theme: prismThemes.github,
-      darkTheme: prismThemes.dracula,
+      // nightOwl keeps the dark register blue-teal; dracula's purple accents
+      // are off the app register.
+      darkTheme: prismThemes.nightOwl,
       additionalLanguages: ['bash', 'json', 'yaml'],
     },
   } satisfies Preset.ThemeConfig,

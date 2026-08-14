@@ -1,0 +1,778 @@
+/*
+ * Superscriber docs site theme.
+ *
+ * Reading register: an editorial book serif everywhere prose lives
+ * (Newsreader), UI chrome in Public Sans, code in IBM Plex Mono. Colors,
+ * spacing, radii, and hairlines mirror the app's tokens
+ * (src/styles/tokens.css): bone page, paper surfaces, near-black ink,
+ * teal primary, rust secondary, hairline #d8d8cf. Dark mode retunes the
+ * SAME tokens, token-for-token, so the editorial voice survives both
+ * modes. No stock Docusaurus purple remains.
+ *
+ * Fonts ship as local woff2 under static/fonts/ (copied from the app's
+ * @fontsource packages); paths are base-absolute because the Pages site
+ * always serves under /superscriber/.
+ */
+
+/* ---------------------------------------------------------------- fonts */
+
+@font-face {
+  font-family: 'Newsreader Variable';
+  font-style: normal;
+  font-display: swap;
+  font-weight: 200 800;
+  src: url('../../static/fonts/newsreader-latin-wght-normal.woff2')
+    format('woff2-variations');
+}
+
+@font-face {
+  font-family: 'Newsreader Variable';
+  font-style: italic;
+  font-display: swap;
+  font-weight: 200 800;
+  src: url('../../static/fonts/newsreader-latin-wght-italic.woff2')
+    format('woff2-variations');
+}
+
+@font-face {
+  font-family: 'Public Sans Variable';
+  font-style: normal;
+  font-display: swap;
+  font-weight: 100 900;
+  src: url('../../static/fonts/public-sans-latin-wght-normal.woff2')
+    format('woff2-variations');
+}
+
+@font-face {
+  font-family: 'Public Sans Variable';
+  font-style: italic;
+  font-display: swap;
+  font-weight: 100 900;
+  src: url('../../static/fonts/public-sans-latin-wght-italic.woff2')
+    format('woff2-variations');
+}
+
+@font-face {
+  font-family: 'IBM Plex Mono';
+  font-style: normal;
+  font-display: swap;
+  font-weight: 400;
+  src: url('../../static/fonts/ibm-plex-mono-latin-400-normal.woff2')
+    format('woff2');
+}
+
+@font-face {
+  font-family: 'IBM Plex Mono';
+  font-style: italic;
+  font-display: swap;
+  font-weight: 400;
+  src: url('../../static/fonts/ibm-plex-mono-latin-400-italic.woff2')
+    format('woff2');
+}
+
+@font-face {
+  font-family: 'IBM Plex Mono';
+  font-style: normal;
+  font-display: swap;
+  font-weight: 500;
+  src: url('../../static/fonts/ibm-plex-mono-latin-500-normal.woff2')
+    format('woff2');
+}
+
+@font-face {
+  font-family: 'IBM Plex Mono';
+  font-style: normal;
+  font-display: swap;
+  font-weight: 700;
+  src: url('../../static/fonts/ibm-plex-mono-latin-700-normal.woff2')
+    format('woff2');
+}
+
+/* ------------------------------------------------------- token mapping */
+
+:root {
+  --font-ui: 'Public Sans Variable', sans-serif;
+  --font-display: 'Newsreader Variable', serif;
+  --font-mono: 'IBM Plex Mono', monospace;
+
+  --color-bone: #f7f3ea;
+  --color-paper: #fffcf6;
+  --color-raised: #fdfcfa;
+  --color-ink: #172421;
+  --color-muted: #596762;
+  --color-line: #d8d8cf;
+  --color-teal: #163d38;
+  --color-focus: #0b6f64;
+  --color-rust: #a64b2a;
+  --color-info-fg: #315e72;
+  --color-info-bg: #e5f0f4;
+  --color-success-fg: #2f6b55;
+  --color-success-bg: #e4f0e9;
+  --color-warning-fg: #8a5a14;
+  --color-warning-bg: #fff2d7;
+  --color-danger-fg: #8c332a;
+  --color-danger-bg: #fbe7e4;
+  --color-caution-fg: #732d18;
+  --color-caution-bg: #fbe7e0;
+
+  /* Infima hooks - the stock purple family is fully displaced. */
+  --ifm-color-primary: #163d38;
+  --ifm-color-primary-dark: #12332f;
+  --ifm-color-primary-darker: #0f2c29;
+  --ifm-color-primary-darkest: #0a2220;
+  --ifm-color-primary-light: #1c4741;
+  --ifm-color-primary-lighter: #1f5049;
+  --ifm-color-primary-lightest: #28605a;
+  --ifm-color-secondary: #a64b2a;
+  --ifm-color-success: #2f6b55;
+  --ifm-color-info: #315e72;
+  --ifm-color-warning: #8a5a14;
+  --ifm-color-danger: #8c332a;
+
+  --ifm-background-color: var(--color-bone);
+  --ifm-background-surface-color: var(--color-paper);
+  --ifm-navbar-background-color: var(--color-paper);
+  --ifm-footer-background-color: var(--color-paper);
+
+  --ifm-font-family-base: var(--font-display);
+  --ifm-font-family-monospace: var(--font-mono);
+  --ifm-heading-font-family: var(--font-display);
+  --ifm-heading-color: var(--color-ink);
+  --ifm-heading-font-weight: 600;
+  --ifm-font-size-base: 18px;
+  --ifm-line-height-base: 1.72;
+  --ifm-code-font-size: 88%;
+  --ifm-code-background: var(--color-bone);
+  --ifm-code-border-radius: 8px;
+  --ifm-pre-background: var(--color-paper);
+
+  --ifm-link-color: var(--color-teal);
+  --ifm-link-hover-color: var(--color-focus);
+  --ifm-link-decoration: underline;
+  --ifm-link-hover-decoration: underline;
+
+  --ifm-menu-color: var(--color-muted);
+  --ifm-menu-color-active: var(--color-ink);
+  --ifm-menu-color-background-hover: transparent;
+  --ifm-menu-color-background-active: transparent;
+  --ifm-navbar-link-color: var(--color-muted);
+  --ifm-navbar-link-hover-color: var(--color-ink);
+  --ifm-navbar-link-active-color: var(--color-ink);
+  --ifm-breadcrumb-color-active: var(--color-muted);
+  --ifm-toc-border-color: var(--color-line);
+  --ifm-toc-link-color: var(--color-muted);
+  --ifm-table-border-color: var(--color-line);
+  --ifm-table-stripe-background: transparent;
+  --ifm-table-head-background: transparent;
+
+  --ifm-global-radius: 8px;
+  --ifm-card-border-radius: 12px;
+  --ifm-alert-border-radius: 8px;
+  --ifm-button-border-radius: 8px;
+  --ifm-button-font-weight: 500;
+  --ifm-button-size-small-padding-vertical: 8px;
+  --ifm-button-size-small-padding-horizontal: 16px;
+
+  --ifm-dropdown-background-color: var(--color-paper);
+  --ifm-dropdown-link-color: var(--color-ink);
+  --ifm-hover-overlay: rgba(23, 36, 33, 0.05);
+
+  --ifm-container-width: 1440px;
+  --ifm-transition-fast: 120ms;
+  --ifm-transition-slow: 180ms;
+
+  --ifm-font-color-base: var(--color-ink);
+  --ifm-color-emphasis-900: var(--color-ink);
+  --ifm-color-emphasis-800: var(--color-ink);
+  --ifm-color-emphasis-700: #2c3b37;
+  --ifm-color-emphasis-600: var(--color-muted);
+  --ifm-color-emphasis-500: var(--color-muted);
+  --ifm-color-emphasis-400: #8a938e;
+  --ifm-color-emphasis-300: var(--color-line);
+  --ifm-color-emphasis-200: #e6e6dc;
+  --ifm-color-emphasis-100: #efede3;
+  --ifm-color-emphasis-0: var(--color-paper);
+}
+
+html[data-theme='dark'] {
+  --color-bone: #131918;
+  --color-paper: #1e2624;
+  --color-raised: #28322f;
+  --color-ink: #e7ede8;
+  --color-muted: #9aa89f;
+  --color-line: #33403b;
+  --color-teal: #8fc2b6;
+  --color-focus: #6fd0bf;
+  --color-rust: #d98d63;
+  --color-info-fg: #9ac6d6;
+  --color-info-bg: #1d2f36;
+  --color-success-fg: #8fd4b2;
+  --color-success-bg: #1d332a;
+  --color-warning-fg: #e8b96c;
+  --color-warning-bg: #3a2f16;
+  --color-danger-fg: #e49185;
+  --color-danger-bg: #3a1f1b;
+  --color-caution-fg: #e78a63;
+  --color-caution-bg: #33201a;
+
+  --ifm-color-primary: #8fc2b6;
+  --ifm-color-primary-dark: #7fb5a8;
+  --ifm-color-primary-darker: #74ae9f;
+  --ifm-color-primary-darkest: #5a9f8e;
+  --ifm-color-primary-light: #a1ccbf;
+  --ifm-color-primary-lighter: #abd2c7;
+  --ifm-color-primary-lightest: #c1ddd5;
+  --ifm-color-secondary: #d98d63;
+  --ifm-color-success: #8fd4b2;
+  --ifm-color-info: #9ac6d6;
+  --ifm-color-warning: #e8b96c;
+  --ifm-color-danger: #e49185;
+
+  --ifm-code-background: #18201e;
+  --ifm-pre-background: #18201e;
+  --ifm-hover-overlay: rgba(231, 237, 232, 0.06);
+
+  --ifm-color-emphasis-900: var(--color-ink);
+  --ifm-color-emphasis-800: var(--color-ink);
+  --ifm-color-emphasis-700: #c7d2cb;
+  --ifm-color-emphasis-600: var(--color-muted);
+  --ifm-color-emphasis-500: var(--color-muted);
+  --ifm-color-emphasis-400: #6f7d76;
+  --ifm-color-emphasis-300: var(--color-line);
+  --ifm-color-emphasis-200: #29322f;
+  --ifm-color-emphasis-100: #202926;
+  --ifm-color-emphasis-0: #1a221f;
+}
+
+/* ------------------------------------------------------------- chrome */
+
+/* Navbar: quiet paper band on a hairline, wordmark in the display serif,
+   nav links in the UI sans. */
+.navbar {
+  border-bottom: 1px solid var(--color-line);
+  box-shadow: none;
+  font-family: var(--font-ui);
+}
+
+.navbar__title {
+  font-family: var(--font-display);
+  font-weight: 600;
+  font-size: 20px;
+  letter-spacing: -0.02em;
+}
+
+.navbar__link {
+  font-family: var(--font-ui);
+  font-size: 14px;
+  font-weight: 450;
+  text-decoration: none;
+}
+
+.navbar__brand {
+  text-decoration: none;
+}
+
+.navbar-sidebar {
+  background-color: var(--color-bone);
+}
+
+.navbar-sidebar .navbar__title {
+  font-size: 18px;
+}
+
+/* Version badge and unreleased banner: quiet tonal chips, small-caps. */
+.theme-doc-version-badge {
+  background: transparent;
+  border: 1px solid var(--color-line);
+  border-radius: 999px;
+  color: var(--color-muted);
+  font-family: var(--font-ui);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.12em;
+  line-height: 1.4;
+  padding: 2px 12px 1px;
+  text-transform: uppercase;
+}
+
+/* Breadcrumbs and version banner stay in the UI sans. */
+.theme-doc-breadcrumbs,
+.breadcrumbs {
+  font-family: var(--font-ui);
+  font-size: 13px;
+}
+
+.breadcrumbs__link,
+.breadcrumbs__link:hover {
+  text-decoration: none;
+}
+
+.pagination-nav__link,
+.pagination-nav__link:hover {
+  text-decoration: none;
+}
+
+/* ---------------------------------------------- sidebar: numbered TOC */
+
+.theme-doc-sidebar-container {
+  background-color: var(--color-paper) !important;
+  border-right: 1px solid var(--color-line) !important;
+}
+
+.theme-doc-sidebar-menu {
+  font-family: var(--font-ui);
+  font-size: 14px;
+}
+
+/* Quiet numbered TOC: hairline left rule, small muted numerals. The root
+   ul carries .theme-doc-sidebar-menu itself (there is no wrapper div). */
+ul.theme-doc-sidebar-menu {
+  border-left: 1px solid var(--color-line);
+  counter-reset: sb-item;
+  margin-top: 8px;
+  padding-left: 20px;
+}
+
+ul.theme-doc-sidebar-menu > .menu__list-item {
+  counter-increment: sb-item;
+  position: relative;
+}
+
+ul.theme-doc-sidebar-menu > .menu__list-item > .menu__link::before,
+ul.theme-doc-sidebar-menu > .menu__list-item > .menu__link--sublist::before,
+ul.theme-doc-sidebar-menu
+  > .menu__list-item
+  > .menu__list-item-collapsible
+  > .menu__link::before {
+  color: var(--color-muted);
+  content: counter(sb-item, decimal-leading-zero);
+  display: inline-block;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 400;
+  margin-right: 10px;
+  min-width: 18px;
+  opacity: 0.8;
+  vertical-align: 1px;
+}
+
+.menu__list .menu__list {
+  border-left: 1px solid var(--color-line);
+  margin-left: 9px;
+}
+
+.menu__link,
+.menu__list-item-collapsible a {
+  font-family: var(--font-ui);
+}
+
+.menu__link {
+  border-radius: 4px;
+  text-decoration: none;
+}
+
+.menu__link:hover {
+  text-decoration: none;
+}
+
+.menu__link--active {
+  color: var(--color-ink);
+  font-weight: 600;
+}
+
+/* Category labels: uppercase wide-tracked small-caps in muted grey. */
+.menu__list-item-collapsible > .menu__link--sublist,
+.menu__link--sublist {
+  color: var(--color-muted);
+  font-size: 11.5px;
+  font-weight: 600;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+}
+
+.menu__caret::before {
+  opacity: 0.55;
+}
+
+/* Mobile nav items keep the same quiet voice. */
+.navbar-sidebar__item .menu {
+  font-family: var(--font-ui);
+}
+
+/* ----------------------------------------------- reading column (prose) */
+
+/* ~66-70ch measure with generous whitespace. */
+.theme-doc-markdown {
+  max-width: 68ch;
+}
+
+.markdown {
+  font-family: var(--font-display);
+}
+
+.markdown h1,
+.markdown h2,
+.markdown h3,
+.markdown h4,
+.markdown h5,
+.markdown h6 {
+  --ifm-h1-font-size: 2.4rem;
+  --ifm-h2-font-size: 1.7rem;
+  --ifm-h3-font-size: 1.3rem;
+  --ifm-h4-font-size: 1.1rem;
+  font-weight: 650;
+  letter-spacing: -0.01em;
+  line-height: 1.25;
+}
+
+.markdown h2 {
+  border-bottom: 1px solid var(--color-line);
+  padding-bottom: 8px;
+}
+
+.markdown p,
+.markdown li {
+  font-size: 1.02rem;
+}
+
+.markdown strong {
+  font-weight: 700;
+}
+
+.markdown a {
+  text-decoration-thickness: 1px;
+  text-underline-offset: 3px;
+}
+
+.markdown hr {
+  background-color: var(--color-line);
+  height: 1px;
+  margin: 48px 0;
+}
+
+/* Blockquotes read as pull quotes: italic serif, hairline left rule. */
+.markdown blockquote {
+  background: transparent;
+  border-left: 2px solid var(--color-line);
+  border-radius: 0;
+  color: var(--color-muted);
+  font-style: italic;
+  padding: 4px 0 4px 24px;
+}
+
+/* Tables keep the hairline discipline. */
+.markdown table {
+  font-family: var(--font-ui);
+  font-size: 14px;
+}
+
+.markdown table th {
+  font-size: 11.5px;
+  font-weight: 600;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+
+/* ------------------------------------------------------- tonal callouts */
+
+/*
+ * Admonitions and the unreleased-version banner become the reference
+ * callout: a light tonal box (paper raised over bone), a hairline rule,
+ * centered italic serif body, and a trailing small-caps label. Severity
+ * lives in the label tint, never in a loud fill.
+ */
+.theme-admonition,
+.theme-doc-version-banner {
+  background-color: var(--color-paper);
+  border: 1px solid var(--color-line);
+  border-radius: 8px;
+  box-shadow: none;
+  padding: 20px 24px 16px;
+}
+
+.theme-admonition div[class*='admonitionHeading'],
+.theme-doc-version-banner div[class*='admonitionHeading'],
+.theme-admonition [class*='admonitionHeading'],
+.theme-doc-version-banner [class*='admonitionHeading'] {
+  font-family: var(--font-ui);
+  font-size: 11px;
+  font-weight: 650;
+  letter-spacing: 0.16em;
+  margin: 0 0 10px;
+  padding: 0;
+  text-transform: uppercase;
+}
+
+.theme-admonition [class*='admonitionHeading'] svg {
+  display: none;
+}
+
+.theme-admonition div[class*='admonitionContent'],
+.theme-admonition [class*='admonitionContent'],
+.theme-doc-version-banner {
+  font-style: italic;
+  text-align: center;
+}
+
+.theme-doc-version-banner a {
+  text-underline-offset: 3px;
+}
+
+.theme-admonition div > div:last-child > p:last-child,
+.theme-admonition [class*='admonitionContent'] p:last-child {
+  margin-bottom: 0;
+}
+
+/* Severity arrives via the label tint and a tonal background only. */
+.theme-admonition--tip,
+.alert--success {
+  background-color: var(--color-success-bg);
+}
+
+.theme-admonition--info,
+.alert--info {
+  background-color: var(--color-info-bg);
+}
+
+.theme-admonition--warning,
+.alert--warning,
+.theme-doc-version-banner {
+  background-color: var(--color-warning-bg);
+}
+
+.theme-admonition--danger,
+.alert--danger {
+  background-color: var(--color-danger-bg);
+}
+
+.theme-admonition--caution,
+.alert.alert--secondary {
+  background-color: var(--color-caution-bg);
+}
+
+.alert--primary,
+.theme-admonition--note,
+.alert--secondary.theme-admonition {
+  background-color: var(--color-paper);
+}
+
+/* ---------------------------------------------------------------- code */
+
+.markdown code,
+.prose code {
+  background-color: var(--color-bone);
+  border: 1px solid var(--color-line);
+  font-family: var(--font-mono);
+  padding: 1px 5px;
+}
+
+html[data-theme='dark'] .markdown code {
+  background-color: #18201e;
+}
+
+.markdown a code {
+  color: inherit;
+}
+
+.theme-code-block,
+.prism-code {
+  font-family: var(--font-mono) !important;
+}
+
+.theme-code-block {
+  box-shadow: none;
+}
+
+/* Prism shell: paper surface, hairline border, app radii. */
+pre.prism-code,
+div[class*='codeBlockContainer'] > pre,
+.theme-code-block pre {
+  background-color: var(--color-pre-surface, var(--color-paper)) !important;
+  border: 1px solid var(--color-line);
+  border-radius: 8px;
+  font-family: var(--font-mono) !important;
+}
+
+html[data-theme='dark'] {
+  --color-pre-surface: #18201e;
+}
+
+div[class*='codeBlockTitle'] {
+  background-color: var(--color-pre-surface, var(--color-paper));
+  border: 1px solid var(--color-line);
+  border-bottom: none;
+  border-radius: 8px 8px 0 0;
+  color: var(--color-muted);
+  font-family: var(--font-ui);
+  font-size: 12px;
+}
+
+div[class*='codeBlockLines'],
+div[class*='codeBlockContent'] .prism-code {
+  font-family: var(--font-mono) !important;
+}
+
+div[class*='codeBlockTitle'] + div pre {
+  border-radius: 0 0 8px 8px;
+}
+
+button[class*='copyButton'],
+.clean-btn[class*='copyButton'] {
+  color: var(--color-muted);
+}
+
+/* --------------------------------------------------------------- TOC */
+
+.table-of-contents {
+  border-left: 1px solid var(--color-line);
+  font-family: var(--font-ui);
+  font-size: 13px;
+}
+
+.table-of-contents__title,
+div[class*='tableOfContents'] > .table-of-contents__left-border:first-of-type {
+  font-family: var(--font-ui);
+}
+
+.table-of-contents__link {
+  color: var(--color-muted);
+  text-decoration: none;
+}
+
+.table-of-contents__link--active,
+.table-of-contents__link:hover {
+  color: var(--color-ink);
+}
+
+.col--3 {
+  --ifm-toc-padding-vertical: 12px;
+}
+
+/* --------------------------------------------------- footer/pagination */
+
+.footer {
+  border-top: 1px solid var(--color-line);
+  font-family: var(--font-ui);
+}
+
+.footer--dark {
+  background-color: var(--color-paper);
+  color: var(--color-muted);
+}
+
+.footer__title {
+  color: var(--color-muted);
+  font-family: var(--font-ui);
+  font-size: 11px;
+  font-weight: 650;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+}
+
+.footer__link-item {
+  color: var(--color-ink);
+  font-size: 14px;
+  text-decoration: none;
+}
+
+.footer__link-item:hover {
+  color: var(--color-focus);
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+.pagination-nav {
+  font-family: var(--font-ui);
+}
+
+.pagination-nav__link {
+  border: 1px solid var(--color-line);
+  border-radius: 8px;
+  box-shadow: none;
+  padding: 20px 24px;
+  transition: background-color 120ms ease;
+}
+
+.pagination-nav__link:hover {
+  background-color: var(--color-paper);
+  border-color: var(--color-muted);
+}
+
+.pagination-nav__sublabel {
+  color: var(--color-muted);
+  font-size: 11px;
+  font-weight: 650;
+  letter-spacing: 0.16em;
+  margin-bottom: 4px;
+  text-transform: uppercase;
+}
+
+.pagination-nav__label {
+  font-family: var(--font-display);
+  font-size: 17px;
+  font-weight: 600;
+}
+
+.theme-doc-footer,
+.theme-doc-footer .theme-doc-footer-edit-meta-row {
+  font-family: var(--font-ui);
+}
+
+/* "Last updated" stray grave accent cleanup: quiet muted small line. */
+.theme-lastUpdated {
+  color: var(--color-muted);
+  font-family: var(--font-ui);
+  font-size: 12px;
+}
+
+/* -------------------------------------------------------------- search */
+
+.DocSearch,
+.theme-doc-search-bar,
+.navbar__search-input {
+  font-family: var(--font-ui) !important;
+}
+
+.navbar__search-input {
+  background-color: var(--color-bone);
+  border: 1px solid var(--color-line);
+  border-radius: 999px;
+  color: var(--color-ink);
+}
+
+/* ---------------------------------------------- buttons and dropdowns */
+
+.button {
+  font-family: var(--font-ui);
+  letter-spacing: 0.01em;
+}
+
+.button.button--primary {
+  --ifm-button-background-color: var(--ifm-color-primary);
+  border-color: var(--ifm-color-primary);
+}
+
+.dropdown__menu {
+  border: 1px solid var(--color-line);
+  border-radius: 12px;
+  box-shadow: 0 1px 2px rgba(23, 36, 33, 0.1);
+  font-family: var(--font-ui);
+}
+
+html[data-theme='dark'] .dropdown__menu {
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.5);
+}
+
+/* Focus affordance uses the app's focus teal. */
+:focus-visible {
+  outline: 2px solid var(--color-focus);
+  outline-offset: 2px;
+}
+
+/* ----------------------------------------------------- mobile fallback */
+
+@media (max-width: 996px) {
+  .theme-doc-markdown {
+    max-width: none;
+  }
+}
