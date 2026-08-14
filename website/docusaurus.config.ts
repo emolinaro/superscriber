@@ -132,7 +132,8 @@ const config: Config = {
           ],
         },
       ],
-      copyright: `Superscriber documentation. Built with Docusaurus.`,
+      // No copyright/powered-by line: keep the link columns only, per the
+      // captain's trim of the default footer chrome.
     },
     prism: {
       theme: prismThemes.github,
