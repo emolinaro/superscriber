@@ -62,9 +62,10 @@ perl -pi -e 's{\]\(\.\./\.\./README\.md(#[A-Za-z0-9_-]+)?\)}{](../index.md$1)}g'
 #  - the user guide is staged at the docs root, so links into docs/USER-GUIDE.md
 #    must follow it there
 perl -pi -e 's{\]\(\./docs/USER-GUIDE\.md(#[A-Za-z0-9_-]+)?\)}{](USER-GUIDE.md$1)}g' *.md operators/*.md
-#  - dev-process specs/plans (docs/superpowers/) are not staged into the
-#    site, so links into them point at the repo blob
-perl -pi -e "s{\\]\\(\\./docs/superpowers/([A-Za-z0-9_./-]+\\.md)\\)}{]($github_blob/docs/superpowers/\$1)}g" *.md operators/*.md
+#  - internal working-tree links (.fm-internal/docs-superpowers/, gitignored
+#    and absent from fresh clones) can resolve nowhere public; keep the
+#    anchor text, drop the dead link
+perl -pi -e 's{\[([^\]]+)\]\(\./\.fm-internal/[^)]*\)}{$1}g' *.md operators/*.md
 #  - the README logo (raw HTML, cannot be rewritten by the renderer) uses the
 #    static asset staged into website/static/img/
 perl -pi -e 's{src="\./app/icon\.svg"}{src="/superscriber/img/icon.svg"}g' index.md

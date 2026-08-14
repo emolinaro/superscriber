@@ -19,6 +19,13 @@ workspace policy; the page only ever shows controls you are allowed to use.
 Nothing important is silent: saves mint revisions, decisions carry their
 reasons, and everything lands in the casefile's audit history.
 
+This guide tracks the current development line (`main`), ahead of the
+published release, **v0.4.0** - the Authentik OIDC identity wave. Anything
+that landed after that tag (for example, governed account role management)
+is covered here as it will ship in the next release; for the frozen record
+of the tagged release, switch to the **v0.4.0** version in the site
+header's version menu.
+
 ## Signing in
 
 Open the appliance URL your institution gave you. What the doors look like
@@ -124,6 +131,12 @@ tracks the position.
   scroll away. Follow scroll keeps the active segment centered as playback
   advances, yields the moment you scroll manually, and re-engages on any
   explicit seek.
+- **Segment rail.** On wider layouts a numbered rail under the wave seeks
+  the same segments. The rail follows playback on its own horizontal axis,
+  keeping the active chip centered as the transcript centers the same
+  segment. Scrolling the rail by hand pauses only the rail's follow - the
+  transcript's follow is unaffected - and any explicit seek re-engages it
+  immediately.
 
 Where the browser cannot decode the audio, native media controls remain the
 fallback (and always are for video).
@@ -221,9 +234,16 @@ The **Administration** page is organized into four sections:
   history is append-only.
 - **Policy.** Set the workspace policy, which can remove media and export
   capabilities over and above roles.
-- **Data discipline.** Destructive controls - permanent recording purge,
-  archived-revision recovery, ledger reset - each attributing the acting
-  admin.
+- **Data discipline.** Counts the governed ledger rows and hosts the
+  typed-phrase ledger reset, attributing the acting admin.
+
+Permanently deleting a recording lives on the recording itself: in admin
+oversight the casefile's pinned action bar ends with **Delete recording**,
+so it never scrolls away while you read, behind a typed-title
+confirmation. The purge removes the whole casefile - revisions, decisions,
+assignments, jobs, audit rows, and the media - writing a snapshot of every
+removed row to disk first and leaving a single deletion record behind. Phone safety mode withholds it like every
+other governed control.
 
 ### Provisioning model tiers
 
@@ -250,9 +270,9 @@ On phones the appliance runs in a safety mode: setup, login, session
 recovery, worklists, status, authorized read-only casefile content,
 playback, and supported ingest all work. Every governed mutation -
 transcript editing, speaker rename, withdrawal, approval, request changes,
-reopen, export, administration changes, and action-mode entry - is removed
-and guarded, with copy stating that review and decisions require a tablet
-or desktop.
+reopen, export, recording purge, administration changes, and action-mode
+entry - is removed and guarded, with copy stating that review and decisions
+require a tablet or desktop.
 
 ## Further reading
 
