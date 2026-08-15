@@ -237,6 +237,52 @@ describe("product css contract", () => {
     );
   });
 
+  it("docks the media player and guarantees a transcript viewport on desktop media casefiles", () => {
+    // media-casefile-transcript-room: on audio/video casefiles the transcript
+    // is the primary surface - the player docks compact (collapsible video
+    // picture, capped when expanded) and the transcript document becomes its
+    // own scrollport with a minimum height, so several segments stay visible
+    // while editing.
+    const casefile = readFileSync(resolve(STYLES_DIR, "casefile.css"), "utf8");
+    const mediaScope = '.casefile-main[data-revision="true"][data-media="true"]';
+    const escapedScope = mediaScope.replace(/\[/g, "\\[").replace(/\]/g, "\\]");
+    const transport = casefile.match(
+      new RegExp(`${escapedScope} \\.media-transport\\s*\\{([^}]*)\\}`),
+    );
+    // The docked transport keeps its natural height and is NOT pinned: when
+    // the column is too short for dock + transcript floor, the whole column
+    // scrolls and the dock flows away so the transcript stays usable.
+    expect(transport?.[1]).toContain("flex: 0 0 auto");
+    expect(transport?.[1]).toContain("position: static");
+    const video = casefile.match(
+      new RegExp(`${escapedScope} \\.media-transport__controls video\\s*\\{([^}]*)\\}`),
+    );
+    expect(video?.[1]).toContain("max-height: min(18vh, 210px)");
+    expect(video?.[1]).toContain("object-fit: contain");
+    const transcript = casefile.match(
+      new RegExp(`${escapedScope} \\.transcript-document\\s*\\{([^}]*)\\}`),
+    );
+    expect(transcript?.[1]).toContain("flex: 1 1 0");
+    expect(transcript?.[1]).toContain("min-height: 21rem");
+    expect(transcript?.[1]).toContain("overflow-y: auto");
+    // Collapsible video picture: collapsed by default so the transcript owns
+    // the room; the element stays mounted for playback/seek continuity.
+    const collapsed = casefile.match(
+      /\.media-transport\[data-video-state="collapsed"\] \.media-transport__controls video\s*\{([^}]*)\}/,
+    );
+    expect(collapsed?.[1]).toContain("display: none");
+    const collapsedRail = casefile.match(
+      /\.media-transport\[data-video-state="collapsed"\] \.media-transport__rail\s*\{([^}]*)\}/,
+    );
+    expect(collapsedRail?.[1]).toContain("display: none");
+    // Escape-hatch column scrolling centers rows without reserved pinned
+    // chrome clearance on media casefiles.
+    const mainMedia = casefile.match(
+      new RegExp(`${escapedScope}\\s*\\{([^}]*)\\}`),
+    );
+    expect(mainMedia?.[1]).toContain("scroll-padding-block: var(--space-3)");
+  });
+
   it("centers the file-input chooser row with symmetric block padding", () => {
     const base = readFileSync(resolve(STYLES_DIR, "base.css"), "utf8");
 
