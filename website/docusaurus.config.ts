@@ -22,8 +22,8 @@ if (versioningArtifact) {
 //
 // Docs content lives in the repo's normal locations (README.md, DESIGN.md,
 // docs/operators/, ...) and is derived into website/content/ by
-// scripts/stage-docs.sh - the sources are never moved or edited. Versioning
-// site publishes one tree only, tracking latest main (versioning flattened
+// scripts/stage-docs.sh - the sources are never moved or edited. The site
+// publishes one tree only, tracking latest main (versioning flattened
 // by captain decision of 2026-08-14: no frozen release snapshots). Old
 // versioned URLs collapse onto the current tree via client redirects.
 // Search is fully local (@easyops-cn - Lunr index at
