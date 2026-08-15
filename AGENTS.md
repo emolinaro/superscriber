@@ -1,7 +1,7 @@
 ## Project At A Glance
 
 - `main` carries work toward the next release - see the `[Unreleased]` CHANGELOG section. Version source: `VERSION`; release notes: `CHANGELOG.md`.
-- Doc prose never pins a current release version (captain durable rule): point to `CHANGELOG.md` for history and `VERSION` for the current number. Dated evidence ("Tested against vX" headers, frozen `website/versioned_docs/` snapshots) keeps its versions.
+- Doc prose never pins a current release version (captain durable rule): point to `CHANGELOG.md` for history and `VERSION` for the current number. Dated evidence ("Tested against vX" headers) keeps its versions. The docs site publishes one unversioned tree tracking latest main (flattened 2026-08-14); retired `/superscriber/next/` and `/superscriber/v0.4.0/` URLs redirect to current paths.
 - Product overview, commands, and runtime: `README.md`. Design record and behavioral contract: `DESIGN.md`.
 - Domain workflow rules: `src/domain/workflow.ts`. Governed commands, capabilities, action mode, and access grants: `src/server/casefile/`. Authenticated routes: `app/(authenticated)/`.
 - Unmanageable-instance recovery (accounts exist, no active admin): operator-claim ceremony on the sign-up door gated by an on-host single-use token (`src/server/auth/recovery-claim.ts`, runbook `docs/operators/admin-recovery.md`).

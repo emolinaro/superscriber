@@ -42,11 +42,11 @@ jobs:
       - name: Build the site
         run: npm --prefix website run build
 
-      # Pages steps are deployment plumbing - skipped on pull requests,
-      # where the build itself is the validation. enablement:true lets the
-      # workflow create the Pages site if the repo setting was not flipped
-      # yet (Settings -> Pages -> Source: GitHub Actions remains the
-      # documented one-time captain step).
+      # Non-PR events prepare the Pages artifact, but only a main-branch push
+      # reaches the deploy job below. enablement:true lets the workflow create
+      # the Pages site if the repo setting was not flipped yet (Settings ->
+      # Pages -> Source: GitHub Actions remains the documented one-time
+      # captain step).
       - name: Configure Pages
         if: github.event_name != 'pull_request'
         uses: actions/configure-pages@v5
@@ -60,9 +60,8 @@ jobs:
           path: website/build
 
   deploy:
-    # Pages deployment only from main pushes, v* tags, or manual dispatch -
-    # never from pull requests.
-    if: github.event_name != 'pull_request'
+    # Only main-branch pushes publish; every other trigger stops before deploy.
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     needs: build
     runs-on: ubuntu-latest
     environment:
