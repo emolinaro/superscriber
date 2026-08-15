@@ -117,6 +117,12 @@ Per-segment markers line the transcript up with the audio, the segment
 currently playing is highlighted by an active band, and a timecode readout
 tracks the position.
 
+On media casefiles the transcript, not the player, is the primary surface:
+the transcript gets a guaranteed workable viewport below the docked
+transport, and on video recordings the picture starts collapsed (use
+**Show video picture** when visual context matters; the rail folds away
+while collapsed because the transcript cards are your segment map).
+
 - **Click-to-play segments.** Clicking a transcript segment that is not
   playing seeks to it and plays from there.
 - **Click-to-pause.** Clicking the currently playing segment pauses in
@@ -124,9 +130,11 @@ tracks the position.
   transport toggle and the Space key do exactly the same.
 - **Pinned chrome, centered follow.** Transport, wave, and timecode stay
   pinned above the transcript while it scrolls, so the controls never
-  scroll away. Follow scroll keeps the active segment centered as playback
-  advances, yields the moment you scroll manually, and re-engages on any
-  explicit seek.
+  scroll away - on media casefiles the dock yields to the transcript when
+  the window is too short for both, scrolling away so the transcript keeps
+  its workable viewport. Follow scroll keeps the active segment centered as
+  playback advances, yields the moment you scroll manually, and re-engages
+  on any explicit seek.
 - **Segment rail.** On wider layouts a numbered rail under the wave seeks
   the same segments. The rail follows playback on its own horizontal axis,
   keeping the active chip centered as the transcript centers the same

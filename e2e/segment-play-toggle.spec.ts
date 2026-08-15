@@ -108,7 +108,11 @@ test("a deep active transcript segment pauses and resumes in place with transpor
   expect(afterNonActiveClick.currentTime).toBeLessThan(42);
   expect(afterNonActiveClick.mediaPaused).toBe(false);
   expect(afterNonActiveClick.transcriptButtonInViewport).toBe(true);
-  expect(afterNonActiveClick.transportButtonInViewport).toBe(false);
+  // Pinned/docked transport (player-pinned-center, media-casefile dock):
+  // the transport keeps its slot at the top of the reviewing surface while
+  // the deep segment centers below it - centering must yank neither the
+  // transport nor the deep row out of the viewport.
+  expect(afterNonActiveClick.transportButtonInViewport).toBe(true);
 
   await activeSegment.click();
   await expect(activeSegment).toHaveAttribute("aria-pressed", "false");
@@ -125,16 +129,16 @@ test("a deep active transcript segment pauses and resumes in place with transpor
   expect(paused.transportLabel).toBe("Play");
   expect(paused.transportPressed).toBe("false");
   expect(paused.transcriptButtonInViewport).toBe(true);
-  expect(paused.transportButtonInViewport).toBe(false);
+  expect(paused.transportButtonInViewport).toBe(true);
 
-  await testInfo.attach("active-segment-paused-with-transport-offscreen", {
+  await testInfo.attach("active-segment-paused-with-transport-pinned", {
     body: await page.screenshot(),
     contentType: "image/png",
   });
   const evidenceDir = process.env.SUPERSCRIBER_E2E_EVIDENCE_DIR?.trim();
   if (evidenceDir) {
     await page.screenshot({
-      path: `${evidenceDir}/active-segment-paused-transport-offscreen.png`,
+      path: `${evidenceDir}/active-segment-paused-transport-pinned.png`,
     });
   }
 
