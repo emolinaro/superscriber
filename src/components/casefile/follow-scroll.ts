@@ -9,7 +9,7 @@
  * previous nearest-edge alignment held - or immediately on an explicit
  * seek (segment timestamp click, rail chip, wave marker).
  *
- * The segment rail inside the pinned transport mirrors this contract on the
+ * The segment rail inside the media transport mirrors this contract on the
  * horizontal axis (wave-track scroll sync): the same decision matrix, the
  * same pause-on-user-gesture boundary, applied to the rail's scrollLeft so
  * the active segment's chip stays centered-ish while the transcript centers
@@ -39,7 +39,7 @@ export function decideFollowScroll(
 
 /**
  * Horizontal follow (wave-track scroll sync): the segment rail inside the
- * pinned transport is an independent horizontal scrollport that must keep
+ * media transport is an independent horizontal scrollport that must keep
  * the active segment's chip visible - the same active segment the
  * transcript's vertical follow is centering. The non-fighting contract is
  * axis-agnostic, so the rail runs the exact same decision matrix through
