@@ -19,6 +19,7 @@ import type { CasefileMutationResult } from "@/server/actions/casefile-actions";
 import type { CasefileViewModel } from "@/server/casefile/read-model";
 import type { CasefileConflictSnapshot } from "@/server/casefile/errors";
 import type { CommandResult } from "@/lib/command-result";
+import type { TranscriptSegmentEdit } from "@/domain/models";
 import { OrchestrationStatusPoller } from "@/components/orchestration-status-poller";
 import { SessionRecoveryDialog } from "@/components/auth/session-recovery-dialog";
 import { InlineNotice } from "@/components/ui/inline-notice";
@@ -89,6 +90,27 @@ type ExitAdminActionModeAction = (input: {
 
 function copySegments(casefile: CasefileViewModel) {
   return casefile.revision?.segments?.map((segment) => ({ ...segment })) ?? [];
+}
+
+// Patch-based save protocol: local edits are tracked per segment as
+// reviewer-owned field changes only, so saves and submits submit just the
+// changed text/speaker fields instead of the full segment array. The server
+// merges them into the canonical transcript skeleton.
+type SegmentEditFields = Omit<TranscriptSegmentEdit, "id">;
+
+function recordSegmentEdit(
+  edits: Map<string, SegmentEditFields>,
+  segmentId: string,
+  field: keyof SegmentEditFields,
+  value: string,
+) {
+  const next = new Map(edits);
+  next.set(segmentId, { ...next.get(segmentId), [field]: value });
+  return next;
+}
+
+function buildSegmentEdits(edits: Map<string, SegmentEditFields>): TranscriptSegmentEdit[] {
+  return Array.from(edits, ([id, fields]) => ({ id, ...fields }));
 }
 
 function activeSegmentAfterReplacement(
@@ -323,6 +345,9 @@ export function CasefileWorkspace({
   const [casefile, setCasefile] = useState(initialCasefile);
   const [summary, setSummary] = useState(initialCasefile.revision?.summary ?? "");
   const [segments, setSegments] = useState(copySegments(initialCasefile));
+  const [segmentEdits, setSegmentEdits] = useState<Map<string, SegmentEditFields>>(
+    () => new Map(),
+  );
   const [dirty, setDirty] = useState(false);
   const [saving, setSaving] = useState(false);
   const [sessionRecoveryOpen, setSessionRecoveryOpen] = useState(false);
@@ -379,6 +404,7 @@ export function CasefileWorkspace({
 
     setSummary(initialCasefile.revision?.summary ?? "");
     setSegments(copySegments(initialCasefile));
+    setSegmentEdits(new Map());
     setActiveSegmentId((current) => activeSegmentAfterReplacement(current, initialCasefile));
   }, [initialCasefile]);
 
@@ -525,6 +551,7 @@ export function CasefileWorkspace({
     const nextCasefile = result.data.casefile;
     if (!nextCasefile) {
       setDirty(false);
+      setSegmentEdits(new Map());
       setConflict(null);
       router.push(appendQueryMessages(result.data.nextPath, { notice: result.notice }));
       return true;
@@ -533,6 +560,7 @@ export function CasefileWorkspace({
     setCasefile(nextCasefile);
     setSummary(nextCasefile.revision?.summary ?? "");
     setSegments(copySegments(nextCasefile));
+    setSegmentEdits(new Map());
     setActiveSegmentId((current) => activeSegmentAfterReplacement(current, nextCasefile));
     setConflict(null);
     setDirty(false);
@@ -570,7 +598,7 @@ export function CasefileWorkspace({
       recordingId: casefile.recordingId,
       expectedCurrentRevisionId: casefile.revision.id,
       summary,
-      segments,
+      edits: buildSegmentEdits(segmentEdits),
       actionModeId: casefile.actionMode?.id ?? null,
     });
     applyMutationResult(result);
@@ -589,7 +617,7 @@ export function CasefileWorkspace({
         recordingId: casefile.recordingId,
         expectedCurrentRevisionId: casefile.revision.id,
         summary,
-        segments,
+        edits: buildSegmentEdits(segmentEdits),
         hasUnsavedChanges: dirty,
         actionModeId: casefile.actionMode?.id ?? null,
       });
@@ -725,6 +753,7 @@ export function CasefileWorkspace({
         segment.id === segmentId ? { ...segment, speakerLabel: value } : segment,
       ),
     );
+    setSegmentEdits((current) => recordSegmentEdit(current, segmentId, "speakerLabel", value));
     setDirty(true);
   }
 
@@ -732,6 +761,7 @@ export function CasefileWorkspace({
     setSegments((current) =>
       current.map((segment) => (segment.id === segmentId ? { ...segment, text: value } : segment)),
     );
+    setSegmentEdits((current) => recordSegmentEdit(current, segmentId, "text", value));
     setDirty(true);
   }
 

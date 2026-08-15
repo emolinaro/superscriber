@@ -18,6 +18,7 @@ import type {
   Recording,
   RecordingAssignment,
   TranscriptRevision,
+  TranscriptSegmentEdit,
   Workspace,
 } from "@/domain/models";
 import {
@@ -44,7 +45,7 @@ import { runGovernedTransaction } from "@/server/db/transaction";
 export type SaveDraftCommandInput = {
   recordingId: string;
   expectedCurrentRevisionId: string;
-  segments: TranscriptRevision["segments"];
+  edits: TranscriptSegmentEdit[];
   summary: string;
   actionModeId?: string | null;
 };
@@ -650,6 +651,73 @@ function assertCompleteSegments(
   }
 }
 
+// Patch-based draft writes: reviewer edits arrive keyed by segment id and
+// merge into the canonical skeleton of the loaded draft revision. The merge
+// preserves the assertCompleteSegments invariants per segment by construction:
+// the segment count and order come from the stored revision, every edit id
+// must address an existing segment, and identity, timing, and worker-owned
+// metadata (confidence) are copied from the stored segment and can never be
+// set by a patch.
+function applySegmentEdits(
+  prior: TranscriptRevision,
+  edits: TranscriptSegmentEdit[],
+): TranscriptRevision["segments"] {
+  const editBySegmentId = new Map<string, TranscriptSegmentEdit>();
+
+  for (const [index, edit] of edits.entries()) {
+    if (!edit || typeof edit.id !== "string" || !edit.id) {
+      throw new CasefileCommandError(
+        "VALIDATION_ERROR",
+        "Draft edits must address transcript segments in the loaded draft.",
+        {
+          edits: `Draft edit ${index + 1} must address a transcript segment in the loaded draft.`,
+        },
+      );
+    }
+
+    // Entries apply in payload order, so a repeated segment id folds into the
+    // last value per field instead of producing a lost update inside one save.
+    editBySegmentId.set(edit.id, { ...editBySegmentId.get(edit.id), ...edit });
+  }
+
+  const priorSegmentIds = new Set(prior.segments.map((segment) => segment.id));
+
+  for (const segmentId of editBySegmentId.keys()) {
+    if (!priorSegmentIds.has(segmentId)) {
+      throw new CasefileCommandError(
+        "VALIDATION_ERROR",
+        "Draft edits must address transcript segments in the loaded draft.",
+        {
+          edits: "Draft edits must address transcript segments in the loaded draft. Reload this recording before saving changes.",
+        },
+      );
+    }
+  }
+
+  return prior.segments.map((segment) => {
+    const edit = editBySegmentId.get(segment.id);
+    if (!edit) {
+      return { ...segment };
+    }
+
+    return {
+      ...segment,
+      text: typeof edit.text === "string" ? edit.text : segment.text,
+      speakerLabel:
+        typeof edit.speakerLabel === "string" ? edit.speakerLabel : segment.speakerLabel,
+    };
+  });
+}
+
+function summarizeSegmentEdits(edits: TranscriptSegmentEdit[]) {
+  return edits.map((edit) => ({
+    segmentId: edit.id,
+    fields: ["text", "speakerLabel"].filter(
+      (field) => typeof edit[field as "text" | "speakerLabel"] === "string",
+    ),
+  }));
+}
+
 function insertRevision(db: AppDatabase, revision: TranscriptRevision) {
   db.insert(revisions).values({
     id: revision.id,
@@ -724,7 +792,7 @@ function saveDraftInTransaction(
   actor: CommandActor,
   recording: Recording,
   prior: TranscriptRevision,
-  input: SaveDraftCommandInput,
+  input: { segments: TranscriptRevision["segments"]; summary: string },
   now: string,
   options: { preserveSpeakerLabels?: boolean } = {},
 ) {
@@ -777,7 +845,11 @@ export function saveDraftCommand(
     requireSaveAuthority(state, principal);
     const prior = currentRevisionOrThrow(state.recording, state.revision);
     assertDraftState(db, state.recording, prior, input.expectedCurrentRevisionId);
-    const saved = saveDraftInTransaction(db, state.actor, state.recording, prior, input, now);
+    const mergedSegments = applySegmentEdits(prior, input.edits);
+    const saved = saveDraftInTransaction(db, state.actor, state.recording, prior, {
+      segments: mergedSegments,
+      summary: input.summary,
+    }, now);
 
     insertAuditEvent(db, {
       workspaceId: state.workspace.id,
@@ -789,6 +861,7 @@ export function saveDraftCommand(
         priorRevisionId: prior.id,
         revisionId: saved.id,
         version: saved.version,
+        edits: summarizeSegmentEdits(input.edits),
       },
       createdAt: now,
     });
@@ -814,7 +887,10 @@ export function submitRevisionCommand(
     assertDraftState(db, state.recording, current, input.expectedCurrentRevisionId);
 
     const target = input.hasUnsavedChanges
-      ? saveDraftInTransaction(db, state.actor, state.recording, current, input, now)
+      ? saveDraftInTransaction(db, state.actor, state.recording, current, {
+          segments: applySegmentEdits(current, input.edits),
+          summary: input.summary,
+        }, now)
       : current;
 
     db.update(revisions)
@@ -853,6 +929,7 @@ export function submitRevisionCommand(
         revisionId: target.id,
         version: target.version,
         internalSave: input.hasUnsavedChanges,
+        edits: input.hasUnsavedChanges ? summarizeSegmentEdits(input.edits) : [],
       },
       createdAt: now,
     });
@@ -889,13 +966,10 @@ export function renameSpeakerCommand(
     const renamedSegments = applySpeakerRename(prior.segments, rename.fromSpeaker, rename.toSpeaker);
 
     const saved = saveDraftInTransaction(db, state.actor, state.recording, prior, {
-      recordingId: input.recordingId,
-      expectedCurrentRevisionId: input.expectedCurrentRevisionId,
       segments: renamedSegments,
       summary:
         input.summary?.trim() ||
         `Renamed speaker "${rename.fromSpeaker}" to "${rename.toSpeaker}".`,
-      actionModeId: input.actionModeId ?? null,
     }, now, { preserveSpeakerLabels: true });
 
     insertAuditEvent(db, {

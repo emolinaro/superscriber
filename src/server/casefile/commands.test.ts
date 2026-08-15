@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { and, eq } from "drizzle-orm";
-import type { Principal, TranscriptRevision } from "@/domain/models";
+import type { Principal, TranscriptRevision, TranscriptSegmentEdit } from "@/domain/models";
 import { createLocalUser, toPrincipal } from "@/server/auth/service";
 import { assignRecordingToUser } from "@/server/access/service";
 import { recoverRevisionVersion } from "@/server/administration/service";
@@ -38,7 +38,7 @@ type DraftInput = {
   recordingId: string;
   expectedCurrentRevisionId: string;
   summary: string;
-  segments: TranscriptRevision["segments"];
+  edits: TranscriptSegmentEdit[];
   actionModeId?: string | null;
 };
 
@@ -163,8 +163,8 @@ async function setupDraftFixture() {
     recordingId: "rec-1",
     expectedCurrentRevisionId: "rev-1",
     summary: "Updated transcript draft.",
-    segments: cloneSegments(baseSegments).map((segment, index) => ({
-      ...segment,
+    edits: baseSegments.map((segment, index) => ({
+      id: segment.id,
       text: `${segment.text} Edited ${index + 1}.`,
     })),
   };
@@ -314,7 +314,7 @@ async function createSharedPendingFixture() {
     recordingId: "rec-1",
     expectedCurrentRevisionId: "rev-1",
     summary: "Updated transcript draft.",
-    segments: cloneSegments(baseSegments),
+    edits: [],
     hasUnsavedChanges: true,
   }, first);
 
@@ -370,14 +370,13 @@ describe("casefile draft commands", () => {
       const { bundle, reviewer, draftInput } = await setupDraftFixture();
 
       try {
-        const segments = cloneSegments(draftInput.segments);
-        segments[0] = { ...segments[0], speakerLabel: "  Speaker A  " };
+        const edits: TranscriptSegmentEdit[] = [{ id: "seg-1", speakerLabel: "  Speaker A  " }];
 
         const written = operation === "save"
-          ? saveDraftCommand(reviewer, { ...draftInput, segments }, bundle)
+          ? saveDraftCommand(reviewer, { ...draftInput, edits }, bundle)
           : submitRevisionCommand(
               reviewer,
-              { ...draftInput, segments, hasUnsavedChanges: true },
+              { ...draftInput, edits, hasUnsavedChanges: true },
               bundle,
             );
 
@@ -395,11 +394,10 @@ describe("casefile draft commands", () => {
       const { bundle, reviewer, draftInput } = await setupDraftFixture();
 
       try {
-        const segments = cloneSegments(draftInput.segments);
-        segments[0] = { ...segments[0], speakerLabel };
+        const edits: TranscriptSegmentEdit[] = [{ id: "seg-1", speakerLabel }];
 
         expect(() =>
-          saveDraftCommand(reviewer, { ...draftInput, segments }, bundle),
+          saveDraftCommand(reviewer, { ...draftInput, edits }, bundle),
         ).toThrowError(expect.objectContaining({ code: "VALIDATION_ERROR" }));
         expect(readRecording(bundle)?.currentRevisionId).toBe("rev-1");
       } finally {
@@ -1032,31 +1030,143 @@ describe("casefile draft commands", () => {
     }
   });
 
-  it("rejects save when the client drops part of the complete segment array", async () => {
+  it("rejects a patch that addresses a segment outside the loaded draft", async () => {
     const { bundle, reviewer, draftInput } = await setupDraftFixture();
 
     try {
       expect(() =>
         saveDraftCommand(reviewer, {
           ...draftInput,
-          segments: [draftInput.segments[0]!],
+          edits: [{ id: "seg-2", text: "Legitimate edit." }, { id: "seg-ghost", text: "Forged segment." }],
         }, bundle),
       ).toThrowError(expect.objectContaining({ code: "VALIDATION_ERROR" }));
+      expect(readRecording(bundle)?.currentRevisionId).toBe("rev-1");
+      expect(readRevision(bundle, "rev-1")?.state).toBe("draft");
     } finally {
       bundle.sqlite.close();
     }
   });
 
-  it("rejects save when the replacement draft removes all existing segments", async () => {
+  it("rejects a patch entry without a segment id", async () => {
     const { bundle, reviewer, draftInput } = await setupDraftFixture();
 
     try {
       expect(() =>
         saveDraftCommand(reviewer, {
           ...draftInput,
-          segments: [],
+          edits: [{ id: "", text: "No target." }],
         }, bundle),
       ).toThrowError(expect.objectContaining({ code: "VALIDATION_ERROR" }));
+      expect(readRecording(bundle)?.currentRevisionId).toBe("rev-1");
+    } finally {
+      bundle.sqlite.close();
+    }
+  });
+
+  it("keeps identity, timing, and worker-owned metadata server-pinned when a patch forges them", async () => {
+    const { bundle, reviewer, draftInput } = await setupDraftFixture();
+
+    try {
+      const forged = {
+        id: "seg-1",
+        text: "Reviewer wording.",
+        startMs: 999,
+        endMs: 111_111,
+        confidence: 0.01,
+      } as unknown as TranscriptSegmentEdit;
+
+      const saved = saveDraftCommand(reviewer, {
+        ...draftInput,
+        edits: [forged],
+      }, bundle);
+
+      expect(saved.segments).toHaveLength(baseSegments.length);
+      expect(saved.segments[0]).toEqual({
+        ...baseSegments[0],
+        text: "Reviewer wording.",
+      });
+      expect(saved.segments[1]).toEqual(baseSegments[1]);
+    } finally {
+      bundle.sqlite.close();
+    }
+  });
+
+  it("keeps segment content when a save carries no segment edits", async () => {
+    const { bundle, reviewer, draftInput } = await setupDraftFixture();
+
+    try {
+      const saved = saveDraftCommand(reviewer, {
+        ...draftInput,
+        summary: "Summary-only revision note.",
+        edits: [],
+      }, bundle);
+
+      expect(saved.summary).toBe("Summary-only revision note.");
+      expect(saved.segments).toEqual(baseSegments);
+    } finally {
+      bundle.sqlite.close();
+    }
+  });
+
+  it("merges sequential patches into the canonical skeleton without lost updates", async () => {
+    const { bundle, reviewer, draftInput } = await setupDraftFixture();
+
+    try {
+      const firstSave = saveDraftCommand(reviewer, {
+        ...draftInput,
+        edits: [{ id: "seg-1", text: "First pass wording." }],
+      }, bundle);
+
+      const secondSave = saveDraftCommand(reviewer, {
+        ...draftInput,
+        expectedCurrentRevisionId: firstSave.id,
+        edits: [{ id: "seg-2", text: "Second pass wording.", speakerLabel: "Interviewer" }],
+      }, bundle);
+
+      expect(secondSave.segments).toEqual([
+        { ...baseSegments[0], text: "First pass wording." },
+        { ...baseSegments[1], text: "Second pass wording.", speakerLabel: "Interviewer" },
+      ]);
+      expect(readRevision(bundle, secondSave.id)?.segments).toEqual(secondSave.segments);
+    } finally {
+      bundle.sqlite.close();
+    }
+  });
+
+  it("records patch edits on the save and submit audit events", async () => {
+    const { bundle, reviewer, draftInput } = await setupDraftFixture();
+
+    try {
+      const saved = saveDraftCommand(reviewer, {
+        ...draftInput,
+        edits: [{ id: "seg-1", text: "Audited edit." }],
+      }, bundle);
+
+      const savedRow = listRevisionAuditRows(bundle).at(-1);
+      expect(savedRow?.type).toBe("revision.saved");
+      const savedMetadata = JSON.parse(savedRow?.metadata ?? "{}") as {
+        data?: Record<string, unknown>;
+      };
+      expect(savedMetadata.data?.edits).toEqual([
+        { segmentId: "seg-1", fields: ["text"] },
+      ]);
+
+      submitRevisionCommand(reviewer, {
+        ...draftInput,
+        expectedCurrentRevisionId: saved.id,
+        hasUnsavedChanges: true,
+        edits: [{ id: "seg-2", speakerLabel: "Dana", text: "Submitted wording." }],
+      }, bundle);
+
+      const submittedRow = listRevisionAuditRows(bundle).at(-1);
+      expect(submittedRow?.type).toBe("revision.submitted");
+      const submittedMetadata = JSON.parse(submittedRow?.metadata ?? "{}") as {
+        data?: Record<string, unknown>;
+      };
+      expect(submittedMetadata.data?.edits).toEqual([
+        { segmentId: "seg-2", fields: ["text", "speakerLabel"] },
+      ]);
+      expect(submittedMetadata.data?.internalSave).toBe(true);
     } finally {
       bundle.sqlite.close();
     }
@@ -1151,7 +1261,7 @@ describe("casefile draft commands", () => {
           recordingId: "rec-1",
           expectedCurrentRevisionId: "rev-1",
           summary: "Updated transcript draft.",
-          segments: cloneSegments(baseSegments),
+          edits: [],
         }, bundle),
       ).toThrowError(expect.objectContaining({ code: "ACCESS_DENIED" }));
     } finally {

@@ -71,6 +71,16 @@ export type TranscriptSegment = {
   confidence: number;
 };
 
+// Patch-based review save protocol: the browser submits only the reviewer-owned
+// fields it changed, keyed by segment id. Identity, timing, and worker-owned
+// metadata (confidence) are never part of the wire shape; the server merges
+// edits into the canonical transcript skeleton of the current draft revision.
+export type TranscriptSegmentEdit = {
+  id: string;
+  text?: string;
+  speakerLabel?: string;
+};
+
 export type PolicyProfile = {
   id: PolicyProfileId;
   label: string;

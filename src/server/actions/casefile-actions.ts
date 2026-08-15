@@ -2,7 +2,7 @@
 
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
-import { type Principal, type TranscriptSegment } from "@/domain/models";
+import { type Principal, type TranscriptSegmentEdit } from "@/domain/models";
 import { type CommandResult, type FocusTarget } from "@/lib/command-result";
 import { authExpiredResult, toCommandResultError } from "@/lib/command-result";
 import { appendQueryMessages } from "@/lib/navigation-path";
@@ -42,41 +42,37 @@ function asString(formData: FormData, key: string, fallback = "") {
   return typeof value === "string" ? value : fallback;
 }
 
-function parseSegmentsJson(formData: FormData) {
-  const raw = asString(formData, "segmentsJson");
+// Patch protocol parse: only reviewer-owned fields (text, speakerLabel)
+// survive; identity, timing, and worker-owned metadata are not readable from
+// the wire shape, so a forged payload cannot set them.
+function parseEditsJson(formData: FormData) {
+  const raw = asString(formData, "editsJson");
   if (!raw) {
-    return [] satisfies TranscriptSegment[];
+    return [] satisfies TranscriptSegmentEdit[];
   }
 
   const parsed = JSON.parse(raw) as unknown;
   if (!Array.isArray(parsed)) {
-    throw new Error("Transcript payload must be an array.");
+    throw new Error("Transcript edit payload must be an array.");
   }
 
   return parsed.map((item, index) => {
     if (!item || typeof item !== "object") {
-      throw new Error(`Transcript segment ${index + 1} is invalid.`);
+      throw new Error(`Transcript edit ${index + 1} is invalid.`);
     }
 
-    const candidate = item as Partial<TranscriptSegment>;
+    const candidate = item as Partial<TranscriptSegmentEdit>;
+    if (typeof candidate.id !== "string" || !candidate.id) {
+      throw new Error(`Transcript edit ${index + 1} is missing its segment id.`);
+    }
+
     return {
-      id: typeof candidate.id === "string" ? candidate.id : `segment-${index}`,
-      speakerLabel:
-        typeof candidate.speakerLabel === "string" ? candidate.speakerLabel : "",
-      startMs:
-        typeof candidate.startMs === "number" && Number.isFinite(candidate.startMs)
-          ? candidate.startMs
-          : 0,
-      endMs:
-        typeof candidate.endMs === "number" && Number.isFinite(candidate.endMs)
-          ? candidate.endMs
-          : 0,
-      text: typeof candidate.text === "string" ? candidate.text : "",
-      confidence:
-        typeof candidate.confidence === "number" && Number.isFinite(candidate.confidence)
-          ? candidate.confidence
-          : 0.8,
-    } satisfies TranscriptSegment;
+      id: candidate.id,
+      ...(typeof candidate.text === "string" ? { text: candidate.text } : {}),
+      ...(typeof candidate.speakerLabel === "string"
+        ? { speakerLabel: candidate.speakerLabel }
+        : {}),
+    } satisfies TranscriptSegmentEdit;
   });
 }
 
@@ -253,7 +249,7 @@ export async function saveDraftFormAction(formData: FormData) {
     await saveDraftAction({
       recordingId,
       expectedCurrentRevisionId: asString(formData, "currentRevisionId"),
-      segments: parseSegmentsJson(formData),
+      edits: parseEditsJson(formData),
       summary: asString(formData, "summary", "Updated transcript draft."),
       actionModeId: asString(formData, "actionModeId") || null,
     }),
@@ -263,16 +259,16 @@ export async function saveDraftFormAction(formData: FormData) {
 
 export async function submitRevisionFormAction(formData: FormData) {
   const recordingId = asString(formData, "recordingId");
-  const segments = parseSegmentsJson(formData);
+  const edits = parseEditsJson(formData);
   return redirectFromCommandResult(
     await submitRevisionAction({
       recordingId,
       expectedCurrentRevisionId: asString(formData, "currentRevisionId"),
-      segments,
+      edits,
       summary: asString(formData, "summary", "Updated transcript draft."),
       hasUnsavedChanges: asString(formData, "hasUnsavedChanges")
         ? asString(formData, "hasUnsavedChanges") === "true"
-        : segments.length > 0,
+        : edits.length > 0,
       actionModeId: asString(formData, "actionModeId") || null,
     }),
     `/recordings/${recordingId}`,
