@@ -60,9 +60,8 @@ jobs:
           path: website/build
 
   deploy:
-    # Pages deployment only from main pushes, v* tags, or manual dispatch -
-    # never from pull requests.
-    if: github.event_name != 'pull_request'
+    # Tag pushes, pull requests, and manual dispatch remain build-only validation.
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     needs: build
     runs-on: ubuntu-latest
     environment:
