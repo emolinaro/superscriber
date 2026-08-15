@@ -450,6 +450,86 @@ describe("CasefileWorkspace", () => {
     expect(removeSpy).toHaveBeenCalledWith("beforeunload", expect.any(Function));
   });
 
+  it("saves only the changed segment fields as a patch payload", async () => {
+    const user = userEvent.setup();
+    const nextCasefile = createCasefile({
+      revision: {
+        ...createCasefile().revision,
+        id: "rev-2",
+        version: 2,
+      },
+    });
+    const { saveAction } = renderWorkspace();
+    saveAction.mockResolvedValue({
+      ok: true,
+      data: {
+        casefile: nextCasefile,
+        nextPath: "/recordings/rec-1",
+        focusTarget: "retain",
+      },
+    });
+
+    const editor = screen.getByRole("textbox", {
+      name: "Transcript for segment 1, 00:00-00:10",
+    });
+    await user.click(editor);
+    await user.type(editor, " Updated");
+    const speakerField = screen.getByRole("textbox", {
+      name: "Speaker for segment 2, 00:10-00:20",
+    });
+    await user.clear(speakerField);
+    await user.type(speakerField, "Interviewer");
+
+    await user.click(screen.getByRole("button", { name: "Save draft" }));
+
+    await waitFor(() =>
+      expect(saveAction).toHaveBeenCalledWith({
+        recordingId: "rec-1",
+        expectedCurrentRevisionId: "rev-1",
+        summary: "Ready for review.",
+        edits: [
+          { id: "seg-1", text: "Hello world. Updated" },
+          { id: "seg-2", speakerLabel: "Interviewer" },
+        ],
+        actionModeId: null,
+      }),
+    );
+  });
+
+  it("submits pending edits as a patch with the unsaved-changes flag", async () => {
+    const user = userEvent.setup();
+    const { submitAction } = renderWorkspace();
+    submitAction.mockResolvedValue({
+      ok: true,
+      data: {
+        casefile: createCasefile({
+          revision: { ...createCasefile().revision, id: "rev-2", version: 2 },
+        }),
+        nextPath: "/recordings/rec-1",
+        focusTarget: "case-state",
+      },
+    });
+
+    const editor = screen.getByRole("textbox", {
+      name: "Transcript for segment 2, 00:10-00:20",
+    });
+    await user.click(editor);
+    await user.type(editor, "!");
+
+    await user.click(screen.getByRole("button", { name: "Submit for approval" }));
+    const dialog = await screen.findByRole("dialog", { name: "Submit for approval" });
+    await user.click(within(dialog).getByRole("button", { name: "Submit for approval" }));
+
+    await waitFor(() =>
+      expect(submitAction).toHaveBeenCalledWith(
+        expect.objectContaining({
+          edits: [{ id: "seg-2", text: "General Kenobi.!" }],
+          hasUnsavedChanges: true,
+        }),
+      ),
+    );
+  });
+
   it("preserves the active segment across a successful save", async () => {
     const user = userEvent.setup();
     const nextCasefile = createCasefile({

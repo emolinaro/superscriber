@@ -218,14 +218,11 @@ const casefile = {
 const draftInput = {
   recordingId: "rec-1",
   expectedCurrentRevisionId: "rev-1",
-  segments: [
+  edits: [
     {
       id: "seg-1",
       speakerLabel: "Speaker 1",
-      startMs: 0,
-      endMs: 1000,
       text: "Hello world.",
-      confidence: 0.9,
     },
   ],
   summary: "Updated transcript draft.",
@@ -302,7 +299,7 @@ describe("typed governed actions", () => {
       throw new CasefileCommandError(
         "VALIDATION_ERROR",
         "Review the highlighted fields and try again.",
-        { segments: "Draft saves must include the full current segment array without structural changes." },
+        { edits: "Draft edits must address transcript segments in the loaded draft. Reload this recording before saving changes." },
       );
     });
 
@@ -311,8 +308,8 @@ describe("typed governed actions", () => {
       code: "VALIDATION_ERROR",
       message: "Review the highlighted fields and try again.",
       fieldErrors: {
-        segments:
-          "Draft saves must include the full current segment array without structural changes.",
+        edits:
+          "Draft edits must address transcript segments in the loaded draft. Reload this recording before saving changes.",
       },
     });
   });
