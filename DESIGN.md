@@ -227,6 +227,8 @@ Every transcript-capable casefile begins directly below the app shell:
 
 A recording owner with uploader-only access receives a status casefile: ingest and live transcription progress, safe metadata, and recovery guidance, with no transcript, media, decisions, or audit content.
 
+<a id="approved-export"></a>
+
 ### Transcript export
 
 - Export stays anchored to the casefile action bar, not a separate reporting screen

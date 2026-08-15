@@ -1,6 +1,22 @@
 import type {Config} from '@docusaurus/types';
 import type * as Preset from '@docusaurus/preset-classic';
+import {existsSync} from 'node:fs';
+import {dirname, join} from 'node:path';
+import {fileURLToPath} from 'node:url';
 import {themes as prismThemes} from 'prism-react-renderer';
+
+const siteDir = dirname(fileURLToPath(import.meta.url));
+const versioningArtifact = [
+  'versions.json',
+  'versioned_docs',
+  'versioned_sidebars',
+].find((path) => existsSync(join(siteDir, path)));
+
+if (versioningArtifact) {
+  throw new Error(
+    `Docs versioning is disabled; remove website/${versioningArtifact}.`,
+  );
+}
 
 // GitHub Pages documentation site for Superscriber.
 //
