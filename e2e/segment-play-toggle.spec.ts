@@ -43,7 +43,28 @@ async function playbackState(page: import("@playwright/test").Page): Promise<Pla
     const inViewport = (element: Element | null) => {
       if (!element) return false;
       const rect = element.getBoundingClientRect();
-      return rect.bottom > 0 && rect.top < window.innerHeight;
+      let left = Math.max(rect.left, 0);
+      let right = Math.min(rect.right, window.innerWidth);
+      let top = Math.max(rect.top, 0);
+      let bottom = Math.min(rect.bottom, window.innerHeight);
+      const clippingOverflow = new Set(["auto", "clip", "hidden", "overlay", "scroll"]);
+
+      for (let ancestor = element.parentElement; ancestor; ancestor = ancestor.parentElement) {
+        const style = getComputedStyle(ancestor);
+        const ancestorRect = ancestor.getBoundingClientRect();
+        if (clippingOverflow.has(style.overflowX)) {
+          const clipLeft = ancestorRect.left + ancestor.clientLeft;
+          left = Math.max(left, clipLeft);
+          right = Math.min(right, clipLeft + ancestor.clientWidth);
+        }
+        if (clippingOverflow.has(style.overflowY)) {
+          const clipTop = ancestorRect.top + ancestor.clientTop;
+          top = Math.max(top, clipTop);
+          bottom = Math.min(bottom, clipTop + ancestor.clientHeight);
+        }
+      }
+
+      return right > left && bottom > top;
     };
 
     if (!media) throw new Error("Expected the casefile audio element.");
@@ -162,6 +183,61 @@ test("a deep active transcript segment pauses and resumes in place with transpor
   await expect(transport).toHaveAttribute("aria-pressed", "true");
   await expect(activeSegment).toHaveAttribute("aria-pressed", "true");
   const spaceResumed = await playbackState(page);
+
+  await page.keyboard.press("Space");
+  await expect(transport).toHaveAttribute("aria-pressed", "false");
+  await page.setViewportSize({ width: 1280, height: 640 });
+
+  const transcript = page.getByTestId("transcript-start");
+  const transcriptMain = page.locator("#transcript-main");
+  await expect
+    .poll(() =>
+      transcriptMain.evaluate((node: HTMLElement) => node.scrollHeight > node.clientHeight),
+    )
+    .toBe(true);
+  await transcriptMain.evaluate((node: HTMLElement) => {
+    node.scrollTop = 0;
+  });
+  await transcript.evaluate((node: HTMLElement) => {
+    node.scrollTop = node.scrollHeight;
+  });
+  await expect
+    .poll(() =>
+      transcript.evaluate(
+        (node: HTMLElement) => node.scrollTop + node.clientHeight >= node.scrollHeight - 1,
+      ),
+    )
+    .toBe(true);
+
+  const wheelPoint = await transcript.evaluate((node: HTMLElement) => {
+    const main = node.closest<HTMLElement>("#transcript-main");
+    if (!main) throw new Error("Expected the transcript main scrollport.");
+    const transcriptRect = node.getBoundingClientRect();
+    const mainRect = main.getBoundingClientRect();
+    const top = Math.max(transcriptRect.top, mainRect.top, 0);
+    const bottom = Math.min(transcriptRect.bottom, mainRect.bottom, window.innerHeight);
+    if (bottom <= top) throw new Error("Expected the transcript scrollport to be visible.");
+    return {
+      x: transcriptRect.left + transcriptRect.width / 2,
+      y: top + (bottom - top) / 2,
+    };
+  });
+  const transportTopBeforeWheel = await page
+    .locator(".media-transport")
+    .evaluate((node: HTMLElement) => node.getBoundingClientRect().top);
+  await page.mouse.move(wheelPoint.x, wheelPoint.y);
+  expect(await transcriptMain.evaluate((node: HTMLElement) => node.scrollTop)).toBe(0);
+  await page.mouse.wheel(0, 1_200);
+  await expect
+    .poll(() => transcriptMain.evaluate((node: HTMLElement) => node.scrollTop))
+    .toBeGreaterThan(0);
+  await expect
+    .poll(() =>
+      page
+        .locator(".media-transport")
+        .evaluate((node: HTMLElement) => node.getBoundingClientRect().top),
+    )
+    .toBeLessThan(transportTopBeforeWheel - 1);
 
   await testInfo.attach("segment-play-toggle-browser-state", {
     body: Buffer.from(

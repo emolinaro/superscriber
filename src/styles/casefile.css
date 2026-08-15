@@ -739,7 +739,6 @@
        (findScrollParent resolves the nearest overflowing ancestor). */
     min-height: 21rem;
     overflow-y: auto;
-    overscroll-behavior-y: contain;
     scroll-padding-block: var(--space-3);
   }
 
