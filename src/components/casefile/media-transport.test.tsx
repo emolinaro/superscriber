@@ -207,64 +207,6 @@ describe("MediaTransport", () => {
     expect(disconnect).not.toHaveBeenCalled();
   });
 
-  it("collapses the video picture by default and toggles it without unmounting the media element", async () => {
-    // media-casefile-transcript-room: the transcript is the primary surface
-    // on media casefiles, so the video picture starts collapsed; the toggle
-    // only flips presentation state - the video element stays mounted so
-    // playback/seek continuity is untouched.
-    const user = userEvent.setup();
-    render(
-      <MediaTransport
-        activeSegmentId={null}
-        mediaKind="video"
-        mediaUrl="/api/media/rec-video"
-        onActiveSegmentChange={() => undefined}
-        onSeekHandled={() => undefined}
-        seekRequest={null}
-        segments={baseSegments}
-      />,
-    );
-
-    const transport = screen.getByRole("group", { name: "Recording playback" });
-    expect(transport).toHaveAttribute("data-video-state", "collapsed");
-    const toggle = screen.getByRole("button", { name: "Show video picture" });
-    expect(toggle).toHaveAttribute("aria-expanded", "false");
-    const video = document.querySelector("video");
-    expect(video).not.toBeNull();
-
-    await user.click(toggle);
-    expect(transport).toHaveAttribute("data-video-state", "expanded");
-    expect(
-      screen.getByRole("button", { name: "Hide video picture" }),
-    ).toHaveAttribute("aria-expanded", "true");
-    expect(document.querySelector("video")).toBe(video);
-
-    await user.click(screen.getByRole("button", { name: "Hide video picture" }));
-    expect(transport).toHaveAttribute("data-video-state", "collapsed");
-    expect(document.querySelector("video")).toBe(video);
-  });
-
-  it("renders no collapse toggle for audio casefiles", () => {
-    render(
-      <MediaTransport
-        activeSegmentId={null}
-        mediaKind="audio"
-        mediaUrl="/api/media/rec-1"
-        onActiveSegmentChange={() => undefined}
-        onSeekHandled={() => undefined}
-        seekRequest={null}
-        segments={baseSegments}
-      />,
-    );
-
-    expect(
-      screen.queryByRole("button", { name: /video picture/ }),
-    ).not.toBeInTheDocument();
-    expect(
-      screen.getByRole("group", { name: "Recording playback" }),
-    ).not.toHaveAttribute("data-video-state");
-  });
-
   it("replaces transport with one denial reason when media is unavailable", () => {
     render(
       <MediaTransport

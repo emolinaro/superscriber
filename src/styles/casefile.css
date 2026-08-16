@@ -1,11 +1,12 @@
-/* Casefile scroll targeting (player-pinned-center): follow-scroll centers
-   the active segment in whichever transcript region is visible. On pinned
-   layouts, centering must aim below the transport rather than at the raw
-   scrollport, so clearance lives on scroll-padding instead of per-row
-   scroll-margin. Desktop media containment overrides that clearance because
-   its dock is static and the transcript owns a nested scrollport. The
-   concrete floors live beside their layout rules: responsive.css for
-   window-scrolling widths and the containment block below for desktop. */
+/* Casefile scroll targeting (player-pinned-center): the follow-scroll
+   centers the active segment, and centering must aim at the VISIBLE
+   transcript region - the area below the pinned transport - not the raw
+   scrollport. Clearance therefore lives on scroll-padding (symmetric
+   boxes keep block:center honest) instead of per-row scroll-margin,
+   which would extend the row's box and push the centered line low. The
+   concrete floors live next to the rules that pin the transport:
+   responsive.css for window-scrolling widths, the containment block
+   below for the desktop scrollport. */
 
 .casefile-page {
   display: grid;
@@ -126,26 +127,6 @@
 .media-transport__controls audio,
 .media-transport__controls video {
   width: 100%;
-}
-
-/* Collapsible video picture (media-casefile-transcript-room): the
-   transcript, not the player, is the primary surface on media casefiles, so
-   the video starts collapsed; the reviewer expands the picture when visual
-   context matters. The element stays mounted so playback state, seeking,
-   and the follow contract survive collapse and expansion. Hiding the
-   picture reclaims the video's share of the column on every surface,
-   including the window-scrolling phone and tablet layouts. */
-.media-transport[data-video-state="collapsed"] .media-transport__controls video {
-  display: none;
-}
-
-/* While the picture is collapsed, the segment rail folds away too: the
-   now-visible transcript cards (each with its own seek/play timestamp) are
-   the segment map, so the rail would only burn vertical room the editing
-   surface needs. Expanding the picture restores the rail as the playback
-   map. */
-.media-transport[data-video-state="collapsed"] .media-transport__rail {
-  display: none;
 }
 
 /* Decoded-wave scrubber (demo wave player bring-back): the drawn wave doubles
@@ -636,10 +617,12 @@
      demo-casefile-ux: the PAGE is a fixed viewport-high flex column (shell
      header's 64px stays outside). Case header, action banner, layout, and
      action bar keep natural order; the layout row gets exactly what is left
-     over and the MAIN column stays bounded. Non-media revision layouts use
-     it as the single scrollport with a sticky transport. Media layouts below
-     give the transcript its own scrollport and keep MAIN as the short-column
-     escape hatch. Status-only and unresolved flows keep natural flow. */
+     over and the MAIN column is the single scrollport - the transcript has
+     no nested mini-scroller, so follow-scroll and wheel scrolling just work
+     and the full page can never run away. Applies only when a revision is
+     on screen; status-only and unresolved flows keep natural flow. Within
+     that scrollport the transport is sticky (see player-pinned-center below)
+     so the playback surface and progress wave never scroll out of view. */
   .casefile-page:has(> .casefile-layout > .casefile-main[data-revision="true"]) {
     display: flex;
     flex-direction: column;
@@ -672,10 +655,10 @@
     scroll-padding-block: var(--player-clearance, 328px) var(--space-3);
   }
 
-  /* Default pinned player chrome (player-pinned-center): in non-media
-     revision layouts the transport sticks to the bounded scrollport's
-     leading edge while the transcript scrolls underneath. Media casefiles
-     override this below with a static dock and nested transcript scrollport. */
+  /* Pinned player chrome (player-pinned-center): inside the bounded shell
+     the main column is the single scrollport, so the transport sticks to the
+     scrollport's leading edge while the transcript scrolls underneath. The
+     card stays fully opaque so the transcript reads as passing below. */
   .casefile-main[data-revision="true"] .media-transport {
     position: sticky;
     top: 0;
@@ -684,71 +667,6 @@
 
   .casefile-main[data-revision="true"] .media-transport__controls video {
     max-height: 30vh;
-  }
-
-  /* Media dock + transcript room (media-casefile-transcript-room): on media
-     (audio or video) casefiles the transcript is the primary surface. The
-     transport keeps its natural docked height at the top of the column,
-     and the transcript document turns into its own scrollport with a
-     guaranteed minimum height, so a reviewer always sees several segments
-     while editing. When the viewport is too short for even the dock plus
-     the transcript floor, the main column falls back to scrolling as a
-     whole; the bounded page can never run away. Non-media casefiles keep
-     the single-scrollport layout above. */
-  .casefile-main[data-revision="true"][data-media="true"] {
-    /* No pinned-chrome clearance: the media dock is not pinned (below), so
-       escape-hatch scrolling centers rows inside the whole main column. */
-    scroll-padding-block: var(--space-3);
-  }
-
-  .casefile-main[data-revision="true"][data-media="true"] .media-transport {
-    flex: 0 0 auto;
-    /* The dock is NOT pinned on media casefiles: when the column is too
-       short for dock + transcript floor, whole-column scrolling lets the
-       dock flow away so the transcript viewport is fully usable instead of
-       squeezed under pinned chrome. Playback keeps working through the
-       transcript's inline play/pause timestamps while the dock is scrolled
-       off. (Non-media layouts keep the pinned transport above; phone and
-       tablet window-scroll surfaces keep their own pinned transport in
-       responsive.css.) */
-    position: static;
-  }
-
-  /* Expanded video docks compact: capped so the player can never dominate
-     the column, letterboxed and centered so the preview reads as a proper
-     dock rather than a squeezed full-width frame. The collapsed state
-     (default; see MediaTransport) hides the picture entirely so the
-     transcript owns the vertical room even under the admin action-mode
-     banner; playback/seek keep working through the transcript timestamps
-     and transport buttons while collapsed. */
-  .casefile-main[data-revision="true"][data-media="true"] .media-transport__controls video {
-    max-height: min(18vh, 210px);
-    width: auto;
-    max-width: 100%;
-    margin-inline: auto;
-    object-fit: contain;
-  }
-
-  .casefile-main[data-revision="true"][data-media="true"] .transcript-document {
-    flex: 1 1 0;
-    /* Workable transcript viewport: several editing cards stay visible at
-       rest; playback follow centers the active row inside this scrollport
-       (findScrollParent resolves the nearest overflowing ancestor). */
-    min-height: 21rem;
-    overflow-y: auto;
-    scroll-padding-block: var(--space-3);
-  }
-
-  /* Editing density on media casefiles: the default 8rem editing textarea
-     fills the docked viewport with a single card; a 4.5rem floor (the field
-     stays vertically resizable) keeps several editing cards visible at
-     rest inside the guaranteed viewport. */
-  .casefile-main[data-revision="true"][data-media="true"] .transcript-segment {
-    padding: var(--space-3);
-  }
-
-  .casefile-main[data-revision="true"][data-media="true"] .transcript-segment textarea {
-    min-height: 4.5rem;
   }
 
   .casefile-main[data-revision="true"] .transcript-document__summary {
@@ -943,12 +861,6 @@
 
   .casefile-main[data-revision="true"] .media-transport__rail {
     display: none;
-  }
-
-  /* Short-window media dock: with the rail already collapsed, an expanded
-     video preview tightens further so the transcript floor still fits. */
-  .casefile-main[data-revision="true"][data-media="true"] .media-transport__controls video {
-    max-height: min(16vh, 170px);
   }
 
   .casefile-main[data-revision="true"] .media-transport__rate-field {

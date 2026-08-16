@@ -878,7 +878,6 @@ export function CasefileWorkspace({
       >
         <div
           className="casefile-main"
-          data-media={casefile.media.url ? "true" : undefined}
           data-revision={casefile.revision ? "true" : undefined}
           id="transcript-main"
         >

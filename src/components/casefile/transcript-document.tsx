@@ -113,8 +113,8 @@ export function TranscriptDocument({
   }, []);
 
   // Rail/marker-initiated jump: bring the segment into view inside the
-  // nearest scrollport (as playback follow does), then focus its inline
-  // review affordance. Declared BEFORE the playback
+  // nearest scrollport (same single-scrollport model as playback follow),
+  // then focus its inline review affordance. Declared BEFORE the playback
   // follow effect so a locate re-engages follow before playback advances.
   useEffect(() => {
     if (!reviewFocus) {
@@ -154,12 +154,11 @@ export function TranscriptDocument({
   }, [followResumeNonce]);
 
   // Playback follow: CENTER the active segment inside the nearest scrollport
-  // (the media-casefile transcript viewport or the bounded .casefile-main
-  // scrollport on desktop, the window elsewhere) so roughly half a screen of
-  // context sits on both sides of the playing line. The pause contract is
-  // decided by follow-scroll.ts so the whole matrix stays unit-tested; the
-  // helpers resolve the nearest overflowing ancestor, so either scrollport
-  // model works.
+  // (the bounded .casefile-main scrollport on desktop, the window elsewhere)
+  // so roughly half a screen of context sits on both sides of the playing
+  // line. The segments list itself is never a scroller - the bounded shell
+  // keeps .casefile-main as the single scrollport. The pause contract is
+  // decided by follow-scroll.ts so the whole matrix stays unit-tested.
   useEffect(() => {
     const container = segmentsRef.current;
     if (!container || !activeSegmentId) {
