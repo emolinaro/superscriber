@@ -383,9 +383,10 @@ body:has(.casefile-page) .banner-emergency,
   /* Visible-context edit density, no clamping: the editor hugs its
      content (every sentence stays visible while typing) and only keeps a
      small floor so the affordance still reads as an edit box. */
-  min-height: 3.5rem;
+  min-height: var(--type-44);
+  padding-block: var(--space-2);
   field-sizing: content;
-  resize: vertical;
+  resize: none;
 }
 
 .casefile-action-bar {
@@ -640,6 +641,11 @@ body:has(.casefile-page) .banner-emergency,
      middle. The action bar is the only fixed chrome (sticky bottom). */
   html:has(.casefile-page) {
     scroll-padding-block: var(--action-bar-clearance, 88px);
+  }
+
+  .transcript-document__segments {
+    gap: var(--space-1);
+    padding-block-end: 48vh;
   }
 
   /* The video keeps its frame and native controls inside the flowing

@@ -83,7 +83,8 @@ async function seekSegment(page: Page, oneBasedIndex: number) {
 type ActiveGeometry = {
   centerX: number;
   centerY: number;
-  context: number;
+  contextAfter: number;
+  contextBefore: number;
   index: number;
   height: number;
   viewportWidth: number;
@@ -102,17 +103,29 @@ async function measureActive(page: Page): Promise<ActiveGeometry | null> {
       return null;
     }
     const rect = active.getBoundingClientRect();
-    const context = rows
-      .filter((row) => row !== active)
-      .map((row) => row.getBoundingClientRect())
-      .filter((rowRect) => rowRect.bottom > 0 && rowRect.top < window.innerHeight)
-      .length;
+    const activeIndex = rows.indexOf(active);
+    const actionBarTop =
+      document.querySelector<HTMLElement>(".casefile-action-bar")?.getBoundingClientRect()
+        .top ?? window.innerHeight;
+    const unobscuredBottom = Math.min(actionBarTop, window.innerHeight);
+    const visibleIndices = rows.flatMap((row, index) => {
+      if (row === active) {
+        return [];
+      }
+      const rowRect = row.getBoundingClientRect();
+      const visibleHeight = Math.max(
+        0,
+        Math.min(rowRect.bottom, unobscuredBottom) - Math.max(rowRect.top, 0),
+      );
+      return visibleHeight >= rowRect.height / 2 ? [index] : [];
+    });
     return {
       centerX: rect.left + rect.width / 2,
       centerY: rect.top + rect.height / 2,
-      context,
+      contextAfter: visibleIndices.filter((index) => index > activeIndex).length,
+      contextBefore: visibleIndices.filter((index) => index < activeIndex).length,
       height: rect.height,
-      index: rows.indexOf(active),
+      index: activeIndex,
       viewportWidth: window.innerWidth,
       viewportHeight: window.innerHeight,
     };
@@ -122,7 +135,10 @@ async function measureActive(page: Page): Promise<ActiveGeometry | null> {
 // The active segment sits in the MIDDLE of the viewport on BOTH axes, with
 // the 5-10 segment context band visible around it. Polls so smooth-scroll
 // settle and one-frame re-centers never flake the assertion.
-async function expectActiveMidViewport(page: Page) {
+async function expectActiveMidViewport(
+  page: Page,
+  options: { contextBand?: boolean } = {},
+) {
   let last: ActiveGeometry | null = null;
   await expect(async () => {
     last = await measureActive(page);
@@ -133,8 +149,16 @@ async function expectActiveMidViewport(page: Page) {
     expect(Math.abs(last!.centerY - last!.viewportHeight / 2)).toBeLessThanOrEqual(
       CENTER_TOLERANCE_PX,
     );
-    expect(last!.context).toBeGreaterThanOrEqual(MIN_CONTEXT);
-    expect(last!.context).toBeLessThanOrEqual(MAX_CONTEXT);
+    if (options.contextBand !== false) {
+      expect(last!.contextBefore).toBeGreaterThanOrEqual(2);
+      expect(last!.contextAfter).toBeGreaterThanOrEqual(2);
+      expect(last!.contextBefore + last!.contextAfter).toBeGreaterThanOrEqual(
+        MIN_CONTEXT,
+      );
+      expect(last!.contextBefore + last!.contextAfter).toBeLessThanOrEqual(
+        MAX_CONTEXT,
+      );
+    }
   }).toPass({ timeout: 10_000, intervals: [250, 500, 1_000] });
   return last!;
 }
@@ -182,12 +206,16 @@ async function expectNoClamp(page: Page, oneBasedIndex: number, expectedText: st
       textLength: text.length,
       clipped: carrier.scrollHeight > carrier.clientHeight + 1,
       cardClipped: node.scrollHeight > node.clientHeight + 1,
+      resize: editor ? getComputedStyle(editor).resize : null,
     };
   });
   expect(metrics).not.toBeNull();
   expect(metrics!.textLength).toBe(expectedText.length);
   expect(metrics!.clipped).toBe(false);
   expect(metrics!.cardClipped).toBe(false);
+  if (metrics!.resize !== null) {
+    expect(metrics!.resize).toBe("none");
+  }
 }
 
 async function expectFullyScrollable(page: Page, segmentCount: number) {
@@ -267,7 +295,7 @@ test.describe.serial("visible-context casefile transcript surface", () => {
   test("audio casefile: review and approver modes keep the active segment mid-viewport inside a 5-10 segment band", async ({
     page,
   }) => {
-    test.setTimeout(300_000);
+    test.setTimeout(600_000);
     const { seeds } = await seedVisibleContextCasefile(page, {
       title: "Visible context audio",
       label: "Audio",
@@ -308,6 +336,11 @@ test.describe.serial("visible-context casefile transcript surface", () => {
     // No clamping: segment 8's long text stands complete on the card.
     await expectNoClamp(page, 8, seeds[7].text);
 
+    await playAcrossBoundary(page, 230_000);
+    await expectActiveIndex(page, 23);
+    await expectActiveMidViewport(page, { contextBand: false });
+    await stopPlayback(page);
+
     // The transcript is fully scrollable end to end.
     await expectFullyScrollable(page, 24);
 
@@ -337,7 +370,7 @@ test.describe.serial("visible-context casefile transcript surface", () => {
   test("video casefile: video frame with previous controls plus the same centered context contract in review and approver modes", async ({
     page,
   }) => {
-    test.setTimeout(300_000);
+    test.setTimeout(600_000);
     const { seeds } = await seedVisibleContextCasefile(page, {
       title: "Visible context video",
       label: "Video",
