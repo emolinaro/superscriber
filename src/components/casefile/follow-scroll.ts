@@ -106,6 +106,21 @@ export const FOLLOW_SCROLL_PAUSE_KEYS = new Set([
   "ArrowDown",
 ]);
 
+const CLIPPING_OVERFLOW_VALUES = new Set([
+  "auto",
+  "clip",
+  "hidden",
+  "overlay",
+  "scroll",
+]);
+
+const SCROLLING_OVERFLOW_VALUES = new Set(["auto", "overlay", "scroll"]);
+
+function finitePixels(value: string): number {
+  const parsed = Number.parseFloat(value);
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
 /** The nearest overflowing ancestor scrollport, or null for window scroll. */
 export function findScrollParent(element: HTMLElement): HTMLElement | null {
   let node = element.parentElement;
@@ -123,25 +138,34 @@ export function findScrollParent(element: HTMLElement): HTMLElement | null {
 }
 
 /**
- * True when the row intersects its scrollport's vertical bounds (the window
- * viewport when no ancestor scrolls). Partial intersection counts - the
- * boundary mirrors the old nearest-edge alignment, which also fired only
- * once the active line had fully left the view.
+ * True when the row intersects the visible vertical bounds shared by the
+ * viewport and every clipping ancestor. Partial intersection counts.
  */
 export function isRowInScrollView(row: HTMLElement): boolean {
   const rect = row.getBoundingClientRect();
-  const parent = findScrollParent(row);
-  const scrollTarget = parent ?? document.documentElement;
-  const computedStyle = window.getComputedStyle(scrollTarget);
-  const computedPaddingTop = Number.parseFloat(computedStyle.scrollPaddingTop);
-  const computedPaddingBottom = Number.parseFloat(computedStyle.scrollPaddingBottom);
-  const scrollPaddingTop = Number.isFinite(computedPaddingTop) ? computedPaddingTop : 0;
-  const scrollPaddingBottom = Number.isFinite(computedPaddingBottom)
-    ? computedPaddingBottom
-    : 0;
-  const top = (parent ? parent.getBoundingClientRect().top : 0) + scrollPaddingTop;
-  const bottom =
-    (parent ? parent.getBoundingClientRect().bottom : window.innerHeight) -
-    scrollPaddingBottom;
-  return rect.bottom > top && rect.top < bottom;
+  const documentStyle = window.getComputedStyle(document.documentElement);
+  let top = finitePixels(documentStyle.scrollPaddingTop);
+  let bottom = window.innerHeight - finitePixels(documentStyle.scrollPaddingBottom);
+
+  for (let ancestor = row.parentElement; ancestor; ancestor = ancestor.parentElement) {
+    const style = window.getComputedStyle(ancestor);
+    if (!CLIPPING_OVERFLOW_VALUES.has(style.overflowY)) {
+      continue;
+    }
+
+    const ancestorRect = ancestor.getBoundingClientRect();
+    const ancestorTop = ancestorRect.top + ancestor.clientTop;
+    const ancestorBottom = ancestorTop + ancestor.clientHeight;
+    const scrollPaddingTop = SCROLLING_OVERFLOW_VALUES.has(style.overflowY)
+      ? finitePixels(style.scrollPaddingTop)
+      : 0;
+    const scrollPaddingBottom = SCROLLING_OVERFLOW_VALUES.has(style.overflowY)
+      ? finitePixels(style.scrollPaddingBottom)
+      : 0;
+
+    top = Math.max(top, ancestorTop + scrollPaddingTop);
+    bottom = Math.min(bottom, ancestorBottom - scrollPaddingBottom);
+  }
+
+  return bottom > top && rect.bottom > top && rect.top < bottom;
 }
