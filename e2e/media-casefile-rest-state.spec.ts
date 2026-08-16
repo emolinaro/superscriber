@@ -208,6 +208,41 @@ test("unavailable media leaves transcript follow dormant after a rejected timest
   expect(await page.evaluate(() => Math.round(window.scrollY))).toBe(scrollBefore);
 });
 
+test("active timestamp play rejection leaves transcript follow dormant", async ({
+  page,
+}) => {
+  test.setTimeout(180_000);
+  await page.setViewportSize({ width: 1280, height: 800 });
+  await bootstrapAndLogin(page, adminUser);
+  const recordingId = await uploadFixture(page, {
+    title: "Rejected active timestamp play",
+    durationMs: 40_000,
+  });
+  await waitForRestStateTranscript(page);
+  await openCasefile(page, recordingId);
+
+  const timestamp = page.getByRole("button", {
+    name: /Play or pause segment 1, /,
+  });
+  await expect(timestamp).toBeVisible();
+  await page.locator("audio, video").evaluate((media) => {
+    media.play = () => Promise.reject(new DOMException("Playback blocked"));
+  });
+  await timestamp.evaluate((button) => {
+    const top = button.getBoundingClientRect().top + window.scrollY - 120;
+    window.scrollTo(0, top);
+  });
+  await expect
+    .poll(() => timestamp.evaluate((button) => Math.round(button.getBoundingClientRect().top)))
+    .toBe(120);
+  const scrollBefore = await page.evaluate(() => Math.round(window.scrollY));
+
+  await timestamp.click();
+  await page.waitForTimeout(1_000);
+
+  expect(await page.evaluate(() => Math.round(window.scrollY))).toBe(scrollBefore);
+});
+
 test("phone-width rest state: player stays available behind the review gate notice", async ({
   page,
 }) => {

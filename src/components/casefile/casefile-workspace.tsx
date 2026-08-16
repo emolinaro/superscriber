@@ -908,10 +908,7 @@ export function CasefileWorkspace({
                     nonce: (prev?.nonce ?? 0) + 1,
                   }));
                 }}
-                onSeekHandled={() => {
-                  setSeekRequest(null);
-                  setFollowActivationNonce((current) => current + 1);
-                }}
+                onSeekHandled={() => setSeekRequest(null)}
                 onPlayingChange={setActiveSegmentPlaying}
                 seekRequest={seekRequest}
                 segments={segments}
