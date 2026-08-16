@@ -8,11 +8,13 @@
  * line at desktop viewport sizes. On desktop the page window-scrolls with
  * symmetric scroll-padding, so block:center lands on the exact viewport
  * middle; below 1100px the pinned transport claims an asymmetric top
- * clearance instead. Follow is non-fighting: any user scroll gesture
- * pauses it, and it re-engages the moment the active line is visible in
- * the viewport again - the same "only while you can see it" boundary the
- * previous nearest-edge alignment held - or immediately on an explicit
- * seek (segment timestamp click, rail chip, wave marker).
+ * clearance instead. Follow stays dormant while the player is resting at
+ * its initial position, then activates on the first playback tick or an
+ * explicit seek. Once active, any user scroll gesture pauses it, and it
+ * re-engages the moment the active line is visible in the viewport again -
+ * the same "only while you can see it" boundary the previous nearest-edge
+ * alignment held - or immediately on an explicit seek (segment timestamp
+ * click, rail chip, wave marker).
  *
  * The segment rail inside the transport mirrors this contract on the
  * horizontal axis (wave-track scroll sync): the same decision matrix, the
@@ -25,6 +27,8 @@
  */
 
 export type FollowDecision =
+  /** The track has not moved yet: preserve the player-led rest state. */
+  | "dormant"
   /** Not paused: center the active segment. */
   | "center"
   /** Paused and the active segment left the scrollport: leave the user's reading position alone. */
@@ -33,9 +37,13 @@ export type FollowDecision =
   | "resume";
 
 export function decideFollowScroll(
+  activated: boolean,
   paused: boolean,
   activeRowVisible: boolean,
 ): FollowDecision {
+  if (!activated) {
+    return "dormant";
+  }
   if (!paused) {
     return "center";
   }

@@ -13,7 +13,7 @@ type TranscriptDocumentProps = {
   activeSegmentId: string | null;
   editable: boolean;
   phoneSafetyMode: boolean;
-  followResumeNonce?: number;
+  followActivationNonce?: number;
   /** True when phone safety (not permissions or history) removed the editors. */
   safetyStripped?: boolean;
   summary: string;
@@ -58,7 +58,7 @@ function isFollowScrollIgnoredTarget(target: EventTarget | null): boolean {
 export function TranscriptDocument({
   activeSegmentId,
   editable,
-  followResumeNonce = 0,
+  followActivationNonce = 0,
   phoneSafetyMode,
   summary,
   segments,
@@ -82,8 +82,9 @@ export function TranscriptDocument({
   // or history-based read-only states keep their own, separate story.
   const segmentsRef = useRef<HTMLDivElement>(null);
   // Non-fighting playback follow (visible-context): a user scroll gesture
-  // pauses follow; follow re-engages when the active line is visible in the
-  // viewport again, or on any explicit seek.
+  // stays dormant while the media rests at its initial position, pauses on
+  // user scrolling after activation, and re-engages when the active line is
+  // visible in the viewport again or on any explicit seek.
   const followPausedRef = useRef(false);
 
   // Pause follow on user scroll gestures: wheel, touch drag, or page-scroll
@@ -152,7 +153,7 @@ export function TranscriptDocument({
 
   useEffect(() => {
     followPausedRef.current = false;
-  }, [followResumeNonce]);
+  }, [followActivationNonce]);
 
   // Playback follow: CENTER the active segment in the middle of the
   // viewport on both axes (window scroll on every width; the transcript is
@@ -172,8 +173,12 @@ export function TranscriptDocument({
       return;
     }
 
-    const decision = decideFollowScroll(followPausedRef.current, isRowInScrollView(row));
-    if (decision === "skip") {
+    const decision = decideFollowScroll(
+      followActivationNonce > 0,
+      followPausedRef.current,
+      isRowInScrollView(row),
+    );
+    if (decision === "dormant" || decision === "skip") {
       return;
     }
     followPausedRef.current = false;
@@ -184,7 +189,7 @@ export function TranscriptDocument({
       inline: "center",
       behavior: reducedMotion ? "auto" : "smooth",
     });
-  }, [activeSegmentId, followResumeNonce]);
+  }, [activeSegmentId, followActivationNonce]);
 
   return (
     <section aria-label="Transcript document" className="transcript-document" data-testid="transcript-start">

@@ -215,6 +215,7 @@ describe("TranscriptDocument", () => {
       <TranscriptDocument
         activeSegmentId="seg-2"
         editable={false}
+        followActivationNonce={1}
         onSeek={vi.fn()}
         onUpdateSpeaker={vi.fn()}
         onUpdateText={vi.fn()}
@@ -233,12 +234,49 @@ describe("TranscriptDocument", () => {
     });
   });
 
+  it("keeps mount-time follow dormant until track movement activates it", () => {
+    const { rerender } = render(
+      <TranscriptDocument
+        activeSegmentId="seg-1"
+        editable={false}
+        followActivationNonce={0}
+        onSeek={vi.fn()}
+        onUpdateSpeaker={vi.fn()}
+        onUpdateText={vi.fn()}
+        phoneSafetyMode={false}
+        segments={baseSegments}
+        summary="Ready for review."
+        onSummaryChange={vi.fn()}
+      />,
+    );
+
+    expect(scrollIntoViewMock).not.toHaveBeenCalled();
+
+    rerender(
+      <TranscriptDocument
+        activeSegmentId="seg-1"
+        editable={false}
+        followActivationNonce={1}
+        onSeek={vi.fn()}
+        onUpdateSpeaker={vi.fn()}
+        onUpdateText={vi.fn()}
+        phoneSafetyMode={false}
+        segments={baseSegments}
+        summary="Ready for review."
+        onSummaryChange={vi.fn()}
+      />,
+    );
+
+    expect(scrollIntoViewMock).toHaveBeenCalledTimes(1);
+  });
+
   it("uses an instant follow-scroll under prefers-reduced-motion", () => {
     reducedMotion = true;
     render(
       <TranscriptDocument
         activeSegmentId="seg-2"
         editable={false}
+        followActivationNonce={1}
         onSeek={vi.fn()}
         onUpdateSpeaker={vi.fn()}
         onUpdateText={vi.fn()}
@@ -263,6 +301,7 @@ describe("TranscriptDocument", () => {
       <TranscriptDocument
         activeSegmentId="seg-1"
         editable={false}
+        followActivationNonce={1}
         onSeek={vi.fn()}
         onUpdateSpeaker={vi.fn()}
         onUpdateText={vi.fn()}
@@ -282,6 +321,7 @@ describe("TranscriptDocument", () => {
       <TranscriptDocument
         activeSegmentId="seg-2"
         editable={false}
+        followActivationNonce={1}
         onSeek={vi.fn()}
         onUpdateSpeaker={vi.fn()}
         onUpdateText={vi.fn()}
@@ -304,6 +344,7 @@ describe("TranscriptDocument", () => {
       <TranscriptDocument
         activeSegmentId="seg-1"
         editable={false}
+        followActivationNonce={1}
         onSeek={vi.fn()}
         onUpdateSpeaker={vi.fn()}
         onUpdateText={vi.fn()}
@@ -328,6 +369,7 @@ describe("TranscriptDocument", () => {
           <TranscriptDocument
             activeSegmentId="seg-1"
             editable={false}
+            followActivationNonce={1}
             onSeek={vi.fn()}
             onUpdateSpeaker={vi.fn()}
             onUpdateText={vi.fn()}
@@ -351,6 +393,7 @@ describe("TranscriptDocument", () => {
         <TranscriptDocument
           activeSegmentId="seg-2"
           editable={false}
+          followActivationNonce={1}
           onSeek={vi.fn()}
           onUpdateSpeaker={vi.fn()}
           onUpdateText={vi.fn()}
@@ -372,6 +415,7 @@ describe("TranscriptDocument", () => {
           <TranscriptDocument
             activeSegmentId={activeSegmentId}
             editable
+            followActivationNonce={1}
             onSeek={vi.fn()}
             onUpdateSpeaker={vi.fn()}
             onUpdateText={vi.fn()}
@@ -408,6 +452,7 @@ describe("TranscriptDocument", () => {
           <TranscriptDocument
             activeSegmentId={activeSegmentId}
             editable={false}
+            followActivationNonce={1}
             onSeek={vi.fn()}
             onUpdateSpeaker={vi.fn()}
             onUpdateText={vi.fn()}
@@ -459,6 +504,7 @@ describe("TranscriptDocument", () => {
       <TranscriptDocument
         activeSegmentId="seg-2"
         editable={false}
+        followActivationNonce={1}
         onSeek={onSeek}
         onUpdateSpeaker={vi.fn()}
         onUpdateText={vi.fn()}
@@ -480,7 +526,7 @@ describe("TranscriptDocument", () => {
       <TranscriptDocument
         activeSegmentId="seg-1"
         editable={false}
-        followResumeNonce={0}
+        followActivationNonce={0}
         onSeek={vi.fn()}
         onUpdateSpeaker={vi.fn()}
         onUpdateText={vi.fn()}
@@ -497,7 +543,7 @@ describe("TranscriptDocument", () => {
       <TranscriptDocument
         activeSegmentId="seg-1"
         editable={false}
-        followResumeNonce={1}
+        followActivationNonce={1}
         onSeek={vi.fn()}
         onUpdateSpeaker={vi.fn()}
         onUpdateText={vi.fn()}

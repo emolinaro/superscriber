@@ -70,6 +70,13 @@ test("video casefile rest state: full player leads, chip strip below, transcript
   ]);
   await openCasefile(page, recordingId);
 
+  // Selecting the first segment for the transport's initial state must not
+  // activate transcript follow. The player-led rest state stays at the top
+  // until playback advances or the reviewer explicitly seeks.
+  await page.waitForTimeout(1_000);
+  expect(await page.evaluate(() => Math.round(window.scrollY))).toBe(0);
+  await expect(page.locator(".case-header")).toBeInViewport();
+
   const video = page.locator("video[controls]");
   await expect(video).toBeVisible();
 
