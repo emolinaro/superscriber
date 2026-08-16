@@ -853,7 +853,6 @@ export function CasefileWorkspace({
 
       {casefile.revision ? (
         <AdminActionModeBanner
-          compact={Boolean(casefile.media.url) && !phoneSafetyMode}
           entryOptions={casefile.adminActionModeOptions}
           onEnter={handleEnterActionMode}
           onExit={handleExitActionMode}
@@ -879,7 +878,6 @@ export function CasefileWorkspace({
       >
         <div
           className="casefile-main"
-          data-media={casefile.media.url ? "true" : undefined}
           data-revision={casefile.revision ? "true" : undefined}
           id="transcript-main"
         >

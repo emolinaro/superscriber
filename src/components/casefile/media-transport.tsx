@@ -84,12 +84,6 @@ export function MediaTransport({
   const [nativeControls, setNativeControls] = useState(false);
   const [playing, setPlaying] = useState(false);
   const [rate, setRate] = useState("1");
-  // Always-visible video picture (media-casefile-video-visible): on video
-  // casefiles the picture renders inline as the full player - native
-  // controls, including the fullscreen expand control - and never
-  // collapses. Desktop containment scales the frame flexibly so the
-  // guaranteed five-card transcript floor below it always holds; audio
-  // casefiles keep the compact decoded-wave transport.
 
   const handleWaveReady = useCallback(() => setNativeControls(false), []);
   const handleWaveUnavailable = useCallback(() => setNativeControls(true), []);
@@ -373,7 +367,6 @@ export function MediaTransport({
     <section
       aria-label="Recording playback"
       className="media-transport"
-      data-media-kind={mediaKind}
       ref={transportRef}
       role="group"
     >

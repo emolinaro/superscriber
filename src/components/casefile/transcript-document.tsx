@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useRef } from "react";
+import { useEffect, useRef } from "react";
 import type { TranscriptSegment } from "@/domain/models";
 import { listSpeakers } from "@/domain/speakers";
 import { formatSegmentWindow } from "@/lib/format";
@@ -81,7 +81,6 @@ export function TranscriptDocument({
   // `safetyStripped` when editing would otherwise be possible - permission-
   // or history-based read-only states keep their own, separate story.
   const segmentsRef = useRef<HTMLDivElement>(null);
-  const transcriptRef = useRef<HTMLElement>(null);
   // Non-fighting playback follow (player-pinned-center): a user scroll
   // gesture pauses follow; follow re-engages when the active line is visible
   // in the scrollport again, or on any explicit seek.
@@ -114,8 +113,8 @@ export function TranscriptDocument({
   }, []);
 
   // Rail/marker-initiated jump: bring the segment into view inside the
-  // nearest scrollport (as playback follow does), then focus its inline
-  // review affordance. Declared BEFORE the playback
+  // nearest scrollport (same single-scrollport model as playback follow),
+  // then focus its inline review affordance. Declared BEFORE the playback
   // follow effect so a locate re-engages follow before playback advances.
   useEffect(() => {
     if (!reviewFocus) {
@@ -155,12 +154,11 @@ export function TranscriptDocument({
   }, [followResumeNonce]);
 
   // Playback follow: CENTER the active segment inside the nearest scrollport
-  // (the media-casefile transcript viewport or the bounded .casefile-main
-  // scrollport on desktop, the window elsewhere) so roughly half a screen of
-  // context sits on both sides of the playing line. The pause contract is
-  // decided by follow-scroll.ts so the whole matrix stays unit-tested; the
-  // helpers resolve the nearest overflowing ancestor, so either scrollport
-  // model works.
+  // (the bounded .casefile-main scrollport on desktop, the window elsewhere)
+  // so roughly half a screen of context sits on both sides of the playing
+  // line. The segments list itself is never a scroller - the bounded shell
+  // keeps .casefile-main as the single scrollport. The pause contract is
+  // decided by follow-scroll.ts so the whole matrix stays unit-tested.
   useEffect(() => {
     const container = segmentsRef.current;
     if (!container || !activeSegmentId) {
@@ -184,57 +182,8 @@ export function TranscriptDocument({
     });
   }, [activeSegmentId, followResumeNonce]);
 
-  useLayoutEffect(() => {
-    const transcript = transcriptRef.current;
-    if (!transcript) {
-      return;
-    }
-
-    const measuredElements = [
-      transcript.querySelector<HTMLElement>(".transcript-document__summary"),
-      transcript.querySelector<HTMLElement>(".transcript-document__speaker-tools"),
-      ...Array.from(
-        transcript.querySelectorAll<HTMLElement>(".transcript-segment"),
-      ).slice(0, 5),
-    ].filter((element): element is HTMLElement => element !== null);
-    const updateFloor = () => {
-      const cards = transcript.querySelectorAll<HTMLElement>(".transcript-segment");
-      const lastMeasuredCard =
-        cards.length > 0 ? cards.item(Math.min(cards.length, 5) - 1) : null;
-
-      if (!lastMeasuredCard) {
-        transcript.style.removeProperty("--transcript-five-card-floor");
-        return;
-      }
-
-      const transcriptRect = transcript.getBoundingClientRect();
-      const cardRect = lastMeasuredCard.getBoundingClientRect();
-      const floor = Math.ceil(cardRect.bottom - transcriptRect.top + transcript.scrollTop);
-      transcript.style.setProperty(
-        "--transcript-five-card-floor",
-        `${Math.max(0, floor)}px`,
-      );
-    };
-
-    updateFloor();
-    const observer =
-      typeof ResizeObserver === "undefined" ? null : new ResizeObserver(updateFloor);
-    observer?.observe(transcript);
-    measuredElements.forEach((element) => observer?.observe(element));
-
-    return () => {
-      observer?.disconnect();
-      transcript.style.removeProperty("--transcript-five-card-floor");
-    };
-  }, [diffHighlight, editable, phoneSafetyMode, segments, speakerRenameNote, summary]);
-
   return (
-    <section
-      aria-label="Transcript document"
-      className="transcript-document"
-      data-testid="transcript-start"
-      ref={transcriptRef}
-    >
+    <section aria-label="Transcript document" className="transcript-document" data-testid="transcript-start">
       <div className="field transcript-document__summary">
         <label className="field-label" htmlFor="revision-summary">
           Revision summary

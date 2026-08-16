@@ -117,34 +117,16 @@ Per-segment markers line the transcript up with the audio, the segment
 currently playing is highlighted by an active band, and a timecode readout
 tracks the position.
 
-On desktop media casefiles the player and the transcript share one bounded
-column, with a clear gap between them. A video casefile always shows the
-video player at the top of the column - the full player frame with its
-native controls, including the fullscreen expand control - sized as large
-as the window allows while the transcript keeps its five-card floor below.
-An audio casefile shows the compact wave transport. Below the player, at
-least five segment cards stay fully in view at a standard desktop window
-so you can work the transcript without scrolling the page. The video
-never collapses and the audio keeps its slim waveform transport at every
-size.
-
-- **Fullscreen video.** Use the fullscreen control on the video player's
-  native controls when you want the picture wall-to-wall; the transcript
-  layout is unchanged underneath.
-
 - **Click-to-play segments.** Clicking a transcript segment that is not
   playing seeks to it and plays from there.
 - **Click-to-pause.** Clicking the currently playing segment pauses in
   place; clicking it again resumes from the unchanged paused position. The
   transport toggle and the Space key do exactly the same.
-- **Docked controls, centered follow.** At tablet and phone widths, the
-  transport, wave, and timecode pin above the stacked transcript. On desktop
-  media casefiles, the dock stays in place while the transcript's own
-  viewport scrolls. If the window is too short for both, the whole column
-  scrolls and the dock can flow away instead of shrinking the transcript.
-  Follow scroll keeps the active segment centered as playback advances,
-  yields the moment you scroll manually, and re-engages on any explicit
-  seek.
+- **Pinned chrome, centered follow.** Transport, wave, and timecode stay
+  pinned above the transcript while it scrolls, so the controls never
+  scroll away. Follow scroll keeps the active segment centered as playback
+  advances, yields the moment you scroll manually, and re-engages on any
+  explicit seek.
 - **Segment rail.** On wider layouts a numbered rail under the wave seeks
   the same segments. The rail follows playback on its own horizontal axis,
   keeping the active chip centered as the transcript centers the same

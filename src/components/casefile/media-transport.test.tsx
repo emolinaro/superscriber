@@ -207,56 +207,6 @@ describe("MediaTransport", () => {
     expect(disconnect).not.toHaveBeenCalled();
   });
 
-  it("keeps the video picture mounted by default with native controls and no collapse toggle", () => {
-    // media-casefile-video-visible: the video picture NEVER collapses - it
-    // renders inline with native controls (including the fullscreen expand
-    // control) and there is no show/hide affordance. Layout scaling of the
-    // frame is a pure CSS concern (see styles.test.ts), so the element is
-    // simply always mounted for playback/seek continuity.
-    render(
-      <MediaTransport
-        activeSegmentId={null}
-        mediaKind="video"
-        mediaUrl="/api/media/rec-video"
-        onActiveSegmentChange={() => undefined}
-        onSeekHandled={() => undefined}
-        seekRequest={null}
-        segments={baseSegments}
-      />,
-    );
-
-    const video = document.querySelector("video");
-    expect(video).not.toBeNull();
-    expect(video).toHaveAttribute("controls");
-    expect(
-      screen.getByRole("group", { name: "Recording playback" }),
-    ).toContainElement(video!);
-    expect(
-      screen.queryByRole("button", { name: /video picture/ }),
-    ).not.toBeInTheDocument();
-  });
-
-  it("renders no picture toggle for audio casefiles", () => {
-    render(
-      <MediaTransport
-        activeSegmentId={null}
-        mediaKind="audio"
-        mediaUrl="/api/media/rec-1"
-        onActiveSegmentChange={() => undefined}
-        onSeekHandled={() => undefined}
-        seekRequest={null}
-        segments={baseSegments}
-      />,
-    );
-
-    expect(
-      screen.queryByRole("button", { name: /video picture/ }),
-    ).not.toBeInTheDocument();
-    expect(
-      screen.getByRole("group", { name: "Recording playback" }),
-    ).not.toHaveAttribute("data-video-state");
-  });
-
   it("replaces transport with one denial reason when media is unavailable", () => {
     render(
       <MediaTransport
