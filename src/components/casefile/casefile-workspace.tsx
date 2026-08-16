@@ -908,7 +908,10 @@ export function CasefileWorkspace({
                     nonce: (prev?.nonce ?? 0) + 1,
                   }));
                 }}
-                onSeekHandled={() => setSeekRequest(null)}
+                onSeekHandled={() => {
+                  setSeekRequest(null);
+                  setFollowActivationNonce((current) => current + 1);
+                }}
                 onPlayingChange={setActiveSegmentPlaying}
                 seekRequest={seekRequest}
                 segments={segments}
@@ -925,7 +928,6 @@ export function CasefileWorkspace({
                   dirty ? "Save or discard unsaved changes before renaming speakers." : null
                 }
                 onSeek={(segment) => {
-                  setFollowActivationNonce((current) => current + 1);
                   setSeekRequest({
                     segmentId: segment.id,
                     startMs: segment.startMs,

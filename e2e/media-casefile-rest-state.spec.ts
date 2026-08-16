@@ -178,6 +178,36 @@ test("video casefile rest state: full player leads, chip strip below, transcript
   ).toBeVisible();
 });
 
+test("unavailable media leaves transcript follow dormant after a rejected timestamp seek", async ({
+  page,
+}) => {
+  test.setTimeout(180_000);
+  await page.setViewportSize({ width: 1280, height: 800 });
+  await bootstrapAndLogin(page, adminUser);
+  const recordingId = await uploadFixture(page, {
+    title: "Unavailable media rest state",
+    durationMs: 40_000,
+  });
+  await waitForRestStateTranscript(page);
+
+  execRuntimeSql("update recordings set media_path = null where id = ?", [recordingId]);
+  await openCasefile(page, recordingId);
+
+  await expect(
+    page.getByText("No media asset is attached to this recording yet."),
+  ).toBeVisible();
+  const timestamp = page.getByRole("button", {
+    name: /Play or pause segment 1, /,
+  });
+  await expect(timestamp).toBeVisible();
+  const scrollBefore = await page.evaluate(() => Math.round(window.scrollY));
+
+  await timestamp.click();
+  await page.waitForTimeout(1_000);
+
+  expect(await page.evaluate(() => Math.round(window.scrollY))).toBe(scrollBefore);
+});
+
 test("phone-width rest state: player stays available behind the review gate notice", async ({
   page,
 }) => {
