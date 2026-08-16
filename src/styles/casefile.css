@@ -128,17 +128,24 @@
   width: 100%;
 }
 
-/* Always-visible video picture (media-casefile-video-visible): on video
-   casefiles the picture is never collapsed or hidden - the picture renders
-   as a full player look: column-width frame, letterboxed on a dark dock so
-   any aspect reads as a real video player, with native controls including
-   the fullscreen expand control. Desktop containment scales the frame
-   flexibly so the guaranteed five-card transcript floor below it always
-   holds; audio casefiles keep the compact decoded-wave transport. */
-.media-transport__controls video {
-  display: block;
-  object-fit: contain;
-  background: #101312;
+/* Collapsible video picture (media-casefile-transcript-room): the
+   transcript, not the player, is the primary surface on media casefiles, so
+   the video starts collapsed; the reviewer expands the picture when visual
+   context matters. The element stays mounted so playback state, seeking,
+   and the follow contract survive collapse and expansion. Hiding the
+   picture reclaims the video's share of the column on every surface,
+   including the window-scrolling phone and tablet layouts. */
+.media-transport[data-video-state="collapsed"] .media-transport__controls video {
+  display: none;
+}
+
+/* While the picture is collapsed, the segment rail folds away too: the
+   now-visible transcript cards (each with its own seek/play timestamp) are
+   the segment map, so the rail would only burn vertical room the editing
+   surface needs. Expanding the picture restores the rail as the playback
+   map. */
+.media-transport[data-video-state="collapsed"] .media-transport__rail {
+  display: none;
 }
 
 /* Decoded-wave scrubber (demo wave player bring-back): the drawn wave doubles
@@ -679,343 +686,69 @@
     max-height: 30vh;
   }
 
-  /* Media workspace stack (media-casefile-video-visible): on media (audio
-     or video) casefiles the player and the transcript share one bounded
-     column under a hard transcript bar - at the reference desktop
-     viewport (1280x800) at least five segment cards sit fully visible
-     below the player in both review and approver views. The picture
-     itself is always visible on video casefiles (see the base rule
-     above); the transport flex-shrinks from the top of the column so the
-     video frame yields height first, down to its own floor, before the
-     transcript floor ever moves. A clear column gap separates the player
-     from the segments below. When even the floors cannot fit (very short
-     windows, admin action-mode banner), the whole column keeps the
-     escape hatch and scrolls as a unit rather than squeezing the
-     transcript under pinned chrome. Follow-scroll ownership is unchanged
-     from #53's arrangement: the transcript document is the nested
-     scrollport that centers the active segment, and wheel/touch gestures
-     keep chaining to the column at its edges. Non-media casefiles keep
-     the pinned single-scrollport layout above. */
+  /* Media dock + transcript room (media-casefile-transcript-room): on media
+     (audio or video) casefiles the transcript is the primary surface. The
+     transport keeps its natural docked height at the top of the column,
+     and the transcript document turns into its own scrollport with a
+     guaranteed minimum height, so a reviewer always sees several segments
+     while editing. When the viewport is too short for even the dock plus
+     the transcript floor, the main column falls back to scrolling as a
+     whole; the bounded page can never run away. Non-media casefiles keep
+     the single-scrollport layout above. */
   .casefile-main[data-revision="true"][data-media="true"] {
-    /* No pinned-chrome clearance: the media transport is not pinned
-       (below), so escape-hatch scrolling centers rows inside the whole
-       main column. */
+    /* No pinned-chrome clearance: the media dock is not pinned (below), so
+       escape-hatch scrolling centers rows inside the whole main column. */
     scroll-padding-block: var(--space-3);
-    /* The contracted clear space between the player and the segments. */
-    gap: var(--space-5);
   }
 
   .casefile-main[data-revision="true"][data-media="true"] .media-transport {
-    /* (comment unchanged) The transport is NOT pinned on media casefiles and may shrink from
-       natural height as the column demands; escape-hatch scrolling lets
-       it flow away when floors cannot fit. Playback keeps working
-       through the transcript's inline play/pause timestamps while the
-       transport is scrolled off. The video transport never shrinks below
-       its composed floor (video frame floor plus the compact action row),
-       so the picture can never overlap the transcript - below the floor
-       the column switches to whole-column scrolling instead. */
-    position: static;
     flex: 0 0 auto;
-    display: flex;
-    flex-direction: column;
-    gap: var(--space-2);
-    padding: var(--space-2) var(--space-3);
+    /* The dock is NOT pinned on media casefiles: when the column is too
+       short for dock + transcript floor, whole-column scrolling lets the
+       dock flow away so the transcript viewport is fully usable instead of
+       squeezed under pinned chrome. Playback keeps working through the
+       transcript's inline play/pause timestamps while the dock is scrolled
+       off. (Non-media layouts keep the pinned transport above; phone and
+       tablet window-scroll surfaces keep their own pinned transport in
+       responsive.css.) */
+    position: static;
   }
 
-  .casefile-main[data-revision="true"][data-media="true"] .media-transport[data-media-kind="video"] {
-    flex: 0 1 auto;
-    min-height: 9.75rem;
-  }
-
-  /* The video frame is the flexible surface of the column: the full
-     player look at up to a quarter-viewport frame on tall windows,
-     shrinking toward its floor when the five-card transcript bar needs
-     the room. The flex wrapper lets the replaced element actually yield
-     height (a grid row could only overflow). Audio controls keep their
-     natural wave height - only the video frame is elastic. */
-  .casefile-main[data-revision="true"][data-media="true"] .media-transport[data-media-kind="video"] .media-transport__controls {
-    display: flex;
-    flex: 0 1 auto;
-    min-height: 0;
-  }
-
+  /* Expanded video docks compact: capped so the player can never dominate
+     the column, letterboxed and centered so the preview reads as a proper
+     dock rather than a squeezed full-width frame. The collapsed state
+     (default; see MediaTransport) hides the picture entirely so the
+     transcript owns the vertical room even under the admin action-mode
+     banner; playback/seek keep working through the transcript timestamps
+     and transport buttons while collapsed. */
   .casefile-main[data-revision="true"][data-media="true"] .media-transport__controls video {
-    flex: 0 1 auto;
-    min-height: 6rem;
-    max-height: min(25vh, 260px);
+    max-height: min(18vh, 210px);
+    width: auto;
+    max-width: 100%;
+    margin-inline: auto;
+    object-fit: contain;
   }
 
   .casefile-main[data-revision="true"][data-media="true"] .transcript-document {
-    flex: 1 1 auto;
-    /* Five-card floor (media-casefile-video-visible): with the compacted
-       media-casefile densities below, this floor keeps at least five
-       segment cards fully visible under the player at 1280x800 in both
-       review and approver views; playback follow centers the active row
-       inside this scrollport (findScrollParent resolves the nearest
-       overflowing ancestor). The summary and speaker tools fold onto one
-       toolbar row above the cards. */
-    min-height: var(--transcript-five-card-floor, 0px);
+    flex: 1 1 0;
+    /* Workable transcript viewport: several editing cards stay visible at
+       rest; playback follow centers the active row inside this scrollport
+       (findScrollParent resolves the nearest overflowing ancestor). */
+    min-height: 21rem;
     overflow-y: auto;
     scroll-padding-block: var(--space-3);
-    gap: var(--space-2) var(--space-3);
   }
 
-  /* Media-casefile transcript density: summary sits inline, cards tighten
-     one step, and the editing textarea drops to a five-card-friendly
-     floor while staying vertically resizable. */
-  .casefile-main[data-revision="true"][data-media="true"] .transcript-document__summary {
-    display: flex;
-    flex: 1 1 18rem;
-    align-items: center;
-    gap: var(--space-2);
-    min-width: 0;
-  }
-
-  .casefile-main[data-revision="true"][data-media="true"] .transcript-document__summary .field-label {
-    flex: 0 0 auto;
-    white-space: nowrap;
-  }
-
-  .casefile-main[data-revision="true"][data-media="true"] .transcript-document__summary input {
-    flex: 1 1 auto;
-    min-width: 0;
-  }
-
-  .casefile-main[data-revision="true"][data-media="true"] .transcript-document__summary-copy {
-    flex: 1 1 auto;
-    margin: 0;
-    padding: var(--space-1) var(--space-2);
-    min-width: 0;
-    overflow-wrap: anywhere;
-    white-space: pre-wrap;
-  }
-
-  /* Toolbar fold: the segments wrapper becomes transparent to the
-     surrounding grid, so the speaker-tools row lands beside the inline
-     revision summary on ONE 36px toolbar row instead of stacking two
-     blocks above the cards. Cards span the full width below. */
-  .casefile-main[data-revision="true"][data-media="true"] .transcript-document {
-    display: grid;
-    grid-template-columns: minmax(0, 1fr) auto;
-    row-gap: var(--space-2);
-  }
-
-  .casefile-main[data-revision="true"][data-media="true"] .transcript-document__segments {
-    display: contents;
-  }
-
-  .casefile-main[data-revision="true"][data-media="true"] .transcript-document__segments .transcript-segment {
-    grid-column: 1 / -1;
-  }
-
-  .casefile-main[data-revision="true"][data-media="true"] .transcript-document__speaker-tools {
-    padding: 0 var(--space-1);
-    gap: var(--space-2);
-  }
-
+  /* Editing density on media casefiles: the default 8rem editing textarea
+     fills the docked viewport with a single card; a 4.5rem floor (the field
+     stays vertically resizable) keeps several editing cards visible at
+     rest inside the guaranteed viewport. */
   .casefile-main[data-revision="true"][data-media="true"] .transcript-segment {
-    padding: var(--space-1) var(--space-2);
-    gap: var(--space-2);
-    align-items: center;
+    padding: var(--space-3);
   }
 
   .casefile-main[data-revision="true"][data-media="true"] .transcript-segment textarea {
-    /* Two full editing lines at rest (base.css gives textareas 8rem
-       plus 12px block padding); the field stays vertically resizable. */
-    height: 3rem;
-    min-height: 3rem;
-    padding-block: var(--space-1);
-  }
-
-  /* A compact admin action-mode banner consumes one extra row above the
-     bounded media column. Tighten only that oversight presentation to the
-     same 36px control floor as the neighboring timestamp and speaker fields;
-     the textarea remains vertically resizable and ordinary reviewer sessions
-     retain their two-line editing height. */
-  .casefile-page:has(> .action-mode-banner[data-compact="true"])
-    .casefile-main[data-revision="true"][data-media="true"]
-    .transcript-segment textarea {
-    height: 2.25rem;
-    min-height: 2.25rem;
-  }
-
-  .casefile-main[data-revision="true"][data-media="true"] .transcript-segment .button,
-  .casefile-main[data-revision="true"][data-media="true"] .transcript-segment input {
-    min-height: 2.25rem;
-  }
-
-  .casefile-main[data-revision="true"][data-media="true"] .transcript-segment__timestamp {
-    /* The 00:00-00:15 window label must never wrap to a second line:
-       card height is hard-budgeted by the five-card bar. (The chip is a
-       plain button with only this class, so the 44px base control floor
-       is scoped off here.) */
-    min-height: 2.25rem;
-    padding-block: 0;
-    white-space: nowrap;
-  }
-
-  /* Confidence as an inline subordinate: it rides the text row instead
-     of stacking a second line under it. */
-  .casefile-main[data-revision="true"][data-media="true"] .transcript-segment__text {
-    display: flex;
-    align-items: center;
-    gap: var(--space-2);
-  }
-
-  .casefile-main[data-revision="true"][data-media="true"] .transcript-segment__text textarea,
-  .casefile-main[data-revision="true"][data-media="true"] .transcript-segment__text p {
-    flex: 1 1 auto;
-    min-width: 0;
-    margin: 0;
-  }
-
-  .casefile-main[data-revision="true"][data-media="true"] .transcript-segment .field-note {
-    flex: 0 0 auto;
-    font-size: var(--type-12);
-    white-space: nowrap;
-  }
-
-  /* Slim media-workspace chrome (media-casefile-video-visible): the
-     five-card bar plus the visible player leave the case header and the
-     action bar one step denser on media casefiles - title compacts, facts
-     go single-line, and vertical padding tightens. Same content, less
-     chrome around it. */
-  .casefile-page:has(> .casefile-layout > .casefile-main[data-revision="true"][data-media="true"]) {
-    margin-top: var(--space-3);
-    gap: var(--space-2);
-    height: calc(100vh - 65px - var(--space-3) - var(--space-3) - env(safe-area-inset-bottom));
-  }
-
-  /* Media casefiles reclaim the shell main's top padding row as well: the
-     five-card bar plus a viewable player frame need those 20px at the
-     reference viewport. Casefile media pages only; all other
-     destinations keep their cadence. */
-  body:has(.casefile-main[data-revision="true"][data-media="true"]) .app-shell__main {
-    padding-top: var(--space-3);
-  }
-
-  .casefile-page:has(> .casefile-layout > .casefile-main[data-revision="true"][data-media="true"]) .case-header__body {
-    padding: var(--space-2) var(--space-3);
-    gap: var(--space-1);
-  }
-
-  .casefile-page:has(> .casefile-layout > .casefile-main[data-revision="true"][data-media="true"]) .case-header__title {
-    font-size: var(--type-20);
-  }
-
-  .casefile-page:has(> .casefile-layout > .casefile-main[data-revision="true"][data-media="true"]) .case-header__actions {
-    display: flex;
-    align-items: center;
-    gap: var(--space-3);
-  }
-
-  .casefile-page:has(> .casefile-layout > .casefile-main[data-revision="true"][data-media="true"]) .case-header__back.button {
-    min-height: 2rem;
-    white-space: nowrap;
-  }
-
-  .casefile-page:has(> .casefile-layout > .casefile-main[data-revision="true"][data-media="true"]) .case-header__facts {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 0 var(--space-4);
-    align-items: baseline;
-  }
-
-  .casefile-page:has(> .casefile-layout > .casefile-main[data-revision="true"][data-media="true"]) .case-header__facts > * {
-    display: inline-flex;
-    align-items: baseline;
-    gap: var(--space-1);
-    min-width: 0;
-  }
-
-  .casefile-page:has(> .casefile-layout > .casefile-main[data-revision="true"][data-media="true"]) .case-header__facts dt {
-    margin: 0;
-    text-transform: none;
-  }
-
-  .casefile-page:has(> .casefile-layout > .casefile-main[data-revision="true"][data-media="true"]) .casefile-action-bar {
-    padding: var(--space-1) var(--space-4);
-  }
-
-  .casefile-page:has(> .casefile-layout > .casefile-main[data-revision="true"][data-media="true"]) .action-mode-banner,
-  .casefile-page:has(> .casefile-layout > .casefile-main[data-revision="true"][data-media="true"]) .action-mode-entry-row {
-    padding: var(--space-2) var(--space-4);
-  }
-
-  .casefile-page:has(> .casefile-layout > .casefile-main[data-revision="true"][data-media="true"]) .action-mode-banner[data-compact="true"] {
-    display: flex;
-    align-items: center;
-    gap: var(--space-2);
-    padding-block: var(--space-1);
-    min-width: 0;
-  }
-
-  .casefile-page:has(> .casefile-layout > .casefile-main[data-revision="true"][data-media="true"]) .action-mode-banner__details {
-    flex: 1 1 auto;
-    min-width: 0;
-  }
-
-  .casefile-page:has(> .casefile-layout > .casefile-main[data-revision="true"][data-media="true"]) .action-mode-banner__summary {
-    display: flex;
-    align-items: baseline;
-    gap: var(--space-3);
-    min-height: 2.25rem;
-    min-width: 0;
-    cursor: pointer;
-  }
-
-  .casefile-page:has(> .casefile-layout > .casefile-main[data-revision="true"][data-media="true"]) .action-mode-banner__summary > * {
-    white-space: nowrap;
-  }
-
-  .casefile-page:has(> .casefile-layout > .casefile-main[data-revision="true"][data-media="true"]) .action-mode-banner__identity {
-    min-width: 0;
-    overflow: hidden;
-    text-overflow: ellipsis;
-  }
-
-  .casefile-page:has(> .casefile-layout > .casefile-main[data-revision="true"][data-media="true"]) .action-mode-banner__disclosure {
-    color: var(--color-teal-700);
-    font-weight: 600;
-  }
-
-  .casefile-page:has(> .casefile-layout > .casefile-main[data-revision="true"][data-media="true"]) .action-mode-banner__detail-row {
-    display: flex;
-    flex-wrap: wrap;
-    gap: var(--space-1) var(--space-4);
-    padding-top: var(--space-2);
-  }
-
-  .casefile-page:has(> .casefile-layout > .casefile-main[data-revision="true"][data-media="true"]) .action-mode-banner[data-compact="true"] > .button {
-    flex: 0 0 auto;
-    min-height: 2.25rem;
-  }
-
-  .casefile-page:has(> .casefile-layout > .casefile-main[data-revision="true"][data-media="true"]) .media-transport__actions {
-    gap: var(--space-2);
-    align-items: center;
-  }
-
-  .casefile-page:has(> .casefile-layout > .casefile-main[data-revision="true"][data-media="true"]) .media-transport__rate-field {
-    display: flex;
-    align-items: center;
-    gap: var(--space-2);
-    min-width: 0;
-  }
-
-  .casefile-page:has(> .casefile-layout > .casefile-main[data-revision="true"][data-media="true"]) .media-transport__rate-field .field-label {
-    white-space: nowrap;
-  }
-
-  .casefile-page:has(> .casefile-layout > .casefile-main[data-revision="true"][data-media="true"]) .media-transport__actions .button,
-  .casefile-page:has(> .casefile-layout > .casefile-main[data-revision="true"][data-media="true"]) .media-transport__actions select {
-    min-height: 2.25rem;
-  }
-
-  /* The audio wave rides the same budget as the video frame: stage stays
-     legible and seekable, trimmed to the media-stack height band. */
-  .casefile-page:has(> .casefile-layout > .casefile-main[data-revision="true"][data-media="true"]) .media-transport__wave {
-    --wave-height: 64px;
+    min-height: 4.5rem;
   }
 
   .casefile-main[data-revision="true"] .transcript-document__summary {
@@ -1212,12 +945,10 @@
     display: none;
   }
 
-  /* Short-window media stack: with the rail already collapsed, the video
-     frame's tall-window cap tightens further so the five-card transcript
-     floor still fits; the flex floor (min-height) keeps the picture a
-     real frame instead of an audio bar. */
+  /* Short-window media dock: with the rail already collapsed, an expanded
+     video preview tightens further so the transcript floor still fits. */
   .casefile-main[data-revision="true"][data-media="true"] .media-transport__controls video {
-    max-height: min(20vh, 200px);
+    max-height: min(16vh, 170px);
   }
 
   .casefile-main[data-revision="true"] .media-transport__rate-field {
@@ -1239,14 +970,5 @@
   .casefile-page:has(> .casefile-layout > .casefile-main[data-revision="true"]) .case-header__body {
     padding: var(--space-2) var(--space-3);
     gap: var(--space-2);
-  }
-}
-
-@media (min-width: 1100px) and (max-height: 800px) {
-  /* Reference laptop viewport: once the five-card review floor is active,
-     the video frame lands exactly on its contracted 96px full-player floor. */
-  .casefile-main[data-revision="true"][data-media="true"] .media-transport__controls video {
-    height: 6rem;
-    max-height: 6rem;
   }
 }

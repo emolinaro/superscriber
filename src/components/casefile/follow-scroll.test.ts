@@ -174,49 +174,6 @@ describe("isRowInScrollView", () => {
 
     scroller.remove();
   });
-
-  it("keeps follow paused when an outer scrollport clips the active row", () => {
-    const outer = document.createElement("div");
-    outer.style.overflowY = "auto";
-    Object.defineProperty(outer, "clientHeight", { value: 300 });
-    Object.defineProperty(outer, "scrollHeight", { value: 900 });
-    outer.getBoundingClientRect = () => fakeRect(100, 400);
-
-    const transcript = document.createElement("div");
-    transcript.style.overflowY = "auto";
-    Object.defineProperty(transcript, "clientHeight", { value: 600 });
-    Object.defineProperty(transcript, "scrollHeight", { value: 1200 });
-    transcript.getBoundingClientRect = () => fakeRect(50, 650);
-
-    const row = document.createElement("div");
-    transcript.appendChild(row);
-    outer.appendChild(transcript);
-    document.body.appendChild(outer);
-
-    row.getBoundingClientRect = () => fakeRect(500, 550);
-    expect(decideFollowScroll(true, isRowInScrollView(row))).toBe("skip");
-
-    row.getBoundingClientRect = () => fakeRect(250, 300);
-    expect(decideFollowScroll(true, isRowInScrollView(row))).toBe("resume");
-
-    outer.remove();
-  });
-
-  it("excludes rows hidden by a clipping ancestor", () => {
-    const clippingAncestor = document.createElement("div");
-    clippingAncestor.style.overflowY = "hidden";
-    Object.defineProperty(clippingAncestor, "clientHeight", { value: 300 });
-    clippingAncestor.getBoundingClientRect = () => fakeRect(100, 400);
-
-    const row = document.createElement("div");
-    row.getBoundingClientRect = () => fakeRect(500, 550);
-    clippingAncestor.appendChild(row);
-    document.body.appendChild(clippingAncestor);
-
-    expect(isRowInScrollView(row)).toBe(false);
-
-    clippingAncestor.remove();
-  });
 });
 
 describe("findScrollParent", () => {

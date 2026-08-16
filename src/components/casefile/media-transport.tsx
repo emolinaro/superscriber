@@ -84,12 +84,14 @@ export function MediaTransport({
   const [nativeControls, setNativeControls] = useState(false);
   const [playing, setPlaying] = useState(false);
   const [rate, setRate] = useState("1");
-  // Always-visible video picture (media-casefile-video-visible): on video
-  // casefiles the picture renders inline as the full player - native
-  // controls, including the fullscreen expand control - and never
-  // collapses. Desktop containment scales the frame flexibly so the
-  // guaranteed five-card transcript floor below it always holds; audio
-  // casefiles keep the compact decoded-wave transport.
+  // Collapsible video picture (media-casefile-transcript-room): on media
+  // casefiles the transcript is the primary review surface, so the video
+  // picture starts collapsed and the reviewer expands it when visual
+  // context matters. Audio casefiles have no picture to collapse - the
+  // decoded wave player is already compact. The element stays mounted in
+  // every state so playback, seeking, and the follow contract are
+  // untouched by the collapse.
+  const [videoExpanded, setVideoExpanded] = useState(false);
 
   const handleWaveReady = useCallback(() => setNativeControls(false), []);
   const handleWaveUnavailable = useCallback(() => setNativeControls(true), []);
@@ -373,7 +375,9 @@ export function MediaTransport({
     <section
       aria-label="Recording playback"
       className="media-transport"
-      data-media-kind={mediaKind}
+      data-video-state={
+        mediaKind === "video" ? (videoExpanded ? "expanded" : "collapsed") : undefined
+      }
       ref={transportRef}
       role="group"
     >
@@ -445,6 +449,16 @@ export function MediaTransport({
         <button className="button button-secondary" onClick={jumpBack} type="button">
           Jump back 10 seconds
         </button>
+        {mediaKind === "video" ? (
+          <button
+            aria-expanded={videoExpanded}
+            className="button button-secondary"
+            onClick={() => setVideoExpanded((current) => !current)}
+            type="button"
+          >
+            {videoExpanded ? "Hide video picture" : "Show video picture"}
+          </button>
+        ) : null}
         <label className="field media-transport__rate-field">
           <span className="field-label">Playback rate</span>
           <select aria-label="Playback rate" onChange={(event) => changeRate(event.currentTarget.value)} value={rate}>

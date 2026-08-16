@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useRef } from "react";
+import { useEffect, useRef } from "react";
 import type { TranscriptSegment } from "@/domain/models";
 import { listSpeakers } from "@/domain/speakers";
 import { formatSegmentWindow } from "@/lib/format";
@@ -81,7 +81,6 @@ export function TranscriptDocument({
   // `safetyStripped` when editing would otherwise be possible - permission-
   // or history-based read-only states keep their own, separate story.
   const segmentsRef = useRef<HTMLDivElement>(null);
-  const transcriptRef = useRef<HTMLElement>(null);
   // Non-fighting playback follow (player-pinned-center): a user scroll
   // gesture pauses follow; follow re-engages when the active line is visible
   // in the scrollport again, or on any explicit seek.
@@ -184,57 +183,8 @@ export function TranscriptDocument({
     });
   }, [activeSegmentId, followResumeNonce]);
 
-  useLayoutEffect(() => {
-    const transcript = transcriptRef.current;
-    if (!transcript) {
-      return;
-    }
-
-    const measuredElements = [
-      transcript.querySelector<HTMLElement>(".transcript-document__summary"),
-      transcript.querySelector<HTMLElement>(".transcript-document__speaker-tools"),
-      ...Array.from(
-        transcript.querySelectorAll<HTMLElement>(".transcript-segment"),
-      ).slice(0, 5),
-    ].filter((element): element is HTMLElement => element !== null);
-    const updateFloor = () => {
-      const cards = transcript.querySelectorAll<HTMLElement>(".transcript-segment");
-      const lastMeasuredCard =
-        cards.length > 0 ? cards.item(Math.min(cards.length, 5) - 1) : null;
-
-      if (!lastMeasuredCard) {
-        transcript.style.removeProperty("--transcript-five-card-floor");
-        return;
-      }
-
-      const transcriptRect = transcript.getBoundingClientRect();
-      const cardRect = lastMeasuredCard.getBoundingClientRect();
-      const floor = Math.ceil(cardRect.bottom - transcriptRect.top + transcript.scrollTop);
-      transcript.style.setProperty(
-        "--transcript-five-card-floor",
-        `${Math.max(0, floor)}px`,
-      );
-    };
-
-    updateFloor();
-    const observer =
-      typeof ResizeObserver === "undefined" ? null : new ResizeObserver(updateFloor);
-    observer?.observe(transcript);
-    measuredElements.forEach((element) => observer?.observe(element));
-
-    return () => {
-      observer?.disconnect();
-      transcript.style.removeProperty("--transcript-five-card-floor");
-    };
-  }, [diffHighlight, editable, phoneSafetyMode, segments, speakerRenameNote, summary]);
-
   return (
-    <section
-      aria-label="Transcript document"
-      className="transcript-document"
-      data-testid="transcript-start"
-      ref={transcriptRef}
-    >
+    <section aria-label="Transcript document" className="transcript-document" data-testid="transcript-start">
       <div className="field transcript-document__summary">
         <label className="field-label" htmlFor="revision-summary">
           Revision summary

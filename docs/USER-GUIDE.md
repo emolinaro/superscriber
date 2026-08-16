@@ -117,20 +117,12 @@ Per-segment markers line the transcript up with the audio, the segment
 currently playing is highlighted by an active band, and a timecode readout
 tracks the position.
 
-On desktop media casefiles the player and the transcript share one bounded
-column, with a clear gap between them. A video casefile always shows the
-video player at the top of the column - the full player frame with its
-native controls, including the fullscreen expand control - sized as large
-as the window allows while the transcript keeps its five-card floor below.
-An audio casefile shows the compact wave transport. Below the player, at
-least five segment cards stay fully in view at a standard desktop window
-so you can work the transcript without scrolling the page. The video
-never collapses and the audio keeps its slim waveform transport at every
-size.
-
-- **Fullscreen video.** Use the fullscreen control on the video player's
-  native controls when you want the picture wall-to-wall; the transcript
-  layout is unchanged underneath.
+On desktop media casefiles the transcript, not the player, is the primary
+surface: the transport docks at its natural height above a guaranteed
+workable transcript viewport, with audio kept compact. The video picture
+starts collapsed at every size; use **Show video picture** when visual
+context matters. The rail folds away while the picture is collapsed because
+the transcript cards are your segment map.
 
 - **Click-to-play segments.** Clicking a transcript segment that is not
   playing seeks to it and plays from there.
