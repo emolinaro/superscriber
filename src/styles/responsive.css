@@ -117,7 +117,10 @@
   }
 
   .media-transport__controls video {
-    max-height: 42vh;
+    /* media-casefile-video-visible: the picture stays visible on the
+       tablet surface as well; the cap keeps enough transcript in the
+       first screenful below the pinned transport. */
+    max-height: min(34vh, 320px);
     object-fit: contain;
   }
 

@@ -212,7 +212,7 @@ describe("product css contract", () => {
     const compactVideo = windowScrollMedia?.[1].match(
       /\.media-transport__controls video\s*\{([^}]*)\}/,
     );
-    expect(compactVideo?.[1]).toContain("max-height: 42vh");
+    expect(compactVideo?.[1]).toContain("max-height: min(34vh, 320px)");
     expect(compactVideo?.[1]).toContain("object-fit: contain");
     // The case header must not double-park above the pinned transport on
     // window-scrolling surfaces.
@@ -237,49 +237,78 @@ describe("product css contract", () => {
     );
   });
 
-  it("docks the media player and guarantees a transcript viewport on desktop media casefiles", () => {
-    // media-casefile-transcript-room: on audio/video casefiles the transcript
-    // is the primary surface - the player docks compact (collapsible video
-    // picture, capped when expanded) and the transcript document becomes its
-    // own scrollport with a minimum height, so several segments stay visible
-    // while editing.
+  it("keeps the video picture visible and guarantees the five-card transcript floor on desktop media casefiles", () => {
+    // media-casefile-video-visible: on audio/video casefiles the player is
+    // always visible (the video picture never collapses) and the transcript
+    // document becomes its own scrollport with a five-card floor, so at the
+    // reference desktop viewport at least five segment cards sit fully
+    // visible below the player in review and approver views. The video
+    // frame flex-shrinks toward its own floor before the transcript floor
+    // moves, and a clear column gap separates player from segments.
     const casefile = readFileSync(resolve(STYLES_DIR, "casefile.css"), "utf8");
     const mediaScope = '.casefile-main[data-revision="true"][data-media="true"]';
     const escapedScope = mediaScope.replace(/\[/g, "\\[").replace(/\]/g, "\\]");
     const transport = casefile.match(
       new RegExp(`${escapedScope} \\.media-transport\\s*\\{([^}]*)\\}`),
     );
-    // The docked transport keeps its natural height and is NOT pinned: when
-    // the column is too short for dock + transcript floor, the whole column
-    // scrolls and the dock flows away so the transcript stays usable.
+    // Audio keeps its content floor; only video may yield height from the top.
     expect(transport?.[1]).toContain("flex: 0 0 auto");
     expect(transport?.[1]).toContain("position: static");
-    const video = casefile.match(
-      new RegExp(`${escapedScope} \\.media-transport__controls video\\s*\\{([^}]*)\\}`),
-    );
-    expect(video?.[1]).toContain("max-height: min(18vh, 210px)");
-    expect(video?.[1]).toContain("object-fit: contain");
-    const transcript = casefile.match(
-      new RegExp(`${escapedScope} \\.transcript-document\\s*\\{([^}]*)\\}`),
-    );
-    expect(transcript?.[1]).toContain("flex: 1 1 0");
-    expect(transcript?.[1]).toContain("min-height: 21rem");
-    expect(transcript?.[1]).toContain("overflow-y: auto");
-    // Collapsible video picture: collapsed by default so the transcript owns
-    // the room; the element stays mounted for playback/seek continuity.
-    const collapsed = casefile.match(
-      /\.media-transport\[data-video-state="collapsed"\] \.media-transport__controls video\s*\{([^}]*)\}/,
-    );
-    expect(collapsed?.[1]).toContain("display: none");
-    const collapsedRail = casefile.match(
-      /\.media-transport\[data-video-state="collapsed"\] \.media-transport__rail\s*\{([^}]*)\}/,
-    );
-    expect(collapsedRail?.[1]).toContain("display: none");
-    // Escape-hatch column scrolling centers rows without reserved pinned
-    // chrome clearance on media casefiles.
+    // Clear space between the player and the segments below.
     const mainMedia = casefile.match(
       new RegExp(`${escapedScope}\\s*\\{([^}]*)\\}`),
     );
+    expect(mainMedia?.[1]).toContain("gap: var(--space-5)");
+    // Always-visible letterboxed video frame with a real floor and a cap.
+    const video = casefile.match(
+      new RegExp(`${escapedScope} \\.media-transport__controls video\\s*\\{([^}]*)\\}`),
+    );
+    expect(video?.[1]).toContain("flex: 0 1 auto");
+    expect(video?.[1]).toContain("min-height: 6rem");
+    expect(video?.[1]).toContain("max-height: min(25vh, 260px)");
+    const videoTransport = casefile.match(
+      new RegExp(
+        `${escapedScope} \\.media-transport\\[data-media-kind=\\x22video\\x22\\]\\s*\\{([^}]*)\\}`,
+      ),
+    );
+    expect(videoTransport?.[1]).toContain("flex: 0 1 auto");
+    expect(videoTransport?.[1]).toContain("min-height: 9.75rem");
+    const baseVideo = casefile.match(
+      /\.media-transport__controls video \{\s*display: block;([^}]*)\}/,
+    );
+    expect(baseVideo?.[1]).toContain("object-fit: contain");
+    expect(casefile).not.toContain('data-video-state="collapsed"');
+    const controls = casefile.match(
+      new RegExp(
+        `${escapedScope} \\.media-transport\\[data-media-kind=\\x22video\\x22\\] \\.media-transport__controls\\s*\\{([^}]*)\\}`,
+      ),
+    );
+    expect(controls?.[1]).toContain("display: flex");
+    expect(controls?.[1]).toContain("min-height: 0");
+    // The transcript keeps its nested scrollport behind a five-card floor.
+    const transcript = casefile.match(
+      new RegExp(`${escapedScope} \\.transcript-document\\s*\\{([^}]*)\\}`),
+    );
+    expect(transcript?.[1]).toContain("flex: 1 1 auto");
+    expect(transcript?.[1]).toContain(
+      "min-height: var(--transcript-five-card-floor, 0px)",
+    );
+    expect(transcript?.[1]).toContain("overflow-y: auto");
+    expect(casefile).not.toContain("min-height: 23rem");
+    const readOnlySummary = casefile.match(
+      new RegExp(
+        `${escapedScope} \\.transcript-document__summary-copy\\s*\\{([^}]*)\\}`,
+      ),
+    );
+    expect(readOnlySummary?.[1]).toContain("overflow-wrap: anywhere");
+    expect(readOnlySummary?.[1]).toContain("white-space: pre-wrap");
+    expect(readOnlySummary?.[1]).not.toContain("text-overflow: ellipsis");
+    const compactActionMode = casefile.match(
+      /\.action-mode-banner\[data-compact="true"\]\s*\{([^}]*)\}/,
+    );
+    expect(compactActionMode?.[1]).toContain("display: flex");
+    // Escape-hatch column scrolling centers rows without reserved pinned
+    // chrome clearance on media casefiles.
     expect(mainMedia?.[1]).toContain("scroll-padding-block: var(--space-3)");
   });
 

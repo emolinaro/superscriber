@@ -207,12 +207,12 @@ describe("MediaTransport", () => {
     expect(disconnect).not.toHaveBeenCalled();
   });
 
-  it("collapses the video picture by default and toggles it without unmounting the media element", async () => {
-    // media-casefile-transcript-room: the transcript is the primary surface
-    // on media casefiles, so the video picture starts collapsed; the toggle
-    // only flips presentation state - the video element stays mounted so
-    // playback/seek continuity is untouched.
-    const user = userEvent.setup();
+  it("keeps the video picture mounted by default with native controls and no collapse toggle", () => {
+    // media-casefile-video-visible: the video picture NEVER collapses - it
+    // renders inline with native controls (including the fullscreen expand
+    // control) and there is no show/hide affordance. Layout scaling of the
+    // frame is a pure CSS concern (see styles.test.ts), so the element is
+    // simply always mounted for playback/seek continuity.
     render(
       <MediaTransport
         activeSegmentId={null}
@@ -225,26 +225,18 @@ describe("MediaTransport", () => {
       />,
     );
 
-    const transport = screen.getByRole("group", { name: "Recording playback" });
-    expect(transport).toHaveAttribute("data-video-state", "collapsed");
-    const toggle = screen.getByRole("button", { name: "Show video picture" });
-    expect(toggle).toHaveAttribute("aria-expanded", "false");
     const video = document.querySelector("video");
     expect(video).not.toBeNull();
-
-    await user.click(toggle);
-    expect(transport).toHaveAttribute("data-video-state", "expanded");
+    expect(video).toHaveAttribute("controls");
     expect(
-      screen.getByRole("button", { name: "Hide video picture" }),
-    ).toHaveAttribute("aria-expanded", "true");
-    expect(document.querySelector("video")).toBe(video);
-
-    await user.click(screen.getByRole("button", { name: "Hide video picture" }));
-    expect(transport).toHaveAttribute("data-video-state", "collapsed");
-    expect(document.querySelector("video")).toBe(video);
+      screen.getByRole("group", { name: "Recording playback" }),
+    ).toContainElement(video!);
+    expect(
+      screen.queryByRole("button", { name: /video picture/ }),
+    ).not.toBeInTheDocument();
   });
 
-  it("renders no collapse toggle for audio casefiles", () => {
+  it("renders no picture toggle for audio casefiles", () => {
     render(
       <MediaTransport
         activeSegmentId={null}
