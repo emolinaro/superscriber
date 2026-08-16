@@ -8,18 +8,19 @@ import {
   uploadFixture,
 } from "./support/appliance";
 
-// Rest-state contract: after the rollback of the media-casefile layout work
-// (#53/#54), the casefile media surface returns to its earlier presentation:
-// the full media player leads the casefile main column, a compact segment
-// chip strip sits between the player and the transcript document whenever the
-// window can afford it, and the transcript review surface stays below both.
-// The vertical-budget rule is part of the rest state too: on short
-// laptop-height windows (>=1100px wide, <=920px tall) the pinned transport
-// collapses the chip rail so the review surface keeps room - every segment
-// still seeks from its transcript row timestamp. On phone-width viewports
-// the review surface is safety-gated behind the tablet-or-desktop notice
-// while the player stays available. A future layout change must update this
-// spec deliberately instead of silently reverting the rest state.
+// Rest-state contract after the visible-context layout (which deliberately
+// replaced the rollback-era bounded shell): the casefile desktop page
+// window-scrolls - no bounded shell, no nested transcript scrollport, no
+// pinned transport on >=1100px. The full media player leads the casefile
+// main column, the segment chip strip sits between the player and the
+// transcript document, and the transcript review surface flows below both,
+// fully scrollable, with follow-scroll centering the active segment in the
+// exact middle of the viewport (see e2e/visible-context.spec.ts for the
+// centering band contract). Below 1100px the transport stays viewport-pinned
+// (responsive.css), and on phone-width viewports the review surface is
+// safety-gated behind the tablet-or-desktop notice while the player stays
+// available. A future layout change must update this spec deliberately
+// instead of silently reverting the rest state.
 
 async function waitForRestStateTranscript(page: Page): Promise<void> {
   for (let attempt = 0; attempt < 45; attempt += 1) {
@@ -34,13 +35,12 @@ async function waitForRestStateTranscript(page: Page): Promise<void> {
   await expect(firstTranscriptRow(page)).toBeVisible();
 }
 
-test("video casefile rest state: full player leads, compact chip strip below, transcript last", async ({
+test("video casefile rest state: full player leads, chip strip below, transcript last, window scrolls", async ({
   page,
 }) => {
   test.setTimeout(180_000);
-  // Tall reference window: the vertical-budget rule below is exercised
-  // separately; here the full rest state (rail included) is on display.
-  await page.setViewportSize({ width: 1280, height: 960 });
+  // Canonical desktop window for the visible-context rest state.
+  await page.setViewportSize({ width: 1280, height: 800 });
   await bootstrapAndLogin(page, adminUser);
   const recordingId = await uploadFixture(page, {
     title: "Media rest state record",
@@ -49,11 +49,25 @@ test("video casefile rest state: full player leads, compact chip strip below, tr
   await waitForRestStateTranscript(page);
 
   // Promote the uploaded audio record to a video casefile the same way the
-  // appliance labels real video uploads.
+  // appliance labels real video uploads, and lengthen the stub transcript so
+  // the page always has more content than the viewport can hold (the
+  // window-scroll assertions below need real scroll travel).
   execRuntimeSql(
     "update recordings set media_kind = 'video', mime_type = 'video/mp4' where id = ?",
     [recordingId],
   );
+  const segments = Array.from({ length: 16 }, (_, i) => ({
+    id: `${recordingId}-rest-segment-${i + 1}`,
+    speakerLabel: i % 2 === 0 ? "Speaker A" : "Speaker B",
+    startMs: i * 10_000,
+    endMs: (i + 1) * 10_000,
+    text: `Rest state segment ${i + 1}: long enough copy to give every card a natural reading height.`,
+    confidence: 0.92,
+  }));
+  execRuntimeSql("update revisions set segments_json = ? where recording_id = ?", [
+    JSON.stringify(segments),
+    recordingId,
+  ]);
   await openCasefile(page, recordingId);
 
   const video = page.locator("video[controls]");
@@ -115,11 +129,43 @@ test("video casefile rest state: full player leads, compact chip strip below, tr
   expect(geometry?.railAboveTranscript).toBe(true);
   expect(geometry?.transportSpansMain).toBe(true);
 
-  // Vertical-budget rest state: shrink to a laptop-height window and the
-  // pinned transport collapses the chip rail; the transcript rows keep the
-  // per-segment seek affordance.
-  await page.setViewportSize({ width: 1280, height: 800 });
-  await expect(page.locator(".media-transport__rail")).toBeHidden();
+  // Window-scroll rest state (visible-context): the desktop casefile has
+  // no bounded shell or nested scrollport - the page scrolls as a document,
+  // the transport flows (not pinned) at desktop width, and the header and
+  // transport both leave the viewport once the transcript scrolls. The chip
+  // rail stays available at every desktop height now (the pin-pressure
+  // collapse below 920px was a bounded-shell rule and is gone), and every
+  // segment still seeks from its transcript row timestamp.
+  const scrollState = await page.evaluate(() => {
+    const main = document.querySelector<HTMLElement>(".casefile-main");
+    const transportEl = document.querySelector<HTMLElement>(".media-transport");
+    return {
+      pageScrolls: document.documentElement.scrollHeight > window.innerHeight,
+      mainOverflowY: main ? getComputedStyle(main).overflowY : "missing",
+      transportPosition: transportEl
+        ? getComputedStyle(transportEl).position
+        : "missing",
+    };
+  });
+  expect(scrollState.pageScrolls).toBe(true);
+  expect(scrollState.mainOverflowY).toBe("visible");
+  expect(scrollState.transportPosition).toBe("static");
+
+  await page.evaluate(() =>
+    window.scrollTo(0, document.documentElement.scrollHeight / 2),
+  );
+  const parkedChrome = await page.evaluate(() => {
+    const header = document.querySelector(".case-header")?.getBoundingClientRect();
+    const transportEl = document.querySelector(".media-transport")?.getBoundingClientRect();
+    return {
+      headerGone: (header?.bottom ?? 1) <= 0,
+      transportGone: (transportEl?.bottom ?? 1) <= 0,
+    };
+  });
+  expect(parkedChrome.headerGone).toBe(true);
+  expect(parkedChrome.transportGone).toBe(true);
+
+  await expect(page.locator(".media-transport__rail")).toBeVisible();
   await expect(
     page.getByRole("button", { name: /Play (or pause segment|from) / }).first(),
   ).toBeVisible();

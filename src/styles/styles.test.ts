@@ -166,40 +166,44 @@ describe("product css contract", () => {
     expect(shell).toContain(".account-menu__appearance-option");
   });
 
-  it("pins the playback transport on both the desktop scrollport and the phone viewport", () => {
-    // player-pinned-center: the playback surface and progress wave must never
-    // scroll out of view on either surface.
+  it("window-scrolls the desktop casefile with viewport-middle follow targeting", () => {
+    // visible-context: on >=1100px the casefile page window-scrolls - no
+    // bounded shell, no nested transcript scrollport, no pinned transport,
+    // and chrome flows away. Symmetric scroll-padding makes
+    // scrollIntoView block:"center" land the active segment on the exact
+    // viewport middle (the action bar is the only fixed chrome there).
     const casefile = readFileSync(resolve(STYLES_DIR, "casefile.css"), "utf8");
-    const desktopTransport = casefile.match(
-      /\.casefile-main\[data-revision="true"\] \.media-transport\s*\{([^}]*)\}/,
+    expect(casefile).not.toContain("player-clearance");
+    expect(casefile).not.toContain(
+      ".casefile-page:has(> .casefile-layout > .casefile-main[data-revision=\"true\"]) {",
     );
-    expect(desktopTransport?.[1]).toContain("position: sticky");
-    expect(desktopTransport?.[1]).toContain("top: 0");
-    const desktopScrollport = casefile.match(
-      /\.casefile-main\[data-revision="true"\]\s*\{([^}]*)\}/,
+    const desktopBlock = casefile.match(
+      /@media \(min-width: 1100px\) \{([\s\S]*?)\n\}\n/,
     );
-    expect(desktopScrollport?.[1]).toContain(
-      "scroll-padding-block: var(--player-clearance",
+    expect(desktopBlock?.[1]).toMatch(
+      /html:has\(\.casefile-page\)\s*\{\s*scroll-padding-block: var\(--action-bar-clearance/,
     );
-    const desktopDensityStart = casefile.lastIndexOf("@media (min-width: 1100px) {");
-    const compactHeightStart = casefile.indexOf(
-      "@media (min-width: 1100px) and (max-height: 920px)",
+    const baseTransport = casefile.match(/\.media-transport\s*\{([^}]*)\}/);
+    expect(baseTransport?.[1]).toContain("position: static");
+    // Chrome parking is banned on casefile pages at every width.
+    expect(casefile).toMatch(
+      /body:has\(\.casefile-page\) \.app-shell__header,[\s\S]*?\.case-header\s*\{[^}]*position: static/,
     );
-    expect(compactHeightStart).toBeGreaterThan(desktopDensityStart);
-    const compactHeight = casefile.slice(compactHeightStart);
-    expect(compactHeight).toMatch(
-      /\.media-transport\s*\{[^}]*padding: var\(--space-2\)/,
+    // No segment clamping ever: the editor hugs its content instead.
+    const segmentEditor = casefile.match(
+      /\.transcript-segment textarea\s*\{([^}]*)\}/,
     );
-    expect(compactHeight).toMatch(
-      /\.case-header__body\s*\{[^}]*padding: var\(--space-2\) var\(--space-3\)/,
-    );
+    expect(segmentEditor?.[1]).toContain("field-sizing: content");
+    expect(segmentEditor?.[1]).not.toContain("8rem");
+    expect(casefile).not.toMatch(/line-clamp/);
 
     const responsive = readFileSync(resolve(STYLES_DIR, "responsive.css"), "utf8");
     const windowScrollMedia = responsive.match(
       /@media \(max-width: 1099px\) \{([\s\S]*?)\n\}\n/,
     );
-    expect(windowScrollMedia?.[1]).toContain("body:has(.casefile-page) .app-shell__header");
-    expect(windowScrollMedia?.[1]).toContain("body:has(.casefile-page) .banner-emergency");
+    // Below 1100px the transport stays viewport-pinned with its own
+    // asymmetric clearance (the desktop window-scroll contract above does
+    // not apply there).
     const windowTransport = windowScrollMedia?.[1].match(/\.media-transport\s*\{([^}]*)\}/);
     expect(windowTransport?.[1]).toContain("position: sticky");
     expect(windowTransport?.[1]).toContain("top: 0");
@@ -214,9 +218,6 @@ describe("product css contract", () => {
     );
     expect(compactVideo?.[1]).toContain("max-height: 42vh");
     expect(compactVideo?.[1]).toContain("object-fit: contain");
-    // The case header must not double-park above the pinned transport on
-    // window-scrolling surfaces.
-    expect(windowScrollMedia?.[1]).toMatch(/\.case-header[\s,\{][^}]*position: static/);
     expect(windowScrollMedia?.[1]).toMatch(
       /\.media-transport__rail\s*\{[^}]*display: none/,
     );
@@ -256,8 +257,7 @@ describe("product css contract", () => {
     expect(css).toContain("min-height: var(--type-44)");
     expect(css).toContain("html, body {");
     expect(css).toContain("overflow-x: clip");
-    expect(css).toContain("top: 64px");
-    expect(css).toContain("top: 132px");
+    expect(css).toContain("top: 0");
     expect(css).toContain("bottom: 0");
     expect(css).toContain("position: fixed");
     expect(css).toContain("@media (max-width: 389px)");

@@ -228,6 +228,7 @@ describe("TranscriptDocument", () => {
     expect(scrollIntoViewMock).toHaveBeenCalledTimes(1);
     expect(scrollIntoViewMock).toHaveBeenCalledWith({
       block: "center",
+      inline: "center",
       behavior: "smooth",
     });
   });
@@ -250,6 +251,7 @@ describe("TranscriptDocument", () => {
 
     expect(scrollIntoViewMock).toHaveBeenCalledWith({
       block: "center",
+      inline: "center",
       behavior: "auto",
     });
   });
@@ -314,6 +316,7 @@ describe("TranscriptDocument", () => {
     expect(scrollIntoViewMock).toHaveBeenCalledTimes(1);
     expect(scrollIntoViewMock).toHaveBeenCalledWith({
       block: "center",
+      inline: "center",
       behavior: "smooth",
     });
   });
@@ -467,6 +470,7 @@ describe("TranscriptDocument", () => {
     );
     expect(scrollIntoViewMock).toHaveBeenCalledWith({
       block: "center",
+      inline: "center",
       behavior: "smooth",
     });
   });
@@ -506,6 +510,7 @@ describe("TranscriptDocument", () => {
 
     expect(scrollIntoViewMock).toHaveBeenCalledWith({
       block: "center",
+      inline: "center",
       behavior: "smooth",
     });
   });
@@ -554,6 +559,7 @@ describe("TranscriptDocument", () => {
 
     expect(scrollIntoViewMock).toHaveBeenCalledWith({
       block: "center",
+      inline: "center",
       behavior: "auto",
     });
     expect(
@@ -580,6 +586,7 @@ describe("TranscriptDocument", () => {
     expect(scrollIntoViewMock).toHaveBeenCalledTimes(1);
     expect(scrollIntoViewMock).toHaveBeenCalledWith({
       block: "center",
+      inline: "center",
       behavior: "auto",
     });
     expect(

@@ -1,12 +1,14 @@
-/* Casefile scroll targeting (player-pinned-center): the follow-scroll
-   centers the active segment, and centering must aim at the VISIBLE
-   transcript region - the area below the pinned transport - not the raw
-   scrollport. Clearance therefore lives on scroll-padding (symmetric
-   boxes keep block:center honest) instead of per-row scroll-margin,
-   which would extend the row's box and push the centered line low. The
-   concrete floors live next to the rules that pin the transport:
-   responsive.css for window-scrolling widths, the containment block
-   below for the desktop scrollport. */
+/* Casefile scroll targeting (visible-context): the casefile page
+   window-scrolls on every width and follow-scroll centers the active
+   segment in the middle of the viewport, with a working band of
+   neighboring segments above and below it. Centering clearance lives on
+   scroll-padding instead of per-row scroll-margin, which would extend
+   the row's box and push the centered line low. On desktop the padding
+   is symmetric (the action bar is the only fixed chrome), so block:center
+   lands the active row on the exact viewport middle; below 1100px the
+   pinned transport claims an asymmetric top clearance (responsive.css).
+   Segment cards never clamp: every segment keeps its full text and the
+   card grows to fit it, so the transcript stays fully scrollable. */
 
 .casefile-page {
   display: grid;
@@ -26,12 +28,14 @@
 
 /* One card for the casefile header (demo-casefile-header-gutter,
    kicker-gutter, backbutton-inset): kicker, title, actions, and facts all
-   share the card's interior padding, and the sticky chrome reads as a true
-   card rather than a floating strip. */
+   share the card's interior padding. Visible-context: on casefile pages
+   the app bar, emergency banner, and case header all flow away with the
+   page on every width, so the transcript owns the viewport during
+   playback follow instead of stacking under pinned chrome. */
+body:has(.casefile-page) .app-shell__header,
+body:has(.casefile-page) .banner-emergency,
 .case-header {
-  position: sticky;
-  top: 64px;
-  z-index: 6;
+  position: static;
 }
 
 .case-header__body {
@@ -112,8 +116,10 @@
 }
 
 .media-transport {
-  position: sticky;
-  top: 132px;
+  /* Visible-context on desktop: the transport leads the casefile main
+     column and scrolls with the page; below 1100px responsive.css pins
+     it to the viewport top instead. */
+  position: static;
   z-index: 5;
   display: grid;
   gap: var(--space-3);
@@ -315,7 +321,7 @@
 
 .transcript-document__segments {
   display: grid;
-  gap: var(--space-3);
+  gap: var(--space-2);
 }
 
 .transcript-document__speaker-tools {
@@ -337,10 +343,13 @@
 
 .transcript-segment {
   display: grid;
-  grid-template-columns: 96px 128px minmax(0, 1fr);
+  grid-template-columns: 112px 128px minmax(0, 1fr);
   gap: var(--space-3);
   align-items: start;
-  padding: var(--space-4);
+  /* Visible-context density: compact one-surface padding keeps a working
+     band of 5-10 context segments around the active row at desktop
+     viewport sizes, without ever clamping the content itself. */
+  padding: var(--space-2) var(--space-3);
   border: 1px solid var(--color-line);
   border-radius: var(--radius-surface);
   background: var(--color-paper);
@@ -355,6 +364,9 @@
 
 .transcript-segment__timestamp {
   justify-self: start;
+  /* One line per seek chip: "MM:SS-MM:SS" never wraps inside the gutter. */
+  white-space: nowrap;
+  padding-inline: var(--space-2);
 }
 
 .transcript-segment__speaker,
@@ -368,7 +380,11 @@
 }
 
 .transcript-segment textarea {
-  min-height: 8rem;
+  /* Visible-context edit density, no clamping: the editor hugs its
+     content (every sentence stays visible while typing) and only keeps a
+     small floor so the affordance still reads as an edit box. */
+  min-height: 3.5rem;
+  field-sizing: content;
   resize: vertical;
 }
 
@@ -613,71 +629,25 @@
        (no standalone toggle card on the rail when closed). */
   }
 
-  /* Playback containment (demo-transcript-scroll 2026-08-05), revised by
-     demo-casefile-ux: the PAGE is a fixed viewport-high flex column (shell
-     header's 64px stays outside). Case header, action banner, layout, and
-     action bar keep natural order; the layout row gets exactly what is left
-     over and the MAIN column is the single scrollport - the transcript has
-     no nested mini-scroller, so follow-scroll and wheel scrolling just work
-     and the full page can never run away. Applies only when a revision is
-     on screen; status-only and unresolved flows keep natural flow. Within
-     that scrollport the transport is sticky (see player-pinned-center below)
-     so the playback surface and progress wave never scroll out of view. */
-  .casefile-page:has(> .casefile-layout > .casefile-main[data-revision="true"]) {
-    display: flex;
-    flex-direction: column;
-    /* 65px shell bar + main's space-8 top pad + the page's own space-8
-       margin (demo-casefile-top-offset): the bounded page fills exactly the
-       remaining viewport - the action bar lands flush at the bottom edge. */
-    height: calc(100vh - 65px - var(--space-8) - var(--space-8) - env(safe-area-inset-bottom));
-    padding-bottom: 0;
-    overflow: hidden;
-    gap: var(--space-4);
+  /* Visible-context desktop rest state: the casefile page window-scrolls
+     (no bounded shell, no nested scrollport, no pinned transport - the
+     transport leads the main column and flows with the page), so the whole
+     viewport is available to the transcript. Follow-scroll centers the
+     active segment on the exact viewport middle: symmetric scroll-padding
+     keeps both scrollIntoView block:center and the nearest-edge visibility
+     check aiming at the region between the action bar and the top edge -
+     an equal top offset keeps that region's middle on the viewport's
+     middle. The action bar is the only fixed chrome (sticky bottom). */
+  html:has(.casefile-page) {
+    scroll-padding-block: var(--action-bar-clearance, 88px);
   }
 
-  .casefile-page:has(> .casefile-layout > .casefile-main[data-revision="true"]) .case-header {
-    /* The page is bounded - the header is already permanently visible. */
-    position: static;
-    flex: 0 0 auto;
-  }
-
-  .casefile-page:has(> .casefile-layout > .casefile-main[data-revision="true"]) .casefile-layout {
-    flex: 1 1 0;
-    min-height: 0;
-  }
-
-  .casefile-main[data-revision="true"] {
-    max-height: 100%;
-    overflow-y: auto;
-    display: flex;
-    flex-direction: column;
-    gap: var(--space-4);
-    scroll-padding-block: var(--player-clearance, 328px) var(--space-3);
-  }
-
-  /* Pinned player chrome (player-pinned-center): inside the bounded shell
-     the main column is the single scrollport, so the transport sticks to the
-     scrollport's leading edge while the transcript scrolls underneath. The
-     card stays fully opaque so the transcript reads as passing below. */
-  .casefile-main[data-revision="true"] .media-transport {
-    position: sticky;
-    top: 0;
-    flex: 0 0 auto;
-  }
-
+  /* The video keeps its frame and native controls inside the flowing
+     transport; the height cap is a reading-size bound, not a clamp of the
+     transcript. */
   .casefile-main[data-revision="true"] .media-transport__controls video {
-    max-height: 30vh;
-  }
-
-  .casefile-main[data-revision="true"] .transcript-document__summary {
-    flex: 0 0 auto;
-  }
-
-  .casefile-layout[data-governance-open="true"] .governance-drawer {
-    position: sticky;
-    top: 0;
-    max-height: 100%;
-    overflow-y: auto;
+    max-height: 45vh;
+    object-fit: contain;
   }
 }
 
@@ -809,10 +779,9 @@
   width: fit-content;
 }
 
-/* demo-casefile-ux: density inside the desktop casefile containment. The
-   transport is the vertical hog at laptop heights, so the summary keeps its
-   reading width but drops its box padding, and the header card tightens.
-   All inside the >=1100px containment block's scope. */
+/* demo-casefile-ux: modest transport/summary density in the flowing
+   desktop casefile (the wave stage keeps its listening height; the summary
+   keeps its reading width with a slimmer box). */
 @media (min-width: 1100px) {
   .casefile-main[data-revision="true"] .transcript-document__summary-copy {
     padding: var(--space-2) var(--space-3);
@@ -838,49 +807,12 @@
     padding: var(--space-3);
     gap: var(--space-2);
   }
+
   .casefile-page:has(> .casefile-layout > .casefile-main[data-revision="true"]) .case-header__body {
     padding: var(--space-3);
   }
 
   .casefile-page:has(> .casefile-layout > .casefile-main[data-revision="true"]) .case-header__facts {
     gap: var(--space-2) var(--space-6);
-  }
-}
-
-@media (min-width: 1100px) and (max-height: 920px) {
-  /* Pinned-chrome vertical budget (player-pinned-center): once the transport
-     pins to the scrollport's leading edge, its full height (~300px) would
-     leave only a sliver of transcript visible on laptop-height windows. The
-     horizontal chip rail collapses (every segment still seeks from its
-     transcript row timestamp), the rate field goes inline, and the card
-     tightens - the wave progress surface itself stays full height. */
-  .casefile-main[data-revision="true"] .media-transport {
-    padding: var(--space-2);
-    gap: var(--space-2);
-  }
-
-  .casefile-main[data-revision="true"] .media-transport__rail {
-    display: none;
-  }
-
-  .casefile-main[data-revision="true"] .media-transport__rate-field {
-    display: flex;
-    align-items: center;
-    gap: var(--space-2);
-    min-width: 0;
-  }
-
-  .casefile-main[data-revision="true"] .media-transport__rate-field .field-label {
-    white-space: nowrap;
-  }
-
-  /* Cap-height scrollport padding tracks the compacted transport (~198px)
-     so block:center still lands the active line mid-visible-region. */
-  .casefile-main[data-revision="true"] {
-    scroll-padding-block: var(--player-clearance, 216px) var(--space-3);
-  }
-  .casefile-page:has(> .casefile-layout > .casefile-main[data-revision="true"]) .case-header__body {
-    padding: var(--space-2) var(--space-3);
-    gap: var(--space-2);
   }
 }

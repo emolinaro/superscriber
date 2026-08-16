@@ -1,15 +1,20 @@
 /**
- * Playback follow-scroll decision logic (player-pinned-center).
+ * Playback follow-scroll decision logic (visible-context).
  *
- * The transcript follow centers the active segment in the scrollport
- * (scrollIntoView block: "center") so context stays visible on both sides
- * of the playing line. Follow is non-fighting: any user scroll gesture
+ * The transcript is fully scrollable and every segment keeps its complete
+ * text (no clamping ever); follow centers the active segment in the middle
+ * of the viewport (scrollIntoView block: "center", inline: "center") so a
+ * working band of 5-10 context segments sits above and below the playing
+ * line at desktop viewport sizes. On desktop the page window-scrolls with
+ * symmetric scroll-padding, so block:center lands on the exact viewport
+ * middle; below 1100px the pinned transport claims an asymmetric top
+ * clearance instead. Follow is non-fighting: any user scroll gesture
  * pauses it, and it re-engages the moment the active line is visible in
- * the scrollport again - the same "only while you can see it" boundary the
+ * the viewport again - the same "only while you can see it" boundary the
  * previous nearest-edge alignment held - or immediately on an explicit
  * seek (segment timestamp click, rail chip, wave marker).
  *
- * The segment rail inside the pinned transport mirrors this contract on the
+ * The segment rail inside the transport mirrors this contract on the
  * horizontal axis (wave-track scroll sync): the same decision matrix, the
  * same pause-on-user-gesture boundary, applied to the rail's scrollLeft so
  * the active segment's chip stays centered-ish while the transcript centers
@@ -81,9 +86,10 @@ export function isTargetInHorizontalView(
 
 /**
  * The scrollLeft that centers the target inside the scrollport
- * ("centered-ish" horizontal tracking, mirroring block: "center" on the
- * vertical axis). Clamped at zero; Element.scrollTo clamps the overshoot
- * at the far end itself, so only the leading clamp lives here.
+ * ("centered-ish" horizontal tracking, mirroring block: "center" /
+ * inline: "center" on the transcript axes). Clamped at zero;
+ * Element.scrollTo clamps the overshoot at the far end itself, so only
+ * the leading clamp lives here.
  */
 export function centeredHorizontalScrollLeft(
   scrollport: HorizontalScrollport,

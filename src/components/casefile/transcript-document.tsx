@@ -81,9 +81,9 @@ export function TranscriptDocument({
   // `safetyStripped` when editing would otherwise be possible - permission-
   // or history-based read-only states keep their own, separate story.
   const segmentsRef = useRef<HTMLDivElement>(null);
-  // Non-fighting playback follow (player-pinned-center): a user scroll
-  // gesture pauses follow; follow re-engages when the active line is visible
-  // in the scrollport again, or on any explicit seek.
+  // Non-fighting playback follow (visible-context): a user scroll gesture
+  // pauses follow; follow re-engages when the active line is visible in the
+  // viewport again, or on any explicit seek.
   const followPausedRef = useRef(false);
 
   // Pause follow on user scroll gestures: wheel, touch drag, or page-scroll
@@ -137,6 +137,7 @@ export function TranscriptDocument({
     const reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
     row.scrollIntoView({
       block: "center",
+      inline: "center",
       behavior: reducedMotion ? "auto" : "smooth",
     });
 
@@ -153,12 +154,14 @@ export function TranscriptDocument({
     followPausedRef.current = false;
   }, [followResumeNonce]);
 
-  // Playback follow: CENTER the active segment inside the nearest scrollport
-  // (the bounded .casefile-main scrollport on desktop, the window elsewhere)
-  // so roughly half a screen of context sits on both sides of the playing
-  // line. The segments list itself is never a scroller - the bounded shell
-  // keeps .casefile-main as the single scrollport. The pause contract is
-  // decided by follow-scroll.ts so the whole matrix stays unit-tested.
+  // Playback follow: CENTER the active segment in the middle of the
+  // viewport on both axes (window scroll on every width; the transcript is
+  // never a nested scroller). The desktop casefile applies symmetric
+  // scroll-padding so block:center lands the row on the exact viewport
+  // middle with a band of context segments above and below; below 1100px
+  // the pinned transport claims an asymmetric top clearance instead. The
+  // pause contract is decided by follow-scroll.ts so the whole matrix
+  // stays unit-tested.
   useEffect(() => {
     const container = segmentsRef.current;
     if (!container || !activeSegmentId) {
@@ -178,6 +181,7 @@ export function TranscriptDocument({
     const reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
     row.scrollIntoView({
       block: "center",
+      inline: "center",
       behavior: reducedMotion ? "auto" : "smooth",
     });
   }, [activeSegmentId, followResumeNonce]);
