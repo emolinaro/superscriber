@@ -827,6 +827,18 @@
     padding-block: var(--space-1);
   }
 
+  /* A compact admin action-mode banner consumes one extra row above the
+     bounded media column. Tighten only that oversight presentation to the
+     same 36px control floor as the neighboring timestamp and speaker fields;
+     the textarea remains vertically resizable and ordinary reviewer sessions
+     retain their two-line editing height. */
+  .casefile-page:has(> .action-mode-banner[data-compact="true"])
+    .casefile-main[data-revision="true"][data-media="true"]
+    .transcript-segment textarea {
+    height: 2.25rem;
+    min-height: 2.25rem;
+  }
+
   .casefile-main[data-revision="true"][data-media="true"] .transcript-segment .button,
   .casefile-main[data-revision="true"][data-media="true"] .transcript-segment input {
     min-height: 2.25rem;
@@ -947,6 +959,7 @@
     display: flex;
     align-items: baseline;
     gap: var(--space-3);
+    min-height: 2.25rem;
     min-width: 0;
     cursor: pointer;
   }
@@ -1226,5 +1239,14 @@
   .casefile-page:has(> .casefile-layout > .casefile-main[data-revision="true"]) .case-header__body {
     padding: var(--space-2) var(--space-3);
     gap: var(--space-2);
+  }
+}
+
+@media (min-width: 1100px) and (max-height: 800px) {
+  /* Reference laptop viewport: once the five-card review floor is active,
+     the video frame lands exactly on its contracted 96px full-player floor. */
+  .casefile-main[data-revision="true"][data-media="true"] .media-transport__controls video {
+    height: 6rem;
+    max-height: 6rem;
   }
 }

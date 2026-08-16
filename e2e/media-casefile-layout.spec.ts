@@ -38,6 +38,13 @@ async function transcriptGeometry(page: import("@playwright/test").Page) {
       ".transcript-document__summary-copy",
     );
     const summaryStyle = summary ? getComputedStyle(summary) : null;
+    const main = transcript.closest<HTMLElement>(".casefile-main");
+    const transport = main?.querySelector<HTMLElement>(".media-transport");
+    const mainRect = main?.getBoundingClientRect();
+    const transportRect = transport?.getBoundingClientRect();
+    const firstCardRect = cards.at(0)?.getBoundingClientRect();
+    const visibleTop = Math.max(0, mainRect?.top ?? 0);
+    const visibleBottom = Math.min(window.innerHeight, mainRect?.bottom ?? 0);
 
     return {
       clientHeight: transcript.clientHeight,
@@ -49,6 +56,14 @@ async function transcriptGeometry(page: import("@playwright/test").Page) {
       summaryClientWidth: summary?.clientWidth ?? 0,
       summaryTextOverflow: summaryStyle?.textOverflow ?? "",
       summaryWhiteSpace: summaryStyle?.whiteSpace ?? "",
+      firstFiveFullyVisible:
+        Boolean(firstCardRect && fifthCardRect) &&
+        firstCardRect!.top >= visibleTop - 1 &&
+        fifthCardRect!.bottom <= visibleBottom + 1,
+      transportFullyVisible:
+        Boolean(transportRect) &&
+        transportRect!.top >= visibleTop - 1 &&
+        transportRect!.bottom <= visibleBottom + 1,
     };
   });
 }
@@ -82,6 +97,27 @@ test("media casefiles preserve variable transcript content and player floors", a
     "reviewer",
     "Submit variable transcript content for the approver layout check.",
   );
+
+  const reviewerAudioGeometry = await transcriptGeometry(page);
+  expect.soft(reviewerAudioGeometry.transportFullyVisible).toBe(true);
+  expect.soft(reviewerAudioGeometry.firstFiveFullyVisible).toBe(true);
+
+  execRuntimeSql(
+    "update recordings set media_kind = 'video', mime_type = 'video/mp4' where id = ?",
+    [recordingId],
+  );
+  await page.reload();
+  await expect(page.locator("video[controls]")).toBeVisible();
+
+  const reviewerVideoGeometry = await transcriptGeometry(page);
+  expect.soft(reviewerVideoGeometry.transportFullyVisible).toBe(true);
+  expect.soft(reviewerVideoGeometry.firstFiveFullyVisible).toBe(true);
+
+  execRuntimeSql(
+    "update recordings set media_kind = 'audio', mime_type = 'audio/wav' where id = ?",
+    [recordingId],
+  );
+  await page.reload();
   await page.getByRole("button", { name: "Submit for approval" }).click();
   const submitDialog = page.getByRole("dialog", { name: "Submit for approval" });
   await submitDialog
