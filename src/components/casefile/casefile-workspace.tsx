@@ -853,6 +853,7 @@ export function CasefileWorkspace({
 
       {casefile.revision ? (
         <AdminActionModeBanner
+          compact={Boolean(casefile.media.url) && !phoneSafetyMode}
           entryOptions={casefile.adminActionModeOptions}
           onEnter={handleEnterActionMode}
           onExit={handleExitActionMode}

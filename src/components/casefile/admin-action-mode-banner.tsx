@@ -20,6 +20,7 @@ export type AdminActionModeSessionView = {
 };
 
 export function AdminActionModeBanner({
+  compact = false,
   entryOptions,
   onEnter,
   onExit,
@@ -27,6 +28,7 @@ export function AdminActionModeBanner({
   recordingTitle,
   session,
 }: {
+  compact?: boolean;
   entryOptions: AdminActionModeEntryOption[];
   onEnter: (input: {
     effectiveRole: AdminActionModeRole;
@@ -66,6 +68,37 @@ export function AdminActionModeBanner({
   }
 
   if (session) {
+    if (compact) {
+      return (
+        <aside
+          aria-label="Admin action mode"
+          className="action-mode-banner"
+          data-compact="true"
+        >
+          <details className="action-mode-banner__details">
+            <summary className="action-mode-banner__summary">
+              <strong>Admin action mode: {formatRoleLabel(session.effectiveRole)}</strong>
+              <span className="action-mode-banner__identity">
+                {session.adminDisplayName} (Admin)
+              </span>
+              <span className="action-mode-banner__expiry">
+                Expires {formatDateTimeUtc(session.expiresAt)}
+              </span>
+              <span className="action-mode-banner__disclosure">Details</span>
+            </summary>
+            <div className="action-mode-banner__detail-row">
+              <span>Base role: {formatRoleLabel(session.baseRole)}</span>
+              <span>Purpose: {session.purpose}</span>
+            </div>
+          </details>
+          {error ? <InlineNotice tone="danger">{error}</InlineNotice> : null}
+          <button className="button button-secondary" onClick={() => void handleExit()} type="button">
+            {pending ? "Working..." : "Exit action mode"}
+          </button>
+        </aside>
+      );
+    }
+
     return (
       <aside aria-label="Admin action mode" className="action-mode-banner">
         <strong>Admin action mode: {formatRoleLabel(session.effectiveRole)}</strong>

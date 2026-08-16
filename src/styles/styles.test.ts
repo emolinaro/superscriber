@@ -251,9 +251,8 @@ describe("product css contract", () => {
     const transport = casefile.match(
       new RegExp(`${escapedScope} \\.media-transport\\s*\\{([^}]*)\\}`),
     );
-    // The transport is NOT pinned and may yield height from the top: when
-    // the floors cannot fit, the whole column scrolls as the escape hatch.
-    expect(transport?.[1]).toContain("flex: 0 1 auto");
+    // Audio keeps its content floor; only video may yield height from the top.
+    expect(transport?.[1]).toContain("flex: 0 0 auto");
     expect(transport?.[1]).toContain("position: static");
     // Clear space between the player and the segments below.
     const mainMedia = casefile.match(
@@ -267,6 +266,13 @@ describe("product css contract", () => {
     expect(video?.[1]).toContain("flex: 0 1 auto");
     expect(video?.[1]).toContain("min-height: 6rem");
     expect(video?.[1]).toContain("max-height: min(25vh, 260px)");
+    const videoTransport = casefile.match(
+      new RegExp(
+        `${escapedScope} \\.media-transport\\[data-media-kind=\\x22video\\x22\\]\\s*\\{([^}]*)\\}`,
+      ),
+    );
+    expect(videoTransport?.[1]).toContain("flex: 0 1 auto");
+    expect(videoTransport?.[1]).toContain("min-height: 9.75rem");
     const baseVideo = casefile.match(
       /\.media-transport__controls video \{\s*display: block;([^}]*)\}/,
     );
@@ -284,8 +290,23 @@ describe("product css contract", () => {
       new RegExp(`${escapedScope} \\.transcript-document\\s*\\{([^}]*)\\}`),
     );
     expect(transcript?.[1]).toContain("flex: 1 1 auto");
-    expect(transcript?.[1]).toContain("min-height: 23rem");
+    expect(transcript?.[1]).toContain(
+      "min-height: var(--transcript-five-card-floor, 0px)",
+    );
     expect(transcript?.[1]).toContain("overflow-y: auto");
+    expect(casefile).not.toContain("min-height: 23rem");
+    const readOnlySummary = casefile.match(
+      new RegExp(
+        `${escapedScope} \\.transcript-document__summary-copy\\s*\\{([^}]*)\\}`,
+      ),
+    );
+    expect(readOnlySummary?.[1]).toContain("overflow-wrap: anywhere");
+    expect(readOnlySummary?.[1]).toContain("white-space: pre-wrap");
+    expect(readOnlySummary?.[1]).not.toContain("text-overflow: ellipsis");
+    const compactActionMode = casefile.match(
+      /\.action-mode-banner\[data-compact="true"\]\s*\{([^}]*)\}/,
+    );
+    expect(compactActionMode?.[1]).toContain("display: flex");
     // Escape-hatch column scrolling centers rows without reserved pinned
     // chrome clearance on media casefiles.
     expect(mainMedia?.[1]).toContain("scroll-padding-block: var(--space-3)");
