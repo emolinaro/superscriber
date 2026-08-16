@@ -226,7 +226,8 @@ test("active timestamp play rejection leaves transcript follow dormant", async (
   });
   await expect(timestamp).toBeVisible();
   await page.locator("audio, video").evaluate((media) => {
-    media.play = () => Promise.reject(new DOMException("Playback blocked"));
+    (media as HTMLMediaElement).play = () =>
+      Promise.reject(new DOMException("Playback blocked"));
   });
   await timestamp.evaluate((button) => {
     const top = button.getBoundingClientRect().top + window.scrollY - 120;
