@@ -6,6 +6,7 @@ import { InlineNotice } from "@/components/ui/inline-notice";
 import {
   FOLLOW_SCROLL_PAUSE_KEYS,
   decideFollowScroll,
+  findScrollParent,
   isRowInScrollView,
 } from "./follow-scroll";
 
@@ -53,6 +54,35 @@ function isFollowScrollIgnoredTarget(target: EventTarget | null): boolean {
   return (
     target instanceof Element && target.closest(FOLLOW_SCROLL_IGNORED_TARGETS) !== null
   );
+}
+
+function centerRow(row: HTMLElement, behavior: ScrollBehavior): void {
+  const scrollParent = findScrollParent(row);
+  if (!scrollParent) {
+    row.scrollIntoView({ block: "center", inline: "center", behavior });
+    return;
+  }
+
+  if (window.innerWidth >= 1100) {
+    const workbench = scrollParent.closest<HTMLElement>(".casefile-main");
+    const workbenchTop = workbench?.getBoundingClientRect().top;
+    if (workbenchTop !== undefined && Math.abs(workbenchTop) > 1) {
+      window.scrollTo({
+        top: window.scrollY + workbenchTop,
+        behavior: "auto",
+      });
+    }
+  }
+
+  const rect = row.getBoundingClientRect();
+  scrollParent.scrollTo({
+    top:
+      scrollParent.scrollTop +
+      rect.top +
+      rect.height / 2 -
+      window.innerHeight / 2,
+    behavior,
+  });
 }
 
 export function TranscriptDocument({
@@ -136,11 +166,7 @@ export function TranscriptDocument({
     }
 
     const reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
-    row.scrollIntoView({
-      block: "center",
-      inline: "center",
-      behavior: reducedMotion ? "auto" : "smooth",
-    });
+    centerRow(row, reducedMotion ? "auto" : "smooth");
 
     // Priority order matters: querySelector would otherwise return the first
     // match in tree order (the timestamp precedes the editors in the row).
@@ -156,13 +182,11 @@ export function TranscriptDocument({
   }, [followActivationNonce]);
 
   // Playback follow: CENTER the active segment in the middle of the
-  // viewport on both axes (window scroll on every width; the transcript is
-  // never a nested scroller). The desktop casefile applies symmetric
-  // scroll-padding so block:center lands the row on the exact viewport
-  // middle with a band of context segments above and below; below 1100px
-  // the pinned transport claims an asymmetric top clearance instead. The
-  // pause contract is decided by follow-scroll.ts so the whole matrix
-  // stays unit-tested.
+  // viewport on both axes. Desktop first parks the media workspace, then
+  // moves only the transcript scrollport; below 1100px the window remains
+  // the scrollport and the pinned transport claims its asymmetric top
+  // clearance. The pause contract is decided by follow-scroll.ts so the
+  // whole matrix stays unit-tested.
   useEffect(() => {
     const container = segmentsRef.current;
     if (!container || !activeSegmentId) {
@@ -184,11 +208,7 @@ export function TranscriptDocument({
     followPausedRef.current = false;
 
     const reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
-    row.scrollIntoView({
-      block: "center",
-      inline: "center",
-      behavior: reducedMotion ? "auto" : "smooth",
-    });
+    centerRow(row, reducedMotion ? "auto" : "smooth");
   }, [activeSegmentId, followActivationNonce]);
 
   return (

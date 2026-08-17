@@ -3,15 +3,15 @@
  *
  * The transcript is fully scrollable and every segment keeps its complete
  * text (no clamping ever); follow centers the active segment in the middle
- * of the viewport (scrollIntoView block: "center", inline: "center") so a
- * working band of 5-10 context segments sits above and below the playing
- * line at desktop viewport sizes. On desktop the page window-scrolls with
- * symmetric scroll-padding, so block:center lands on the exact viewport
- * middle; below 1100px the pinned transport claims an asymmetric top
- * clearance instead. Follow stays dormant while the player is resting at
- * its initial position, then activates on the first playback tick or an
- * explicit seek. Once active, any user scroll gesture pauses it, and it
- * re-engages the moment the active line is visible in the viewport again -
+ * of the viewport so a working band of 5-10 context segments sits above and
+ * below the playing line at desktop viewport sizes. On desktop the transcript
+ * owns the vertical scrollport below the pinned media band; activation parks
+ * that workspace at the viewport top before the transcript moves. Below
+ * 1100px the window remains the scrollport with asymmetric player clearance.
+ * Follow stays dormant while the player is resting at its initial position,
+ * then activates on the first playback tick or an explicit seek. Once active,
+ * any user scroll gesture pauses it, and it re-engages the moment the active
+ * line is visible in the viewport again -
  * the same "only while you can see it" boundary the previous nearest-edge
  * alignment held - or immediately on an explicit seek (segment timestamp
  * click, rail chip, wave marker).

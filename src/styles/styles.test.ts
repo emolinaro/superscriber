@@ -167,29 +167,22 @@ describe("product css contract", () => {
   });
 
   it("stacks the pinned desktop transport above a centered transcript", () => {
-    // visible-context: on >=1100px the casefile page window-scrolls - no
-    // bounded shell, no nested transcript scrollport - and the media player
-    // PINS in a band above the centered transcript. Symmetric scroll-padding
-    // makes scrollIntoView block:"center" land the active segment on the
-    // exact vertical viewport middle.
+    // visible-context: on >=1100px only the transcript scrolls below the
+    // pinned media band. The combined page remains naturally flowing.
     const casefile = readFileSync(resolve(STYLES_DIR, "casefile.css"), "utf8");
     expect(casefile).not.toContain("player-clearance");
     expect(casefile).not.toContain(
       ".casefile-page:has(> .casefile-layout > .casefile-main[data-revision=\"true\"]) {",
     );
-    // casefile.css holds several >=1100px media blocks (workbench,
-    // banner density, summary density); the scroll targeting lives in the
-    // one carrying the scroll-padding rule.
+    // casefile.css holds several >=1100px media blocks; the workbench block
+    // is the one carrying the transcript overflow contract.
     const desktopBlocks = [
       ...casefile.matchAll(/@media \(min-width: 1100px\) \{([\s\S]*?)\n\}\n/g),
     ].map((match) => match[1]);
     const desktopBlock = desktopBlocks.find((block) =>
-      block.includes("scroll-padding-block"),
+      block.includes("overscroll-behavior-block"),
     );
     expect(desktopBlock).toBeDefined();
-    expect(desktopBlock).toMatch(
-      /html:has\(\.casefile-page\)\s*\{\s*scroll-padding-block: var\(--action-bar-clearance/,
-    );
     // Vertical workbench: the single-column main stacks the player above a
     // centered transcript. The transport's own two-column band bounds its
     // height so the transcript zone always shares the first viewport.
@@ -197,13 +190,34 @@ describe("product css contract", () => {
       /\.casefile-main\[data-revision="true"\]\s*\{[^}]*grid-template-columns: minmax\(0, 1fr\)/,
     );
     expect(desktopBlock).toMatch(
-      /\.casefile-main\[data-revision="true"\] \.media-transport\s*\{[^}]*position: sticky;\s*top: 0;[^}]*grid-template-columns: minmax\(0, 1fr\) minmax\(0, 1fr\)/s,
+      /\.casefile-layout:not\(\[data-governance-open="true"\]\)[\s\S]*?\.media-transport\s*\{[^}]*position: sticky;\s*top: 0;[^}]*grid-template-columns: minmax\(0, 1fr\) minmax\(0, 1fr\)/s,
     );
     expect(desktopBlock).toMatch(
-      /\.casefile-main\[data-revision="true"\] \.transcript-document\s*\{[^}]*width: 100%;[^}]*max-width: var\(--work-max\);[^}]*justify-self: center/s,
+      /\.media-transport:has\(video\)\s*\{\s*padding: 0;/,
     );
     expect(desktopBlock).toMatch(
-      /\.media-transport__controls video\s*\{[^}]*max-height: 34vh/,
+      /\.casefile-main\[data-revision="true"\] \.transcript-document\s*\{[^}]*width: 100%;[^}]*block-size: calc\([^}]*100vh - var\(--player-clearance, 0px\) - var\(--space-2\)[^}]*\);[^}]*overflow-y: auto;/s,
+    );
+    expect(desktopBlock).toMatch(
+      /\.casefile-main\[data-revision="true"\] \.transcript-segment\s*\{[^}]*grid-template-columns: auto minmax\(8rem, auto\) minmax\(0, 1fr\) auto;[^}]*padding-block: var\(--space-1\);/s,
+    );
+    expect(desktopBlock).toMatch(
+      /\.transcript-segment__text > :is\(p, textarea\)\s*\{\s*grid-column: 3;/,
+    );
+    expect(desktopBlock).toMatch(
+      /\.casefile-layout:not\(\[data-governance-open="true"\]\)[\s\S]*?\.transcript-document\s*\{[^}]*position: sticky;[^}]*top: calc\(var\(--player-clearance, 0px\) \+ var\(--space-2\)\);[^}]*max-width: var\(--work-max\);[^}]*justify-self: center/s,
+    );
+    expect(desktopBlock).toMatch(
+      /\.casefile-layout\[data-governance-open="true"\][\s\S]*?\.casefile-main\[data-revision="true"\]\s*\{\s*grid-template-columns: minmax\(300px, 5fr\) minmax\(0, 7fr\);\s*gap: var\(--space-4\);/,
+    );
+    expect(desktopBlock).toMatch(
+      /\.casefile-layout\[data-governance-open="true"\][\s\S]*?\.transcript-document\s*\{[^}]*grid-column: 2;[^}]*block-size: 100vh;[^}]*max-width: none;/s,
+    );
+    expect(desktopBlock).toMatch(
+      /:has\(> \.media-transport--empty\)[\s\S]*?\.transcript-document\s*\{[^}]*grid-column: 1 \/ -1;[^}]*max-width: var\(--work-max\);[^}]*justify-self: center;/s,
+    );
+    expect(desktopBlock).toMatch(
+      /\.media-transport__controls video\s*\{[^}]*max-height: 32\.5vh/,
     );
     // Rest-state readability: the action-mode banner compacts into a
     // wrapped row so the first segment card stays above the fold.

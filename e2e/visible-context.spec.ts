@@ -18,7 +18,7 @@ import {
 // canonical desktop viewport (1280x800) the casefile transcript editing
 // surface - review mode AND approver mode, audio AND video - keeps every
 // segment at its natural height (no line clamps, no truncation, no expand
-// affordances), the transcript window-scrolls end to end, the ACTIVE segment
+// affordances), the transcript scrollport scrolls end to end, the ACTIVE segment
 // sits in the exact middle of the viewport in both axes while the track plays
 // (including across short -> long segment transitions), and at least five
 // context segments stay visible around it. Video holds the 5-10 acceptance
@@ -28,16 +28,15 @@ import {
 // the player PINS and never scrolls away in a band above the horizontally
 // centered transcript column. The transcript zone always shares the first
 // viewport, so the first segment card is reachable without any scroll. The
-// video's rendered height is bounded (max 34vh); video keeps its frame and
+// video's rendered height is bounded (max 32.5vh); video keeps its frame and
 // native controls, and audio keeps the full transport.
 //
-// All geometry is asserted viewport-relative (getBoundingClientRect vs
-// window.innerWidth/innerHeight), never from internal scrollport heights.
+// All centering geometry is asserted viewport-relative. Context visibility is
+// measured against the transcript scrollport's actual unobscured bounds.
 
 const CANONICAL_VIEWPORT = { width: 1280, height: 800 };
-// Centering tolerance: the scroll-padding boxes are symmetric so the exact
-// landing point is the viewport vertical middle; a few px of slack covers
-// sub-pixel rounding and cross-lane font metric drift.
+// Centering tolerance covers sub-pixel rounding and cross-lane font metric
+// drift around the exact viewport middle.
 const CENTER_TOLERANCE_PX = 24;
 const MIN_CONTEXT = 5;
 const MIN_CONTEXT_EACH_SIDE = 2;
@@ -46,8 +45,8 @@ const MAX_VIDEO_CONTEXT = 10;
 // loose guard catches runaway density regressions without imposing video's
 // acceptance ceiling.
 const MAX_AUDIO_CONTEXT_GUARD = 16;
-// Video frame bound (matches casefile.css max-height: 34vh).
-const VIDEO_MAX_VH = 0.34;
+// Video frame bound (matches casefile.css max-height: 32.5vh).
+const VIDEO_MAX_VH = 0.325;
 
 type SegmentSeed = {
   id: string;
@@ -116,6 +115,9 @@ type ActiveGeometry = {
   contextBefore: number;
   index: number;
   height: number;
+  scrollportBottom: number;
+  scrollportTop: number;
+  transportBottom: number;
   viewportWidth: number;
   viewportHeight: number;
 };
@@ -131,12 +133,22 @@ async function measureActive(page: Page): Promise<ActiveGeometry | null> {
     if (!active) {
       return null;
     }
+    const scrollport = active.closest<HTMLElement>(".transcript-document");
+    if (!scrollport) {
+      return null;
+    }
     const rect = active.getBoundingClientRect();
+    const scrollportRect = scrollport.getBoundingClientRect();
+    const transportBottom =
+      document.querySelector<HTMLElement>(".media-transport")?.getBoundingClientRect()
+        .bottom ?? 0;
     const activeIndex = rows.indexOf(active);
     const actionBarTop =
       document.querySelector<HTMLElement>(".casefile-action-bar")?.getBoundingClientRect()
         .top ?? window.innerHeight;
     const unobscuredBottom = Math.min(actionBarTop, window.innerHeight);
+    const unobscuredTop = Math.max(scrollportRect.top, 0);
+    const scrollportBottom = Math.min(scrollportRect.bottom, unobscuredBottom);
     const visibleIndices = rows.flatMap((row, index) => {
       if (row === active) {
         return [];
@@ -144,7 +156,8 @@ async function measureActive(page: Page): Promise<ActiveGeometry | null> {
       const rowRect = row.getBoundingClientRect();
       const visibleHeight = Math.max(
         0,
-        Math.min(rowRect.bottom, unobscuredBottom) - Math.max(rowRect.top, 0),
+        Math.min(rowRect.bottom, scrollportBottom) -
+          Math.max(rowRect.top, unobscuredTop),
       );
       return visibleHeight >= rowRect.height / 2 ? [index] : [];
     });
@@ -157,6 +170,9 @@ async function measureActive(page: Page): Promise<ActiveGeometry | null> {
       contextBefore: visibleIndices.filter((index) => index < activeIndex).length,
       height: rect.height,
       index: activeIndex,
+      scrollportBottom,
+      scrollportTop: unobscuredTop,
+      transportBottom,
       viewportWidth: window.innerWidth,
       viewportHeight: window.innerHeight,
     };
@@ -178,6 +194,9 @@ async function expectActiveMidViewport(
     expect(last).not.toBeNull();
     expect(last!.left).toBeGreaterThanOrEqual(-1);
     expect(last!.right).toBeLessThanOrEqual(last!.viewportWidth + 1);
+    expect(last!.centerY).toBeGreaterThanOrEqual(last!.scrollportTop);
+    expect(last!.centerY).toBeLessThanOrEqual(last!.scrollportBottom);
+    expect(last!.scrollportTop).toBeGreaterThanOrEqual(last!.transportBottom - 1);
     expect(Math.abs(last!.centerX - last!.viewportWidth / 2)).toBeLessThanOrEqual(
       CENTER_TOLERANCE_PX,
     );
@@ -202,31 +221,43 @@ async function expectActiveMidViewport(
 
 // The two standing laws at rest (no seek, no playback, scrollY === 0):
 // the transcript zone shares the FIRST viewport with the media (the first
-// segment card is reachable without scrolling), and the player pins in a
-// band above the centered transcript. Then, after a window scroll, the
-// player must NOT scroll away with the case header.
+// segment card is fully visible without scrolling), and the player pins in a
+// band above the centered transcript. The transcript then scrolls without
+// moving the player or page chrome.
 async function expectRestStateWorkbench(page: Page, input: { video: boolean }) {
   const geometry = await page.evaluate(() => {
     const q = (selector: string) =>
       document.querySelector<HTMLElement>(selector)?.getBoundingClientRect();
-    const header = q(".case-header");
     const transport = q(".media-transport");
     const video = q(".media-transport video");
     const firstCard = q(".transcript-segment");
+    const transcript = q(".transcript-document");
     const actionBar = q(".casefile-action-bar");
-    const transportEl =
-      document.querySelector<HTMLElement>(".media-transport");
-    if (!header || !transport || !firstCard || !actionBar || !transportEl) {
+    const transportEl = document.querySelector<HTMLElement>(".media-transport");
+    const transcriptEl = document.querySelector<HTMLElement>(
+      ".transcript-document",
+    );
+    if (
+      !transport ||
+      !firstCard ||
+      !transcript ||
+      !actionBar ||
+      !transportEl ||
+      !transcriptEl
+    ) {
       return null;
     }
     return {
-      headerBottom: header.bottom,
       transportBottom: transport.bottom,
       transportTop: transport.top,
       transportPosition: getComputedStyle(transportEl).position,
+      transcriptOverflowY: getComputedStyle(transcriptEl).overflowY,
+      transcriptScrolls: transcriptEl.scrollHeight > transcriptEl.clientHeight,
+      transcriptTop: transcript.top,
       videoBottom: video?.bottom ?? null,
       videoHeight: video?.height ?? null,
       firstCardTop: firstCard.top,
+      firstCardBottom: firstCard.bottom,
       firstCardLeft: firstCard.left,
       firstCardRight: firstCard.right,
       actionBarTop: actionBar.top,
@@ -237,15 +268,20 @@ async function expectRestStateWorkbench(page: Page, input: { video: boolean }) {
   expect(geometry).not.toBeNull();
   // Pinned band: the player sticks above the transcript.
   expect(geometry!.transportPosition).toBe("sticky");
-  expect(geometry!.transportBottom).toBeLessThanOrEqual(geometry!.firstCardTop + 1);
+  expect(geometry!.transportBottom).toBeLessThanOrEqual(geometry!.transcriptTop + 1);
+  expect(geometry!.transcriptOverflowY).toBe("auto");
+  expect(geometry!.transcriptScrolls).toBe(true);
   expect(
     Math.abs(
       (geometry!.firstCardLeft + geometry!.firstCardRight) / 2 -
         geometry!.viewportWidth / 2,
     ),
   ).toBeLessThanOrEqual(CENTER_TOLERANCE_PX);
-  // The first card is reachable without scrolling.
-  expect(geometry!.firstCardTop).toBeLessThan(geometry!.actionBarTop);
+  // The first card is fully visible without scrolling.
+  expect(geometry!.firstCardTop).toBeGreaterThanOrEqual(0);
+  expect(geometry!.firstCardBottom).toBeLessThanOrEqual(
+    Math.min(geometry!.actionBarTop, geometry!.viewportHeight),
+  );
   if (input.video) {
     expect(geometry!.videoHeight).not.toBeNull();
     expect(geometry!.videoHeight!).toBeGreaterThanOrEqual(96);
@@ -257,33 +293,44 @@ async function expectRestStateWorkbench(page: Page, input: { video: boolean }) {
     expect(geometry!.videoBottom!).toBeLessThanOrEqual(geometry!.actionBarTop);
   }
 
-  // Scroll deep into the transcript: the case header flows away but the
-  // pinned player stays put at the viewport top.
-  await page.evaluate(() =>
-    window.scrollTo(0, document.documentElement.scrollHeight / 2),
-  );
+  const beforeScroll = await page.evaluate(() => {
+    const transport = document
+      .querySelector(".media-transport")
+      ?.getBoundingClientRect();
+    return {
+      transportTop: transport?.top ?? null,
+      windowScrollY: window.scrollY,
+    };
+  });
+  await page.locator(".transcript-document").evaluate((node) => {
+    node.scrollTo(0, node.scrollHeight / 2);
+  });
   const scrolled = await page.evaluate(() => {
     const q = (selector: string) =>
       document.querySelector<HTMLElement>(selector)?.getBoundingClientRect();
-    const header = q(".case-header");
     const transport = q(".media-transport");
     const rail = q(".media-transport__rail");
     const actions = q(".media-transport__actions");
+    const transcript = document.querySelector<HTMLElement>(
+      ".transcript-document",
+    );
     return {
-      headerGone: (header?.bottom ?? 1) <= 0,
       transportTop: transport?.top ?? null,
+      transcriptScrollTop: transcript?.scrollTop ?? 0,
+      windowScrollY: window.scrollY,
       railVisible: rail ? rail.bottom > 0 && rail.top < window.innerHeight : false,
       actionsVisible: actions
         ? actions.bottom > 0 && actions.top < window.innerHeight
         : false,
     };
   });
-  expect(scrolled.headerGone).toBe(true);
-  expect(scrolled.transportTop).toBe(0);
+  expect(scrolled.transcriptScrollTop).toBeGreaterThan(0);
+  expect(scrolled.windowScrollY).toBe(beforeScroll.windowScrollY);
+  expect(scrolled.transportTop).toBe(beforeScroll.transportTop);
   expect(scrolled.railVisible).toBe(true);
   expect(scrolled.actionsVisible).toBe(true);
   // Back to rest for the remainder of the flow.
-  await page.evaluate(() => window.scrollTo(0, 0));
+  await page.locator(".transcript-document").evaluate((node) => node.scrollTo(0, 0));
 }
 
 async function expectActiveIndex(page: Page, zeroBasedIndex: number) {
@@ -342,27 +389,63 @@ async function expectNoClamp(page: Page, oneBasedIndex: number, expectedText: st
 }
 
 async function expectFullyScrollable(page: Page, segmentCount: number) {
-  const scrollInfo = await page.evaluate(() => ({
-    scrollHeight: document.documentElement.scrollHeight,
-    viewport: window.innerHeight,
+  const scrollInfo = await page.locator(".transcript-document").evaluate((node) => ({
+    clientHeight: node.clientHeight,
+    overflowY: getComputedStyle(node).overflowY,
+    scrollHeight: node.scrollHeight,
   }));
-  expect(scrollInfo.scrollHeight).toBeGreaterThan(scrollInfo.viewport);
+  expect(scrollInfo.overflowY).toBe("auto");
+  expect(scrollInfo.scrollHeight).toBeGreaterThan(scrollInfo.clientHeight);
 
   // Bottom end: the last card is reachable and lands fully in view.
-  await page.evaluate(() =>
-    window.scrollTo(0, document.documentElement.scrollHeight),
+  await page.locator(".transcript-document").evaluate((node) =>
+    node.scrollTo(0, node.scrollHeight),
   );
-  await expect(segmentRow(page, segmentCount)).toBeInViewport();
-
-  // Top end: the window returns to the document start, and the first card
-  // is directly scrollable into view (at the document start the case header
-  // and transport legitimately occupy the first screen).
-  await page.evaluate(() => window.scrollTo(0, 0));
   await expect
-    .poll(() => page.evaluate(() => Math.round(window.scrollY)), { timeout: 5_000 })
+    .poll(() =>
+      segmentRow(page, segmentCount).evaluate((row) => {
+        const scrollport = row.closest(".transcript-document");
+        if (!scrollport) {
+          return false;
+        }
+        const rowRect = row.getBoundingClientRect();
+        const scrollportRect = scrollport.getBoundingClientRect();
+        return (
+          rowRect.top >= scrollportRect.top - 1 &&
+          rowRect.bottom <= scrollportRect.bottom + 1
+        );
+      }),
+    )
+    .toBe(true);
+
+  // Top end: the transcript returns to its own start and the first card is
+  // directly readable below its summary and speaker tools.
+  await page.locator(".transcript-document").evaluate((node) => node.scrollTo(0, 0));
+  await expect
+    .poll(
+      () =>
+        page
+          .locator(".transcript-document")
+          .evaluate((node) => Math.round(node.scrollTop)),
+      { timeout: 5_000 },
+    )
     .toBe(0);
-  await segmentRow(page, 1).scrollIntoViewIfNeeded();
-  await expect(segmentRow(page, 1)).toBeInViewport();
+  await expect
+    .poll(() =>
+      segmentRow(page, 1).evaluate((row) => {
+        const scrollport = row.closest(".transcript-document");
+        if (!scrollport) {
+          return false;
+        }
+        const rowRect = row.getBoundingClientRect();
+        const scrollportRect = scrollport.getBoundingClientRect();
+        return (
+          rowRect.top >= scrollportRect.top - 1 &&
+          rowRect.bottom <= scrollportRect.bottom + 1
+        );
+      }),
+    )
+    .toBe(true);
 }
 
 async function submitForApproval(page: Page) {
@@ -478,7 +561,6 @@ test.describe.serial("visible-context casefile transcript surface", () => {
     await expectFullyScrollable(page, 24);
 
     // Approver mode (read-only pending revision, same surface contract).
-    await segmentRow(page, 1).scrollIntoViewIfNeeded();
     await submitForApproval(page);
     await login(page, approverUser);
     await openCasefile(page, sharedCasefile().recordingId);
@@ -535,7 +617,6 @@ test.describe.serial("visible-context casefile transcript surface", () => {
     await expectFullyScrollable(page, 24);
 
     // Approver mode on the video casefile.
-    await segmentRow(page, 1).scrollIntoViewIfNeeded();
     await submitForApproval(page);
     await login(page, approverUser);
     await openCasefile(page, sharedCasefile().recordingId);

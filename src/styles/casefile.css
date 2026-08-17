@@ -1,17 +1,9 @@
-/* Casefile scroll targeting (visible-context): the casefile page
-   window-scrolls on every width and follow-scroll centers the active
-   segment in the middle of the viewport, with a working band of
-   neighboring segments above and below it. Centering clearance lives on
-   scroll-padding instead of per-row scroll-margin, which would extend
-   the row's box and push the centered line low. On desktop the media
-   workbench is a two-column affair: the player pins in its own column
-   (sticky, it never scrolls away) while the transcript column keeps the
-   full viewport height, so the symmetric padding lands block:center on
-   the exact vertical viewport middle with plenty of context room; below
-   1100px the pinned transport claims an asymmetric top clearance
-   instead (responsive.css). Segment cards never clamp: every segment
-   keeps its full text and the card grows to fit it, so the transcript
-   stays fully scrollable. */
+/* Casefile scroll targeting (visible-context): on desktop the transcript
+   owns the scrollport below the pinned media band; below 1100px the window
+   remains the scrollport with asymmetric player clearance (responsive.css).
+   Follow centers the active segment in the viewport with a working band of
+   neighboring segments above and below it. Segment cards never clamp: every
+   segment keeps its full text and the card grows to fit it. */
 
 .casefile-page {
   display: grid;
@@ -347,11 +339,8 @@ body:has(.casefile-page) .banner-emergency,
 
 .transcript-segment {
   display: grid;
-  /* Visible-context density: timestamp and speaker share one row and the
-     text spans the full card width below them, so a working band of
-     context segments (5 is the floor, more when room allows) fits around
-     the active row inside the workbench's transcript column - without
-     ever clamping the content itself. */
+  /* Visible-context density keeps a working band of context segments around
+     the active row without ever clamping the content itself. */
   grid-template-columns: auto minmax(0, 1fr);
   gap: var(--space-1) var(--space-3);
   align-items: start;
@@ -662,46 +651,50 @@ body:has(.casefile-page) .banner-emergency,
        (no standalone toggle card on the rail when closed). */
   }
 
-  /* Visible-context desktop workbench: the media player is a pinned band
-     above a centered transcript column. The band lays out its controls and
-     navigation side by side so the bounded video frame and the first
-     transcript card share the first viewport. The transcript remains the
-     page's scrolling content with full block-end runway. Follow-scroll
-     centers the active segment on the exact viewport middle with symmetric
-     scroll-padding; the action bar remains the only sticky bottom chrome. */
-  html:has(.casefile-page) {
-    scroll-padding-block: var(--action-bar-clearance, 88px);
-  }
-
   .casefile-main[data-revision="true"] {
     grid-template-columns: minmax(0, 1fr);
     align-items: start;
+    gap: var(--space-2);
   }
 
   .casefile-main[data-revision="true"] > .inline-notice {
     grid-column: 1 / -1;
   }
 
-  .casefile-main[data-revision="true"] .media-transport {
+  .casefile-layout:not([data-governance-open="true"])
+    .casefile-main[data-revision="true"]
+    .media-transport {
     position: sticky;
     top: 0;
     align-self: start;
     grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
   }
 
-  .casefile-main[data-revision="true"] .media-transport__controls {
+  .casefile-layout:not([data-governance-open="true"])
+    .casefile-main[data-revision="true"]
+    .media-transport:has(video) {
+    padding: 0;
+  }
+
+  .casefile-layout:not([data-governance-open="true"])
+    .casefile-main[data-revision="true"]
+    .media-transport__controls {
     min-width: 0;
     grid-column: 1;
     grid-row: 1 / span 2;
   }
 
-  .casefile-main[data-revision="true"] .media-transport__rail {
+  .casefile-layout:not([data-governance-open="true"])
+    .casefile-main[data-revision="true"]
+    .media-transport__rail {
     min-width: 0;
     grid-column: 2;
     grid-row: 1;
   }
 
-  .casefile-main[data-revision="true"] .media-transport__actions {
+  .casefile-layout:not([data-governance-open="true"])
+    .casefile-main[data-revision="true"]
+    .media-transport__actions {
     min-width: 0;
     grid-column: 2;
     grid-row: 2;
@@ -709,8 +702,46 @@ body:has(.casefile-page) .banner-emergency,
 
   .casefile-main[data-revision="true"] .transcript-document {
     width: 100%;
+    block-size: calc(
+      100vh - var(--player-clearance, 0px) - var(--space-2)
+    );
+    overflow-y: auto;
+    overscroll-behavior-block: contain;
+    scrollbar-gutter: stable both-edges;
+  }
+
+  .casefile-layout:not([data-governance-open="true"])
+    .casefile-main[data-revision="true"]
+    .transcript-document {
+    position: sticky;
+    top: calc(var(--player-clearance, 0px) + var(--space-2));
     max-width: var(--work-max);
     justify-self: center;
+  }
+
+  /* vc-governance-drawer: preserve the parked open-drawer 5fr/7fr
+     placement pending the captain's ruling; the centered restack is closed-only. */
+  .casefile-layout[data-governance-open="true"]
+    .casefile-main[data-revision="true"] {
+    grid-template-columns: minmax(300px, 5fr) minmax(0, 7fr);
+    gap: var(--space-4);
+  }
+
+  .casefile-layout[data-governance-open="true"]
+    .casefile-main[data-revision="true"]
+    .media-transport {
+    position: sticky;
+    top: 0;
+    align-self: start;
+  }
+
+  .casefile-layout[data-governance-open="true"]
+    .casefile-main[data-revision="true"]
+    .transcript-document {
+    grid-column: 2;
+    block-size: 100vh;
+    max-width: none;
+    justify-self: stretch;
   }
 
   /* Media-denied casefiles keep the full-width notice band and the same
@@ -720,20 +751,33 @@ body:has(.casefile-page) .banner-emergency,
     grid-template-columns: minmax(0, 1fr);
   }
 
+  .casefile-main[data-revision="true"]:has(> .media-transport--empty)
+    .transcript-document {
+    grid-column: 1 / -1;
+    max-width: var(--work-max);
+    justify-self: center;
+  }
+
   .transcript-document__segments {
     gap: var(--space-1);
     padding-block-end: 48vh;
   }
 
-  /* Workbench card density: the confidence note sits inline in the card's
-     header row instead of claiming its own line under the text, so the
-     context band keeps more whole cards at the canonical viewport. No
-     type scale changes and no content compression - purely where the
-     note stands. The diff badge takes the first full-width row when it
-     exists, so the note targets the header row (row 1, or row 2 with a
-     badge) explicitly. */
+  /* Workbench card density: timestamp, speaker, full text, and confidence
+     share the available row so the context band keeps more whole cards at
+     the canonical viewport. Long text still grows the row naturally. The
+     diff badge takes the first full-width row when it exists. */
   .casefile-main[data-revision="true"] .transcript-segment {
-    grid-template-columns: auto auto minmax(0, 1fr);
+    grid-template-columns: auto minmax(8rem, auto) minmax(0, 1fr) auto;
+    padding-block: var(--space-1);
+  }
+
+  .casefile-main[data-revision="true"] .transcript-segment__timestamp {
+    grid-column: 1;
+  }
+
+  .casefile-main[data-revision="true"] .transcript-segment__speaker {
+    grid-column: 2;
   }
 
   .casefile-main[data-revision="true"] .transcript-segment__text {
@@ -741,11 +785,11 @@ body:has(.casefile-page) .banner-emergency,
   }
 
   .casefile-main[data-revision="true"] .transcript-segment__text > :is(p, textarea) {
-    grid-column: 1 / -1;
+    grid-column: 3;
   }
 
   .casefile-main[data-revision="true"] .transcript-segment__text > .field-note {
-    grid-column: 3;
+    grid-column: 4;
     justify-self: end;
     align-self: center;
     margin: 0;
@@ -769,7 +813,7 @@ body:has(.casefile-page) .banner-emergency,
      the height cap bounds the rendered frame without shrinking transcript
      content. */
   .casefile-main[data-revision="true"] .media-transport__controls video {
-    max-height: 34vh;
+    max-height: 32.5vh;
     object-fit: contain;
   }
 }
@@ -906,8 +950,23 @@ body:has(.casefile-page) .banner-emergency,
    desktop casefile (the wave stage keeps its listening height; the summary
    keeps its reading width with a slimmer box). */
 @media (min-width: 1100px) {
+  .casefile-main[data-revision="true"] .transcript-document {
+    gap: var(--space-1);
+  }
+
+  .casefile-main[data-revision="true"] .transcript-document__summary {
+    grid-template-columns: max-content minmax(0, 1fr);
+    align-items: center;
+    gap: var(--space-2);
+  }
+
   .casefile-main[data-revision="true"] .transcript-document__summary-copy {
     padding: var(--space-2) var(--space-3);
+  }
+
+  .casefile-main[data-revision="true"] .transcript-document__speaker-tools {
+    gap: var(--space-2);
+    padding: 0 var(--space-1);
   }
 
   .casefile-main[data-revision="true"] .media-transport__rail {
@@ -932,10 +991,13 @@ body:has(.casefile-page) .banner-emergency,
   }
 
   .casefile-page:has(> .casefile-layout > .casefile-main[data-revision="true"]) .case-header__body {
-    padding: var(--space-3);
+    grid-template-columns: minmax(0, 1fr) minmax(32rem, auto);
+    align-items: center;
+    gap: var(--space-2);
+    padding: var(--space-2);
   }
 
   .casefile-page:has(> .casefile-layout > .casefile-main[data-revision="true"]) .case-header__facts {
-    gap: var(--space-2) var(--space-6);
+    gap: var(--space-1) var(--space-4);
   }
 }

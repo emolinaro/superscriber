@@ -8,16 +8,10 @@ import {
   uploadFixture,
 } from "./support/appliance";
 
-// Rest-state contract for the visible-context workbench: the casefile
-// desktop page window-scrolls - no bounded shell, no nested transcript
-// scrollport - and the media player PINS inside its own left column
-// beside the transcript (the captain's standing law: the player never
-// scrolls away). The case header flows away on scroll; the pinned player
-// (video frame with native controls, chip strip, transport actions)
-// stays at the viewport top while the transcript column keeps the full
-// viewport height as its working band, and follow-scroll centers the
-// active segment in the exact vertical middle of the viewport (see
-// e2e/visible-context.spec.ts for the centering band contract). Below
+// Rest-state contract for the visible-context workbench: the media player
+// PINS in a band above the transcript, and only the transcript owns a
+// vertical scrollport. The video frame with native controls stays beside
+// the chip strip and transport actions inside that band. Below
 // 1100px the transport stays viewport-pinned on the single-column stack
 // (responsive.css), and on phone-width viewports the review surface is
 // safety-gated behind the tablet-or-desktop notice while the player stays
@@ -37,7 +31,7 @@ async function waitForRestStateTranscript(page: Page): Promise<void> {
   await expect(firstTranscriptRow(page)).toBeVisible();
 }
 
-test("video casefile rest state: pinned player column beside the transcript, window scrolls", async ({
+test("video casefile rest state: pinned media band above the transcript scrollport", async ({
   page,
 }) => {
   test.setTimeout(180_000);
@@ -52,8 +46,7 @@ test("video casefile rest state: pinned player column beside the transcript, win
 
   // Promote the uploaded audio record to a video casefile the same way the
   // appliance labels real video uploads, and lengthen the stub transcript so
-  // the page always has more content than the viewport can hold (the
-  // window-scroll assertions below need real scroll travel).
+  // its own scrollport always has real scroll travel.
   execRuntimeSql(
     "update recordings set media_kind = 'video', mime_type = 'video/mp4' where id = ?",
     [recordingId],
@@ -97,11 +90,9 @@ test("video casefile rest state: pinned player column beside the transcript, win
   await expect(chips).toHaveCount(segmentArticles);
   expect(segmentArticles).toBeGreaterThan(0);
 
-  // Rest-state geometry: the media transport and the transcript document
-  // are sibling workbench columns - video frame above the chip strip
-  // inside the pinned player column, transcript column to its right, and
-  // the first segment card already shares the first viewport (no scroll
-  // needed to reach it).
+  // Rest-state geometry: the media transport and transcript are stacked
+  // workbench siblings. Video and the chip strip share the media band, and
+  // the first segment card is fully visible in the first viewport.
   const geometry = await page.evaluate(() => {
     const main = document.querySelector<HTMLElement>(".casefile-main");
     const transportEl = main?.querySelector<HTMLElement>(".media-transport");
@@ -129,10 +120,12 @@ test("video casefile rest state: pinned player column beside the transcript, win
     return {
       transportSpansVideo: transportRect.top <= videoRect.top + 1,
       videoHeight: videoRect.height,
-      videoAboveRail: videoRect.bottom <= railRect.top + 1,
-      mediaLeftOfTranscript: transportRect.right <= transcriptRect.left + 1,
+      videoBesideRail: videoRect.right <= railRect.left + 1,
+      mediaAboveTranscript: transportRect.bottom <= transcriptRect.top + 1,
       firstCardSharesFirstViewport:
-        firstCardRect.top < actionBar.getBoundingClientRect().top,
+        firstCardRect.top >= 0 &&
+        firstCardRect.bottom <=
+          Math.min(actionBar.getBoundingClientRect().top, window.innerHeight),
       videoSharesFirstViewport:
         videoRect.bottom <= actionBar.getBoundingClientRect().top,
     };
@@ -141,48 +134,62 @@ test("video casefile rest state: pinned player column beside the transcript, win
   expect(geometry).not.toBeNull();
   expect(geometry?.transportSpansVideo).toBe(true);
   expect(geometry?.videoHeight).toBeGreaterThanOrEqual(96);
-  expect(geometry?.videoAboveRail).toBe(true);
-  expect(geometry?.mediaLeftOfTranscript).toBe(true);
+  expect(geometry?.videoBesideRail).toBe(true);
+  expect(geometry?.mediaAboveTranscript).toBe(true);
   expect(geometry?.firstCardSharesFirstViewport).toBe(true);
   expect(geometry?.videoSharesFirstViewport).toBe(true);
 
-  // Window-scroll rest state (visible-context): the desktop casefile has
-  // no bounded shell or nested scrollport - the page scrolls as a
-  // document - and the player PINS in its own column (captain's standing
-  // law: never scrolls away). The case header leaves the viewport once the
-  // transcript scrolls; the pinned player column and its chip rail stay
-  // put at the viewport top, and every segment still seeks from its
-  // transcript row timestamp.
+  // Transcript-only scroll state: the player and page stay put while rows
+  // move inside their independent scrollport.
   const scrollState = await page.evaluate(() => {
-    const main = document.querySelector<HTMLElement>(".casefile-main");
     const transportEl = document.querySelector<HTMLElement>(".media-transport");
+    const transcriptEl = document.querySelector<HTMLElement>(
+      ".transcript-document",
+    );
     return {
-      pageScrolls: document.documentElement.scrollHeight > window.innerHeight,
-      mainOverflowY: main ? getComputedStyle(main).overflowY : "missing",
+      transcriptOverflowY: transcriptEl
+        ? getComputedStyle(transcriptEl).overflowY
+        : "missing",
+      transcriptScrolls: transcriptEl
+        ? transcriptEl.scrollHeight > transcriptEl.clientHeight
+        : false,
       transportPosition: transportEl
         ? getComputedStyle(transportEl).position
         : "missing",
     };
   });
-  expect(scrollState.pageScrolls).toBe(true);
-  expect(scrollState.mainOverflowY).toBe("visible");
+  expect(scrollState.transcriptOverflowY).toBe("auto");
+  expect(scrollState.transcriptScrolls).toBe(true);
   expect(scrollState.transportPosition).toBe("sticky");
 
-  await page.evaluate(() =>
-    window.scrollTo(0, document.documentElement.scrollHeight / 2),
-  );
+  const beforeScroll = await page.evaluate(() => ({
+    headerTop:
+      document.querySelector(".case-header")?.getBoundingClientRect().top ?? null,
+    transportTop:
+      document.querySelector(".media-transport")?.getBoundingClientRect().top ??
+      null,
+    windowScrollY: window.scrollY,
+  }));
+  await transcript.evaluate((node) => node.scrollTo(0, node.scrollHeight / 2));
   const parkedChrome = await page.evaluate(() => {
     const header = document.querySelector(".case-header")?.getBoundingClientRect();
     const transportEl = document.querySelector(".media-transport")?.getBoundingClientRect();
     const rail = document.querySelector(".media-transport__rail")?.getBoundingClientRect();
+    const transcriptEl = document.querySelector<HTMLElement>(
+      ".transcript-document",
+    );
     return {
-      headerGone: (header?.bottom ?? 1) <= 0,
+      headerTop: header?.top ?? null,
       transportTop: transportEl?.top ?? null,
+      transcriptScrollTop: transcriptEl?.scrollTop ?? 0,
+      windowScrollY: window.scrollY,
       railVisible: rail ? rail.bottom > 0 && rail.top < window.innerHeight : false,
     };
   });
-  expect(parkedChrome.headerGone).toBe(true);
-  expect(parkedChrome.transportTop).toBe(0);
+  expect(parkedChrome.transcriptScrollTop).toBeGreaterThan(0);
+  expect(parkedChrome.windowScrollY).toBe(beforeScroll.windowScrollY);
+  expect(parkedChrome.headerTop).toBe(beforeScroll.headerTop);
+  expect(parkedChrome.transportTop).toBe(beforeScroll.transportTop);
   expect(parkedChrome.railVisible).toBe(true);
 
   await expect(page.locator(".media-transport__rail")).toBeVisible();
@@ -209,6 +216,26 @@ test("unavailable media leaves transcript follow dormant after a rejected timest
   await expect(
     page.getByText("No media asset is attached to this recording yet."),
   ).toBeVisible();
+  const unavailableGeometry = await page.evaluate(() => {
+    const main = document.querySelector<HTMLElement>(".casefile-main");
+    const transcript = document.querySelector<HTMLElement>(
+      ".transcript-document",
+    );
+    if (!main || !transcript) {
+      return null;
+    }
+    const mainRect = main.getBoundingClientRect();
+    const transcriptRect = transcript.getBoundingClientRect();
+    return {
+      centered:
+        Math.abs(
+          transcriptRect.left + transcriptRect.width / 2 -
+            (mainRect.left + mainRect.width / 2),
+        ) <= 1,
+      spansMain: transcriptRect.width >= mainRect.width - 1,
+    };
+  });
+  expect(unavailableGeometry).toEqual({ centered: true, spansMain: true });
   const timestamp = page.getByRole("button", {
     name: /Play or pause segment 1, /,
   });
@@ -242,19 +269,28 @@ test("active timestamp play rejection leaves transcript follow dormant", async (
     (media as HTMLMediaElement).play = () =>
       Promise.reject(new DOMException("Playback blocked"));
   });
-  await timestamp.evaluate((button) => {
-    const top = button.getBoundingClientRect().top + window.scrollY - 120;
-    window.scrollTo(0, top);
-  });
-  await expect
-    .poll(() => timestamp.evaluate((button) => Math.round(button.getBoundingClientRect().top)))
-    .toBe(120);
-  const scrollBefore = await page.evaluate(() => Math.round(window.scrollY));
+  const before = await page.evaluate(() => ({
+    activeTop:
+      document.querySelector(".transcript-segment[data-active]")?.getBoundingClientRect()
+        .top ?? null,
+    transcriptScrollTop:
+      document.querySelector<HTMLElement>(".transcript-document")?.scrollTop ?? null,
+    windowScrollY: window.scrollY,
+  }));
 
   await timestamp.click();
   await page.waitForTimeout(1_000);
 
-  expect(await page.evaluate(() => Math.round(window.scrollY))).toBe(scrollBefore);
+  expect(
+    await page.evaluate(() => ({
+      activeTop:
+        document.querySelector(".transcript-segment[data-active]")?.getBoundingClientRect()
+          .top ?? null,
+      transcriptScrollTop:
+        document.querySelector<HTMLElement>(".transcript-document")?.scrollTop ?? null,
+      windowScrollY: window.scrollY,
+    })),
+  ).toEqual(before);
 });
 
 test("phone-width rest state: player stays available behind the review gate notice", async ({
