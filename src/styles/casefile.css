@@ -120,9 +120,9 @@ body:has(.casefile-page) .banner-emergency,
 
 .media-transport {
   /* The media player pins and never scrolls away: below 1100px
-     responsive.css parks it at the viewport top; at desktop width it
-     sticks inside its own workbench column beside the transcript (see
-     the >=1100px block below). */
+     responsive.css parks it at the viewport top; at desktop width it is
+     the sticky band above the centered transcript column (see the
+     >=1100px block below). */
   position: static;
   z-index: 5;
   display: grid;
@@ -662,28 +662,19 @@ body:has(.casefile-page) .banner-emergency,
        (no standalone toggle card on the rail when closed). */
   }
 
-  /* Visible-context desktop workbench: the media player owns a pinned
-     left column and the transcript owns the right column, which keeps the
-     FULL viewport height as its working band (5-10 context segments is
-     the floor; the column shows more whenever room allows). Stacking the
-     player above the transcript cannot satisfy that band - the app bar,
-     case header, and action-mode entry already claim ~380px before the
-     player even starts - so the player sits beside the transcript
-     instead. The player column never scrolls away (sticky at the
-     viewport top); the transcript column window-scrolls, so on the first
-     viewport the segment cards always share the screen with the media.
-     Follow-scroll still centers the active segment on the exact vertical
-     viewport middle: symmetric scroll-padding keeps both scrollIntoView
-     block:center and the nearest-edge visibility check aiming at the
-     region between the action bar and the top edge (the pinned player
-     never overlaps the transcript column). The action bar is the only
-     fixed chrome crossing the transcript column (sticky bottom). */
+  /* Visible-context desktop workbench: the media player is a pinned band
+     above a centered transcript column. The band lays out its controls and
+     navigation side by side so the bounded video frame and the first
+     transcript card share the first viewport. The transcript remains the
+     page's scrolling content with full block-end runway. Follow-scroll
+     centers the active segment on the exact viewport middle with symmetric
+     scroll-padding; the action bar remains the only sticky bottom chrome. */
   html:has(.casefile-page) {
     scroll-padding-block: var(--action-bar-clearance, 88px);
   }
 
   .casefile-main[data-revision="true"] {
-    grid-template-columns: minmax(300px, 5fr) minmax(0, 7fr);
+    grid-template-columns: minmax(0, 1fr);
     align-items: start;
   }
 
@@ -695,12 +686,38 @@ body:has(.casefile-page) .banner-emergency,
     position: sticky;
     top: 0;
     align-self: start;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
   }
 
-  /* Media-denied casefiles carry no player column: the notice spans the
-     full workbench width. */
+  .casefile-main[data-revision="true"] .media-transport__controls {
+    min-width: 0;
+    grid-column: 1;
+    grid-row: 1 / span 2;
+  }
+
+  .casefile-main[data-revision="true"] .media-transport__rail {
+    min-width: 0;
+    grid-column: 2;
+    grid-row: 1;
+  }
+
+  .casefile-main[data-revision="true"] .media-transport__actions {
+    min-width: 0;
+    grid-column: 2;
+    grid-row: 2;
+  }
+
+  .casefile-main[data-revision="true"] .transcript-document {
+    width: 100%;
+    max-width: var(--work-max);
+    justify-self: center;
+  }
+
+  /* Media-denied casefiles keep the full-width notice band and the same
+     centered transcript column. */
   .casefile-main[data-revision="true"] .media-transport--empty {
     grid-column: 1 / -1;
+    grid-template-columns: minmax(0, 1fr);
   }
 
   .transcript-document__segments {
@@ -748,10 +765,9 @@ body:has(.casefile-page) .banner-emergency,
     grid-row: 2;
   }
 
-  /* The video keeps its frame and native controls inside the pinned
-     column; the height cap bounds the rendered frame so the rail and
-     transport actions stay within reach above it, never shrinking the
-     transcript - the width set by the column governs the picture first. */
+  /* The video keeps its frame and native controls inside the pinned band;
+     the height cap bounds the rendered frame without shrinking transcript
+     content. */
   .casefile-main[data-revision="true"] .media-transport__controls video {
     max-height: 34vh;
     object-fit: contain;

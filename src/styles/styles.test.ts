@@ -166,14 +166,12 @@ describe("product css contract", () => {
     expect(shell).toContain(".account-menu__appearance-option");
   });
 
-  it("window-scrolls the desktop casefile with viewport-middle follow targeting", () => {
+  it("stacks the pinned desktop transport above a centered transcript", () => {
     // visible-context: on >=1100px the casefile page window-scrolls - no
-    // bounded shell, no nested transcript scrollport - and the media
-    // player PINS in its own workbench column beside the transcript (the
-    // captain's standing law: the player never scrolls away). Symmetric
-    // scroll-padding makes scrollIntoView block:"center" land the active
-    // segment on the exact vertical viewport middle (the action bar is
-    // the only fixed chrome crossing the transcript column).
+    // bounded shell, no nested transcript scrollport - and the media player
+    // PINS in a band above the centered transcript. Symmetric scroll-padding
+    // makes scrollIntoView block:"center" land the active segment on the
+    // exact vertical viewport middle.
     const casefile = readFileSync(resolve(STYLES_DIR, "casefile.css"), "utf8");
     expect(casefile).not.toContain("player-clearance");
     expect(casefile).not.toContain(
@@ -192,14 +190,17 @@ describe("product css contract", () => {
     expect(desktopBlock).toMatch(
       /html:has\(\.casefile-page\)\s*\{\s*scroll-padding-block: var\(--action-bar-clearance/,
     );
-    // Beside workbench: the player column pins (sticky) left of the
-    // transcript column, and the rendered video frame stays bounded so
-    // the transcript zone always shares the first viewport.
+    // Vertical workbench: the single-column main stacks the player above a
+    // centered transcript. The transport's own two-column band bounds its
+    // height so the transcript zone always shares the first viewport.
     expect(desktopBlock).toMatch(
-      /\.casefile-main\[data-revision="true"\]\s*\{[^}]*grid-template-columns: minmax\(300px, 5fr\) minmax\(0, 7fr\)/,
+      /\.casefile-main\[data-revision="true"\]\s*\{[^}]*grid-template-columns: minmax\(0, 1fr\)/,
     );
     expect(desktopBlock).toMatch(
-      /\.casefile-main\[data-revision="true"\] \.media-transport\s*\{[^}]*position: sticky;\s*top: 0/s,
+      /\.casefile-main\[data-revision="true"\] \.media-transport\s*\{[^}]*position: sticky;\s*top: 0;[^}]*grid-template-columns: minmax\(0, 1fr\) minmax\(0, 1fr\)/s,
+    );
+    expect(desktopBlock).toMatch(
+      /\.casefile-main\[data-revision="true"\] \.transcript-document\s*\{[^}]*width: 100%;[^}]*max-width: var\(--work-max\);[^}]*justify-self: center/s,
     );
     expect(desktopBlock).toMatch(
       /\.media-transport__controls video\s*\{[^}]*max-height: 34vh/,
