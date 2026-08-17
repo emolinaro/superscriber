@@ -139,6 +139,7 @@ export function TranscriptDocument({
 
     const actionBar = document.querySelector<HTMLElement>(".casefile-action-bar");
     const transcript = scrollport.closest<HTMLElement>(".transcript-document");
+    const workspace = transcript?.closest<HTMLElement>(".casefile-page");
     const transport = transcript?.parentElement?.querySelector<HTMLElement>(
       ":scope > .media-transport",
     );
@@ -173,6 +174,9 @@ export function TranscriptDocument({
     }
     if (transport) {
       observer?.observe(transport);
+    }
+    if (workspace) {
+      observer?.observe(workspace);
     }
     window.addEventListener("resize", updateBlockSize);
     window.addEventListener("scroll", updateBlockSize, { passive: true });

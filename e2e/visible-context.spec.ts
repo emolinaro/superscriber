@@ -35,6 +35,7 @@ import {
 // visibility use the transcript scrollport's actual unobscured bounds.
 
 const CANONICAL_VIEWPORT = { width: 1280, height: 800 };
+test.setTimeout(600_000);
 // Centering tolerance covers sub-pixel rounding and cross-lane font metric
 // drift around the exact viewport middle.
 const CENTER_TOLERANCE_PX = 24;
@@ -287,6 +288,10 @@ async function expectRestStateWorkbench(page: Page, input: { video: boolean }) {
     const scrollportEl = document.querySelector<HTMLElement>(
       ".transcript-document__segments",
     );
+    const controls = q(".media-transport__controls");
+    const rail = q(".media-transport__rail");
+    const actions = q(".media-transport__actions");
+    const wave = document.querySelector<HTMLElement>(".media-transport__wave");
     if (
       !transport ||
       !firstCard ||
@@ -317,6 +322,20 @@ async function expectRestStateWorkbench(page: Page, input: { video: boolean }) {
       actionBarTop: actionBar.top,
       viewportWidth: window.innerWidth,
       viewportHeight: window.innerHeight,
+      audioTransport:
+        controls && rail && actions && wave
+          ? {
+              actionsBottom: actions.bottom,
+              actionsTop: actions.top,
+              controlsBottom: controls.bottom,
+              controlsRight: controls.right,
+              railBottom: rail.bottom,
+              railLeft: rail.left,
+              waveHeight: Number.parseFloat(
+                getComputedStyle(wave).getPropertyValue("--wave-height"),
+              ),
+            }
+          : null,
     };
   });
   expect(geometry).not.toBeNull();
@@ -347,7 +366,70 @@ async function expectRestStateWorkbench(page: Page, input: { video: boolean }) {
     );
     // The video frame itself shares the first viewport.
     expect(geometry!.videoBottom!).toBeLessThanOrEqual(geometry!.actionBarTop);
+  } else {
+    expect(geometry!.audioTransport).not.toBeNull();
+    expect(geometry!.audioTransport!.controlsRight).toBeLessThanOrEqual(
+      geometry!.audioTransport!.railLeft + 1,
+    );
+    expect(geometry!.audioTransport!.railBottom).toBeLessThanOrEqual(
+      geometry!.audioTransport!.actionsTop + 1,
+    );
+    expect(geometry!.audioTransport!.controlsBottom).toBeGreaterThanOrEqual(
+      geometry!.audioTransport!.actionsBottom - 1,
+    );
+    expect(geometry!.audioTransport!.waveHeight).toBe(84);
   }
+
+  const scrollportBeforeLayoutChange = await page
+    .locator(".transcript-document__segments")
+    .evaluate((node) => {
+      const rect = node.getBoundingClientRect();
+      return { bottom: rect.bottom, height: rect.height, top: rect.top };
+    });
+  await page.locator(".casefile-layout").evaluate((layout) => {
+    const probe = document.createElement("div");
+    probe.dataset.scrollportLayoutProbe = "true";
+    probe.style.height = "48px";
+    layout.before(probe);
+  });
+  await expect
+    .poll(async () =>
+      page.locator(".transcript-document__segments").evaluate((node) => {
+        const rect = node.getBoundingClientRect();
+        return rect.top;
+      }),
+    )
+    .toBeGreaterThanOrEqual(scrollportBeforeLayoutChange.top + 48);
+  await expect
+    .poll(async () =>
+      page.locator(".transcript-document__segments").evaluate((node) => {
+        const rect = node.getBoundingClientRect();
+        return rect.bottom;
+      }),
+    )
+    .toBeLessThanOrEqual(scrollportBeforeLayoutChange.bottom + 1);
+  await expect
+    .poll(async () =>
+      page.locator(".transcript-document__segments").evaluate((node) => {
+        const rect = node.getBoundingClientRect();
+        return rect.height;
+      }),
+    )
+    .toBeLessThanOrEqual(scrollportBeforeLayoutChange.height - 48);
+  await page.locator("[data-scrollport-layout-probe]").evaluate((probe) => {
+    probe.remove();
+  });
+  await expect
+    .poll(async () => {
+      const bottom = await page
+        .locator(".transcript-document__segments")
+        .evaluate((node) => {
+          const rect = node.getBoundingClientRect();
+          return rect.bottom;
+        });
+      return Math.abs(bottom - scrollportBeforeLayoutChange.bottom);
+    })
+    .toBeLessThanOrEqual(1);
 
   const beforeScroll = await page.evaluate(() => {
     const transport = document
@@ -554,7 +636,7 @@ async function seedVisibleContextCasefile(
 }
 
 test.describe("visible-context casefile transcript surface", () => {
-  test.describe.configure({ mode: "serial", timeout: 600_000 });
+  test.describe.configure({ mode: "serial" });
 
   test("audio casefile: review and approver modes keep expanded context around the centered active segment", async ({
     page,

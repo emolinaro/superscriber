@@ -656,9 +656,89 @@ body:has(.casefile-page) .banner-emergency,
 
   .casefile-page:has(
       > .casefile-layout > .casefile-main[data-revision="true"] .media-transport audio
+    ) {
+    margin-top: calc(0px - var(--space-6) - var(--space-1));
+  }
+
+  .casefile-page:has(
+      > .casefile-layout > .casefile-main[data-revision="true"] .media-transport audio
     )
     > .casefile-action-bar {
-    padding-block: var(--space-2);
+    padding-block: 0;
+  }
+
+  .casefile-page:has(
+      > .casefile-layout > .casefile-main[data-revision="true"] .media-transport audio
+    )
+    :is(
+      .case-header__back,
+      .case-header__governance,
+      .transcript-document__summary input,
+      .transcript-document__speaker-tools .button,
+      .casefile-action-bar .button
+    ) {
+    min-height: var(--space-6);
+  }
+
+  .casefile-page:has(
+      > .casefile-layout > .casefile-main[data-revision="true"] .media-transport audio
+    )
+    .transcript-document__summary-copy {
+    padding-block: 0;
+  }
+
+  .casefile-page:has(
+      > .casefile-layout > .casefile-main[data-revision="true"] .media-transport audio
+    )
+    .case-header__copy-text {
+    display: flex;
+    align-items: baseline;
+    gap: var(--space-2);
+  }
+
+  .casefile-page:has(
+      > .casefile-layout > .casefile-main[data-revision="true"] .media-transport audio
+    )
+    .case-header__body {
+    grid-template-columns: minmax(0, 1fr) 32rem;
+  }
+
+  .casefile-page:has(
+      > .casefile-layout > .casefile-main[data-revision="true"] .media-transport audio
+    )
+    .case-header__facts
+    > div {
+    display: flex;
+    align-items: baseline;
+    gap: var(--space-1);
+    min-width: 0;
+  }
+
+  .casefile-page:has(
+      > .casefile-layout > .casefile-main[data-revision="true"] .media-transport audio
+    )
+    .case-header__facts {
+    grid-template-columns: max-content max-content minmax(0, 1fr);
+  }
+
+  .casefile-page:has(
+      > .casefile-layout > .casefile-main[data-revision="true"] .media-transport audio
+    )
+    .case-header__facts dt {
+    margin: 0;
+  }
+
+  .casefile-page:has(
+      > .casefile-layout > .casefile-main[data-revision="true"] .media-transport audio
+    )
+    .case-header__facts dd {
+    min-width: 0;
+    white-space: nowrap;
+  }
+
+  .casefile-main[data-revision="true"]:has(> .media-transport audio)
+    .transcript-document {
+    gap: 0;
   }
 
   .casefile-page:has(
@@ -688,10 +768,6 @@ body:has(.casefile-page) .banner-emergency,
     gap: var(--space-2);
   }
 
-  .casefile-main[data-revision="true"]:has(> .media-transport audio) {
-    gap: var(--space-1);
-  }
-
   .casefile-main[data-revision="true"]:has(> .media-transport video) {
     gap: var(--space-1);
   }
@@ -717,19 +793,6 @@ body:has(.casefile-page) .banner-emergency,
 
   .casefile-layout:not([data-governance-open="true"])
     .casefile-main[data-revision="true"]
-    .media-transport:has(audio) {
-    grid-template-columns: minmax(0, 1fr) minmax(0, 0.6fr) minmax(0, 3fr);
-    padding-block: var(--space-2);
-  }
-
-  .casefile-main[data-revision="true"]
-    .media-transport:has(audio)
-    .media-transport__wave {
-    --wave-height: 40px;
-  }
-
-  .casefile-layout:not([data-governance-open="true"])
-    .casefile-main[data-revision="true"]
     .media-transport__controls {
     min-width: 0;
     grid-column: 1;
@@ -750,30 +813,6 @@ body:has(.casefile-page) .banner-emergency,
     min-width: 0;
     grid-column: 2;
     grid-row: 2;
-  }
-
-  .casefile-layout:not([data-governance-open="true"])
-    .casefile-main[data-revision="true"]
-    .media-transport:has(audio)
-    .media-transport__controls {
-    grid-column: 1;
-    grid-row: 1;
-  }
-
-  .casefile-layout:not([data-governance-open="true"])
-    .casefile-main[data-revision="true"]
-    .media-transport:has(audio)
-    .media-transport__rail {
-    grid-column: 2;
-    grid-row: 1;
-  }
-
-  .casefile-layout:not([data-governance-open="true"])
-    .casefile-main[data-revision="true"]
-    .media-transport:has(audio)
-    .media-transport__actions {
-    grid-column: 3;
-    grid-row: 1;
   }
 
   .casefile-main[data-revision="true"] .transcript-document {
@@ -1094,6 +1133,10 @@ body:has(.casefile-page) .banner-emergency,
     padding: var(--space-2);
   }
 
+  .casefile-page:has(
+      > .casefile-layout > .casefile-main[data-revision="true"] .media-transport audio
+    )
+    .case-header__body,
   .casefile-page:has(
       > .casefile-layout > .casefile-main[data-revision="true"] .media-transport video
     )
