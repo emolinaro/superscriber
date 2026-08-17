@@ -2,12 +2,11 @@
  * Playback follow-scroll decision logic (visible-context).
  *
  * The transcript is fully scrollable and every segment keeps its complete
- * text (no clamping ever); follow centers the active segment in the middle
- * of the viewport so a working band of 5-10 context segments sits above and
- * below the playing line at desktop viewport sizes. On desktop the transcript
- * owns the vertical scrollport below the pinned media band; activation parks
- * that workspace at the viewport top before the transcript moves. Below
- * 1100px the window remains the scrollport with asymmetric player clearance.
+ * text (no clamping ever); follow centers interior active segments in the
+ * transcript scrollport while the first and final segments anchor to its
+ * block edges. On desktop the transcript owns the vertical scrollport below
+ * the pinned media band. Below 1100px the window remains the scrollport with
+ * asymmetric player clearance.
  * Follow stays dormant while the player is resting at its initial position,
  * then activates on the first playback tick or an explicit seek. Once active,
  * any user scroll gesture pauses it, and it re-engages the moment the active
@@ -120,15 +119,12 @@ export const FOLLOW_SCROLL_PAUSE_KEYS = new Set([
   "ArrowDown",
 ]);
 
-/** The nearest overflowing ancestor scrollport, or null for window scroll. */
+/** The nearest declared vertical scrollport, or null for window scroll. */
 export function findScrollParent(element: HTMLElement): HTMLElement | null {
   let node = element.parentElement;
   while (node) {
     const { overflowY } = window.getComputedStyle(node);
-    if (
-      (overflowY === "auto" || overflowY === "scroll") &&
-      node.scrollHeight > node.clientHeight
-    ) {
+    if (overflowY === "auto" || overflowY === "scroll") {
       return node;
     }
     node = node.parentElement;

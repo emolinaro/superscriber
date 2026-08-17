@@ -78,6 +78,7 @@ test("video casefile rest state: pinned media band above the transcript scrollpo
   const transport = page.locator(".media-transport");
   const rail = transport.getByRole("list", { name: "Transcript segments" });
   const transcript = page.getByTestId("transcript-start");
+  const transcriptScrollport = transcript.locator(".transcript-document__segments");
   await expect(rail).toBeVisible();
   await expect(transcript).toBeVisible();
 
@@ -144,7 +145,7 @@ test("video casefile rest state: pinned media band above the transcript scrollpo
   const scrollState = await page.evaluate(() => {
     const transportEl = document.querySelector<HTMLElement>(".media-transport");
     const transcriptEl = document.querySelector<HTMLElement>(
-      ".transcript-document",
+      ".transcript-document__segments",
     );
     return {
       transcriptOverflowY: transcriptEl
@@ -170,13 +171,13 @@ test("video casefile rest state: pinned media band above the transcript scrollpo
       null,
     windowScrollY: window.scrollY,
   }));
-  await transcript.evaluate((node) => node.scrollTo(0, node.scrollHeight / 2));
+  await transcriptScrollport.evaluate((node) => node.scrollTo(0, node.scrollHeight / 2));
   const parkedChrome = await page.evaluate(() => {
     const header = document.querySelector(".case-header")?.getBoundingClientRect();
     const transportEl = document.querySelector(".media-transport")?.getBoundingClientRect();
     const rail = document.querySelector(".media-transport__rail")?.getBoundingClientRect();
     const transcriptEl = document.querySelector<HTMLElement>(
-      ".transcript-document",
+      ".transcript-document__segments",
     );
     return {
       headerTop: header?.top ?? null,
@@ -274,7 +275,8 @@ test("active timestamp play rejection leaves transcript follow dormant", async (
       document.querySelector(".transcript-segment[data-active]")?.getBoundingClientRect()
         .top ?? null,
     transcriptScrollTop:
-      document.querySelector<HTMLElement>(".transcript-document")?.scrollTop ?? null,
+      document.querySelector<HTMLElement>(".transcript-document__segments")
+        ?.scrollTop ?? null,
     windowScrollY: window.scrollY,
   }));
 
@@ -287,7 +289,8 @@ test("active timestamp play rejection leaves transcript follow dormant", async (
         document.querySelector(".transcript-segment[data-active]")?.getBoundingClientRect()
           .top ?? null,
       transcriptScrollTop:
-        document.querySelector<HTMLElement>(".transcript-document")?.scrollTop ?? null,
+        document.querySelector<HTMLElement>(".transcript-document__segments")
+          ?.scrollTop ?? null,
       windowScrollY: window.scrollY,
     })),
   ).toEqual(before);

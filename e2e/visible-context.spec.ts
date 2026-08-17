@@ -18,10 +18,10 @@ import {
 // canonical desktop viewport (1280x800) the casefile transcript editing
 // surface - review mode AND approver mode, audio AND video - keeps every
 // segment at its natural height (no line clamps, no truncation, no expand
-// affordances), the transcript scrollport scrolls end to end, the ACTIVE segment
-// sits in the exact middle of the viewport in both axes while the track plays
-// (including across short -> long segment transitions), and at least five
-// context segments stay visible around it. Video holds the 5-10 acceptance
+// affordances), the transcript scrollport scrolls end to end, interior ACTIVE
+// segments sit in its exact middle while the track plays, and its first and
+// final segments anchor to the corresponding edge. At least five context
+// segments stay visible around a centered row. Video holds the 5-10 acceptance
 // band; audio shows more whenever room allows.
 //
 // Media workbench (captain's standing laws, round 1 live-pilot receipts):
@@ -31,8 +31,8 @@ import {
 // video's rendered height is bounded (max 32.5vh); video keeps its frame and
 // native controls, and audio keeps the full transport.
 //
-// All centering geometry is asserted viewport-relative. Context visibility is
-// measured against the transcript scrollport's actual unobscured bounds.
+// Horizontal centering stays viewport-relative. Vertical alignment and context
+// visibility use the transcript scrollport's actual unobscured bounds.
 
 const CANONICAL_VIEWPORT = { width: 1280, height: 800 };
 // Centering tolerance covers sub-pixel rounding and cross-lane font metric
@@ -101,13 +101,16 @@ function segmentRow(page: Page, oneBasedIndex: number) {
 }
 
 async function seekSegment(page: Page, oneBasedIndex: number) {
-  await segmentRow(page, oneBasedIndex)
-    .getByRole("button", { name: /^Play from / })
-    .click();
+  const windowScrollY = await page.evaluate(() => window.scrollY);
+  await page.getByRole("button", {
+    name: new RegExp(`^Segment ${oneBasedIndex}, .*Seek and review\\.$`),
+  }).click();
+  await expect.poll(() => page.evaluate(() => window.scrollY)).toBe(windowScrollY);
 }
 
 type ActiveGeometry = {
   centerX: number;
+  bottom: number;
   left: number;
   right: number;
   centerY: number;
@@ -116,10 +119,13 @@ type ActiveGeometry = {
   index: number;
   height: number;
   scrollportBottom: number;
+  scrollportMaxScrollTop: number;
+  scrollportScrollTop: number;
   scrollportTop: number;
+  top: number;
   transportBottom: number;
   viewportWidth: number;
-  viewportHeight: number;
+  windowScrollY: number;
 };
 
 async function measureActive(page: Page): Promise<ActiveGeometry | null> {
@@ -133,7 +139,9 @@ async function measureActive(page: Page): Promise<ActiveGeometry | null> {
     if (!active) {
       return null;
     }
-    const scrollport = active.closest<HTMLElement>(".transcript-document");
+    const scrollport = active.closest<HTMLElement>(
+      ".transcript-document__segments",
+    );
     if (!scrollport) {
       return null;
     }
@@ -163,6 +171,7 @@ async function measureActive(page: Page): Promise<ActiveGeometry | null> {
     });
     return {
       centerX: rect.left + rect.width / 2,
+      bottom: rect.bottom,
       left: rect.left,
       right: rect.right,
       centerY: rect.top + rect.height / 2,
@@ -171,20 +180,26 @@ async function measureActive(page: Page): Promise<ActiveGeometry | null> {
       height: rect.height,
       index: activeIndex,
       scrollportBottom,
+      scrollportMaxScrollTop: Math.max(
+        0,
+        scrollport.scrollHeight - scrollport.clientHeight,
+      ),
+      scrollportScrollTop: scrollport.scrollTop,
       scrollportTop: unobscuredTop,
+      top: rect.top,
       transportBottom,
       viewportWidth: window.innerWidth,
-      viewportHeight: window.innerHeight,
+      windowScrollY: window.scrollY,
     };
   });
 }
 
-// The active segment sits in the MIDDLE of the viewport in both axes and is
-// fully visible inside its centered transcript column. The context band
-// around it is split before/after with the 5-segment combined floor.
+// An interior active segment sits in the MIDDLE of the transcript scrollport
+// and the viewport-centered transcript column. The context band around it is
+// split before/after with the 5-segment combined floor.
 // Polls so smooth-scroll settle and one-frame re-centers never flake the
 // assertion.
-async function expectActiveMidViewport(
+async function expectActiveMidScrollport(
   page: Page,
   options: { contextBand?: boolean; mediaKind: "audio" | "video" },
 ) {
@@ -197,12 +212,15 @@ async function expectActiveMidViewport(
     expect(last!.centerY).toBeGreaterThanOrEqual(last!.scrollportTop);
     expect(last!.centerY).toBeLessThanOrEqual(last!.scrollportBottom);
     expect(last!.scrollportTop).toBeGreaterThanOrEqual(last!.transportBottom - 1);
+    expect(last!.windowScrollY).toBe(0);
     expect(Math.abs(last!.centerX - last!.viewportWidth / 2)).toBeLessThanOrEqual(
       CENTER_TOLERANCE_PX,
     );
-    expect(Math.abs(last!.centerY - last!.viewportHeight / 2)).toBeLessThanOrEqual(
-      CENTER_TOLERANCE_PX,
-    );
+    expect(
+      Math.abs(
+        last!.centerY - (last!.scrollportTop + last!.scrollportBottom) / 2,
+      ),
+    ).toBeLessThanOrEqual(CENTER_TOLERANCE_PX);
     if (options.contextBand !== false) {
       expect(last!.contextBefore).toBeGreaterThanOrEqual(MIN_CONTEXT_EACH_SIDE);
       expect(last!.contextAfter).toBeGreaterThanOrEqual(MIN_CONTEXT_EACH_SIDE);
@@ -219,6 +237,34 @@ async function expectActiveMidViewport(
   return last!;
 }
 
+async function expectActiveAtEdge(
+  page: Page,
+  input: { edge: "bottom" | "top"; zeroBasedIndex: number },
+) {
+  await expect(async () => {
+    const geometry = await measureActive(page);
+    expect(geometry).not.toBeNull();
+    expect(geometry!.index).toBe(input.zeroBasedIndex);
+    expect(geometry!.windowScrollY).toBe(0);
+    expect(Math.abs(geometry!.centerX - geometry!.viewportWidth / 2)).toBeLessThanOrEqual(
+      CENTER_TOLERANCE_PX,
+    );
+    if (input.edge === "top") {
+      expect(geometry!.scrollportScrollTop).toBeLessThanOrEqual(1);
+      expect(Math.abs(geometry!.top - geometry!.scrollportTop)).toBeLessThanOrEqual(2);
+    } else {
+      expect(
+        Math.abs(
+          geometry!.scrollportScrollTop - geometry!.scrollportMaxScrollTop,
+        ),
+      ).toBeLessThanOrEqual(1);
+      expect(
+        Math.abs(geometry!.bottom - geometry!.scrollportBottom),
+      ).toBeLessThanOrEqual(2);
+    }
+  }).toPass({ timeout: 10_000, intervals: [250, 500, 1_000] });
+}
+
 // The two standing laws at rest (no seek, no playback, scrollY === 0):
 // the transcript zone shares the FIRST viewport with the media (the first
 // segment card is fully visible without scrolling), and the player pins in a
@@ -232,18 +278,24 @@ async function expectRestStateWorkbench(page: Page, input: { video: boolean }) {
     const video = q(".media-transport video");
     const firstCard = q(".transcript-segment");
     const transcript = q(".transcript-document");
+    const scrollport = q(".transcript-document__segments");
     const actionBar = q(".casefile-action-bar");
     const transportEl = document.querySelector<HTMLElement>(".media-transport");
     const transcriptEl = document.querySelector<HTMLElement>(
       ".transcript-document",
     );
+    const scrollportEl = document.querySelector<HTMLElement>(
+      ".transcript-document__segments",
+    );
     if (
       !transport ||
       !firstCard ||
       !transcript ||
+      !scrollport ||
       !actionBar ||
       !transportEl ||
-      !transcriptEl
+      !transcriptEl ||
+      !scrollportEl
     ) {
       return null;
     }
@@ -251,9 +303,11 @@ async function expectRestStateWorkbench(page: Page, input: { video: boolean }) {
       transportBottom: transport.bottom,
       transportTop: transport.top,
       transportPosition: getComputedStyle(transportEl).position,
-      transcriptOverflowY: getComputedStyle(transcriptEl).overflowY,
-      transcriptScrolls: transcriptEl.scrollHeight > transcriptEl.clientHeight,
+      transcriptOverflowY: getComputedStyle(scrollportEl).overflowY,
+      transcriptScrollTop: scrollportEl.scrollTop,
+      transcriptScrolls: scrollportEl.scrollHeight > scrollportEl.clientHeight,
       transcriptTop: transcript.top,
+      scrollportTop: scrollport.top,
       videoBottom: video?.bottom ?? null,
       videoHeight: video?.height ?? null,
       firstCardTop: firstCard.top,
@@ -270,7 +324,9 @@ async function expectRestStateWorkbench(page: Page, input: { video: boolean }) {
   expect(geometry!.transportPosition).toBe("sticky");
   expect(geometry!.transportBottom).toBeLessThanOrEqual(geometry!.transcriptTop + 1);
   expect(geometry!.transcriptOverflowY).toBe("auto");
+  expect(geometry!.transcriptScrollTop).toBe(0);
   expect(geometry!.transcriptScrolls).toBe(true);
+  expect(Math.abs(geometry!.firstCardTop - geometry!.scrollportTop)).toBeLessThanOrEqual(1);
   expect(
     Math.abs(
       (geometry!.firstCardLeft + geometry!.firstCardRight) / 2 -
@@ -302,7 +358,7 @@ async function expectRestStateWorkbench(page: Page, input: { video: boolean }) {
       windowScrollY: window.scrollY,
     };
   });
-  await page.locator(".transcript-document").evaluate((node) => {
+  await page.locator(".transcript-document__segments").evaluate((node) => {
     node.scrollTo(0, node.scrollHeight / 2);
   });
   const scrolled = await page.evaluate(() => {
@@ -312,7 +368,7 @@ async function expectRestStateWorkbench(page: Page, input: { video: boolean }) {
     const rail = q(".media-transport__rail");
     const actions = q(".media-transport__actions");
     const transcript = document.querySelector<HTMLElement>(
-      ".transcript-document",
+      ".transcript-document__segments",
     );
     return {
       transportTop: transport?.top ?? null,
@@ -330,7 +386,7 @@ async function expectRestStateWorkbench(page: Page, input: { video: boolean }) {
   expect(scrolled.railVisible).toBe(true);
   expect(scrolled.actionsVisible).toBe(true);
   // Back to rest for the remainder of the flow.
-  await page.locator(".transcript-document").evaluate((node) => node.scrollTo(0, 0));
+  await page.locator(".transcript-document__segments").evaluate((node) => node.scrollTo(0, 0));
 }
 
 async function expectActiveIndex(page: Page, zeroBasedIndex: number) {
@@ -389,7 +445,7 @@ async function expectNoClamp(page: Page, oneBasedIndex: number, expectedText: st
 }
 
 async function expectFullyScrollable(page: Page, segmentCount: number) {
-  const scrollInfo = await page.locator(".transcript-document").evaluate((node) => ({
+  const scrollInfo = await page.locator(".transcript-document__segments").evaluate((node) => ({
     clientHeight: node.clientHeight,
     overflowY: getComputedStyle(node).overflowY,
     scrollHeight: node.scrollHeight,
@@ -398,13 +454,13 @@ async function expectFullyScrollable(page: Page, segmentCount: number) {
   expect(scrollInfo.scrollHeight).toBeGreaterThan(scrollInfo.clientHeight);
 
   // Bottom end: the last card is reachable and lands fully in view.
-  await page.locator(".transcript-document").evaluate((node) =>
+  await page.locator(".transcript-document__segments").evaluate((node) =>
     node.scrollTo(0, node.scrollHeight),
   );
   await expect
     .poll(() =>
       segmentRow(page, segmentCount).evaluate((row) => {
-        const scrollport = row.closest(".transcript-document");
+        const scrollport = row.closest(".transcript-document__segments");
         if (!scrollport) {
           return false;
         }
@@ -420,12 +476,12 @@ async function expectFullyScrollable(page: Page, segmentCount: number) {
 
   // Top end: the transcript returns to its own start and the first card is
   // directly readable below its summary and speaker tools.
-  await page.locator(".transcript-document").evaluate((node) => node.scrollTo(0, 0));
+  await page.locator(".transcript-document__segments").evaluate((node) => node.scrollTo(0, 0));
   await expect
     .poll(
       () =>
         page
-          .locator(".transcript-document")
+          .locator(".transcript-document__segments")
           .evaluate((node) => Math.round(node.scrollTop)),
       { timeout: 5_000 },
     )
@@ -433,7 +489,7 @@ async function expectFullyScrollable(page: Page, segmentCount: number) {
   await expect
     .poll(() =>
       segmentRow(page, 1).evaluate((row) => {
-        const scrollport = row.closest(".transcript-document");
+        const scrollport = row.closest(".transcript-document__segments");
         if (!scrollport) {
           return false;
         }
@@ -497,11 +553,12 @@ async function seedVisibleContextCasefile(
   return { recordingId, seeds };
 }
 
-test.describe.serial("visible-context casefile transcript surface", () => {
+test.describe("visible-context casefile transcript surface", () => {
+  test.describe.configure({ mode: "serial", timeout: 600_000 });
+
   test("audio casefile: review and approver modes keep expanded context around the centered active segment", async ({
     page,
   }) => {
-    test.setTimeout(600_000);
     const { seeds } = await seedVisibleContextCasefile(page, {
       title: "Visible context audio",
       label: "Audio",
@@ -522,37 +579,35 @@ test.describe.serial("visible-context casefile transcript surface", () => {
     // the player pins above it (never scrolls away).
     await expectRestStateWorkbench(page, { video: false });
 
-    // Explicit seek recenters the target mid-viewport (both axes) with the
+    await seekSegment(page, 1);
+    await expectActiveAtEdge(page, { edge: "top", zeroBasedIndex: 0 });
+
+    // Explicit seek recenters the target in the scrollport with the
     // context band around it - a mid-size row first...
     await seekSegment(page, 7);
     await expectActiveIndex(page, 6);
-    const midGeometry = await expectActiveMidViewport(page, { mediaKind: "audio" });
+    const midGeometry = await expectActiveMidScrollport(page, { mediaKind: "audio" });
 
     // ...then a long row: the card grows, centering and band hold.
     await seekSegment(page, 13);
     await expectActiveIndex(page, 12);
-    const longGeometry = await expectActiveMidViewport(page, { mediaKind: "audio" });
+    const longGeometry = await expectActiveMidScrollport(page, { mediaKind: "audio" });
     expect(longGeometry.height).toBeGreaterThan(midGeometry.height);
 
     // Playback crossing a short -> long boundary keeps the active row
-    // mid-viewport while the track moves on its own.
+    // centered in the scrollport while the track moves on its own.
     await playAcrossBoundary(page, 70_000);
     await expectActiveIndex(page, 7);
-    await expectActiveMidViewport(page, { mediaKind: "audio" });
+    await expectActiveMidScrollport(page, { mediaKind: "audio" });
     await page.waitForTimeout(1_500);
-    await expectActiveMidViewport(page, { mediaKind: "audio" });
+    await expectActiveMidScrollport(page, { mediaKind: "audio" });
     await stopPlayback(page);
 
     // No clamping: segment 8's long text stands complete on the card.
     await expectNoClamp(page, 8, seeds[7].text);
 
-    await playAcrossBoundary(page, 230_000);
-    await expectActiveIndex(page, 23);
-    await expectActiveMidViewport(page, {
-      contextBand: false,
-      mediaKind: "audio",
-    });
-    await stopPlayback(page);
+    await seekSegment(page, 24);
+    await expectActiveAtEdge(page, { edge: "bottom", zeroBasedIndex: 23 });
 
     // The extreme monster stands complete too - cards grow, never clamp.
     await expectNoClamp(page, MONSTER_INDEX + 1, seeds[MONSTER_INDEX].text);
@@ -569,23 +624,27 @@ test.describe.serial("visible-context casefile transcript surface", () => {
       segmentRow(page, 1).getByRole("textbox"),
     ).toHaveCount(0);
 
+    await seekSegment(page, 1);
+    await expectActiveAtEdge(page, { edge: "top", zeroBasedIndex: 0 });
+
     await seekSegment(page, 9);
     await expectActiveIndex(page, 8);
-    await expectActiveMidViewport(page, { mediaKind: "audio" });
+    await expectActiveMidScrollport(page, { mediaKind: "audio" });
 
     await playAcrossBoundary(page, 130_000);
     await expectActiveIndex(page, 13);
-    await expectActiveMidViewport(page, { mediaKind: "audio" });
+    await expectActiveMidScrollport(page, { mediaKind: "audio" });
     await stopPlayback(page);
 
     await expectNoClamp(page, 13, seeds[12].text);
+    await seekSegment(page, 24);
+    await expectActiveAtEdge(page, { edge: "bottom", zeroBasedIndex: 23 });
     await expectFullyScrollable(page, 24);
   });
 
   test("video casefile: video frame with previous controls plus the same centered context contract in review and approver modes", async ({
     page,
   }) => {
-    test.setTimeout(600_000);
     const { seeds } = await seedVisibleContextCasefile(page, {
       title: "Visible context video",
       label: "Video",
@@ -604,16 +663,21 @@ test.describe.serial("visible-context casefile transcript surface", () => {
     // first viewport, player pinned above the transcript.
     await expectRestStateWorkbench(page, { video: true });
 
+    await seekSegment(page, 1);
+    await expectActiveAtEdge(page, { edge: "top", zeroBasedIndex: 0 });
+
     await seekSegment(page, 8);
     await expectActiveIndex(page, 7);
-    await expectActiveMidViewport(page, { mediaKind: "video" });
+    await expectActiveMidScrollport(page, { mediaKind: "video" });
 
     await playAcrossBoundary(page, 70_000);
     await expectActiveIndex(page, 7);
-    await expectActiveMidViewport(page, { mediaKind: "video" });
+    await expectActiveMidScrollport(page, { mediaKind: "video" });
     await stopPlayback(page);
 
     await expectNoClamp(page, 8, seeds[7].text);
+    await seekSegment(page, 24);
+    await expectActiveAtEdge(page, { edge: "bottom", zeroBasedIndex: 23 });
     await expectFullyScrollable(page, 24);
 
     // Approver mode on the video casefile.
@@ -624,14 +688,20 @@ test.describe.serial("visible-context casefile transcript surface", () => {
     await expect(segmentRow(page, 1).getByRole("textbox")).toHaveCount(0);
     await expect(video).toBeVisible();
 
+    await seekSegment(page, 1);
+    await expectActiveAtEdge(page, { edge: "top", zeroBasedIndex: 0 });
+
     await seekSegment(page, 12);
     await expectActiveIndex(page, 11);
-    await expectActiveMidViewport(page, { mediaKind: "video" });
+    await expectActiveMidScrollport(page, { mediaKind: "video" });
 
     await playAcrossBoundary(page, 130_000);
     await expectActiveIndex(page, 13);
-    await expectActiveMidViewport(page, { mediaKind: "video" });
+    await expectActiveMidScrollport(page, { mediaKind: "video" });
     await stopPlayback(page);
+
+    await seekSegment(page, 24);
+    await expectActiveAtEdge(page, { edge: "bottom", zeroBasedIndex: 23 });
 
     // The full segment list renders: count sanity against the DB seed.
     const rows = await queryRuntimeRows<{ n: number }>(

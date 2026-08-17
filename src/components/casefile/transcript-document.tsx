@@ -63,24 +63,38 @@ function centerRow(row: HTMLElement, behavior: ScrollBehavior): void {
     return;
   }
 
-  if (window.innerWidth >= 1100) {
-    const workbench = scrollParent.closest<HTMLElement>(".casefile-main");
-    const workbenchTop = workbench?.getBoundingClientRect().top;
-    if (workbenchTop !== undefined && Math.abs(workbenchTop) > 1) {
-      window.scrollTo({
-        top: window.scrollY + workbenchTop,
-        behavior: "auto",
-      });
-    }
+  const rows = Array.from(
+    scrollParent.querySelectorAll<HTMLElement>(".transcript-segment"),
+  );
+  if (row === rows[0]) {
+    scrollParent.scrollTo({ top: 0, behavior });
+    return;
+  }
+  if (row === rows.at(-1)) {
+    scrollParent.scrollTo({
+      top: Math.max(0, scrollParent.scrollHeight - scrollParent.clientHeight),
+      behavior,
+    });
+    return;
   }
 
   const rect = row.getBoundingClientRect();
+  const scrollportRect = scrollParent.getBoundingClientRect();
+  const actionBarTop =
+    document.querySelector<HTMLElement>(".casefile-action-bar")?.getBoundingClientRect()
+      .top ?? window.innerHeight;
+  const visibleTop = Math.max(0, scrollportRect.top);
+  const visibleBottom = Math.min(
+    window.innerHeight,
+    actionBarTop,
+    scrollportRect.bottom,
+  );
   scrollParent.scrollTo({
     top:
       scrollParent.scrollTop +
       rect.top +
       rect.height / 2 -
-      window.innerHeight / 2,
+      (visibleTop + visibleBottom) / 2,
     behavior,
   });
 }
@@ -116,6 +130,59 @@ export function TranscriptDocument({
   // user scrolling after activation, and re-engages when the active line is
   // visible in the viewport again or on any explicit seek.
   const followPausedRef = useRef(false);
+
+  useEffect(() => {
+    const scrollport = segmentsRef.current;
+    if (!scrollport) {
+      return;
+    }
+
+    const actionBar = document.querySelector<HTMLElement>(".casefile-action-bar");
+    const transcript = scrollport.closest<HTMLElement>(".transcript-document");
+    const transport = transcript?.parentElement?.querySelector<HTMLElement>(
+      ":scope > .media-transport",
+    );
+    const updateBlockSize = () => {
+      if (window.innerWidth < 1100) {
+        scrollport.style.removeProperty("--transcript-scrollport-block-size");
+        return;
+      }
+      const actionBarHeight = actionBar?.getBoundingClientRect().height ?? 0;
+      const visibleBottom = window.innerHeight - actionBarHeight;
+      const visibleTop = Math.max(0, scrollport.getBoundingClientRect().top);
+      const value = `${Math.max(0, Math.floor(visibleBottom - visibleTop))}px`;
+      if (
+        scrollport.style.getPropertyValue("--transcript-scrollport-block-size") !== value
+      ) {
+        scrollport.style.setProperty("--transcript-scrollport-block-size", value);
+      }
+    };
+
+    updateBlockSize();
+    const observer =
+      typeof ResizeObserver === "undefined" ? null : new ResizeObserver(updateBlockSize);
+    if (transcript) {
+      for (const child of transcript.children) {
+        if (child !== scrollport) {
+          observer?.observe(child);
+        }
+      }
+    }
+    if (actionBar) {
+      observer?.observe(actionBar);
+    }
+    if (transport) {
+      observer?.observe(transport);
+    }
+    window.addEventListener("resize", updateBlockSize);
+    window.addEventListener("scroll", updateBlockSize, { passive: true });
+    return () => {
+      observer?.disconnect();
+      window.removeEventListener("resize", updateBlockSize);
+      window.removeEventListener("scroll", updateBlockSize);
+      scrollport.style.removeProperty("--transcript-scrollport-block-size");
+    };
+  }, [safetyStripped, segments.length, speakerTools]);
 
   // Pause follow on user scroll gestures: wheel, touch drag, or page-scroll
   // keys pressed outside editors/sliders (keyboard editing never pauses).
@@ -181,12 +248,11 @@ export function TranscriptDocument({
     followPausedRef.current = false;
   }, [followActivationNonce]);
 
-  // Playback follow: CENTER the active segment in the middle of the
-  // viewport on both axes. Desktop first parks the media workspace, then
-  // moves only the transcript scrollport; below 1100px the window remains
-  // the scrollport and the pinned transport claims its asymmetric top
-  // clearance. The pause contract is decided by follow-scroll.ts so the
-  // whole matrix stays unit-tested.
+  // Playback follow centers interior segments in the transcript scrollport.
+  // The first and final rows anchor to its block edges. Below 1100px the
+  // window remains the scrollport and the pinned transport claims its
+  // asymmetric top clearance. The pause contract is decided by
+  // follow-scroll.ts so the whole matrix stays unit-tested.
   useEffect(() => {
     const container = segmentsRef.current;
     if (!container || !activeSegmentId) {
@@ -231,38 +297,39 @@ export function TranscriptDocument({
         )}
       </div>
 
+      {speakerTools ? (
+        <div className="transcript-document__speaker-tools">
+          <p className="field-note" data-testid="speaker-toolbar-list">
+            Speakers:{" "}
+            {listSpeakers(segments)
+              .map(
+                (speaker) =>
+                  `${speaker.label} (${speaker.segmentCount} ${
+                    speaker.segmentCount === 1 ? "segment" : "segments"
+                  })`,
+              )
+              .join(", ")}
+          </p>
+          <button
+            className="button button-secondary"
+            disabled={Boolean(speakerRenameNote)}
+            onClick={onOpenSpeakerRename}
+            type="button"
+          >
+            Rename speaker...
+          </button>
+          {speakerRenameNote ? (
+            <span className="field-note">{speakerRenameNote}</span>
+          ) : null}
+        </div>
+      ) : null}
+      {safetyStripped ? (
+        <InlineNotice tone="info">
+          Review and decisions require a tablet or desktop.
+        </InlineNotice>
+      ) : null}
+
       <div className="transcript-document__segments" ref={segmentsRef}>
-        {speakerTools ? (
-          <div className="transcript-document__speaker-tools">
-            <p className="field-note" data-testid="speaker-toolbar-list">
-              Speakers:{" "}
-              {listSpeakers(segments)
-                .map(
-                  (speaker) =>
-                    `${speaker.label} (${speaker.segmentCount} ${
-                      speaker.segmentCount === 1 ? "segment" : "segments"
-                    })`,
-                )
-                .join(", ")}
-            </p>
-            <button
-              className="button button-secondary"
-              disabled={Boolean(speakerRenameNote)}
-              onClick={onOpenSpeakerRename}
-              type="button"
-            >
-              Rename speaker...
-            </button>
-            {speakerRenameNote ? (
-              <span className="field-note">{speakerRenameNote}</span>
-            ) : null}
-          </div>
-        ) : null}
-        {safetyStripped ? (
-          <InlineNotice tone="info">
-            Review and decisions require a tablet or desktop.
-          </InlineNotice>
-        ) : null}
         {segments.map((segment, index) => {
           const windowLabel = formatSegmentWindow(segment.startMs, segment.endMs);
           const active = segment.id === activeSegmentId;

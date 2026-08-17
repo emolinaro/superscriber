@@ -200,7 +200,7 @@ describe("findScrollParent", () => {
     outer.remove();
   });
 
-  it("ignores auto-overflow ancestors that do not actually overflow", () => {
+  it("keeps an auto-overflow ancestor as the scroll owner before it overflows", () => {
     const outer = document.createElement("div");
     outer.style.overflowY = "auto";
     Object.defineProperty(outer, "clientHeight", { value: 200 });
@@ -210,7 +210,7 @@ describe("findScrollParent", () => {
     outer.appendChild(row);
     document.body.appendChild(outer);
 
-    expect(findScrollParent(row)).toBeNull();
+    expect(findScrollParent(row)).toBe(outer);
 
     outer.remove();
   });

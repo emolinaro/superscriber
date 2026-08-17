@@ -170,9 +170,8 @@ describe("product css contract", () => {
     // visible-context: on >=1100px only the transcript scrolls below the
     // pinned media band. The combined page remains naturally flowing.
     const casefile = readFileSync(resolve(STYLES_DIR, "casefile.css"), "utf8");
-    expect(casefile).not.toContain("player-clearance");
-    expect(casefile).not.toContain(
-      ".casefile-page:has(> .casefile-layout > .casefile-main[data-revision=\"true\"]) {",
+    expect(casefile).not.toMatch(
+      /\.casefile-page:has\(> \.casefile-layout > \.casefile-main\[data-revision="true"\]\)\s*\{[^}]*(?:block-size|max-height|overflow-y):/s,
     );
     // casefile.css holds several >=1100px media blocks; the workbench block
     // is the one carrying the transcript overflow contract.
@@ -196,8 +195,9 @@ describe("product css contract", () => {
       /\.media-transport:has\(video\)\s*\{\s*padding: 0;/,
     );
     expect(desktopBlock).toMatch(
-      /\.casefile-main\[data-revision="true"\] \.transcript-document\s*\{[^}]*width: 100%;[^}]*block-size: calc\([^}]*100vh - var\(--player-clearance, 0px\) - var\(--space-2\)[^}]*\);[^}]*overflow-y: auto;/s,
+      /\.transcript-document__segments\s*\{[^}]*block-size: var\(--transcript-scrollport-block-size\);[^}]*overflow-y: auto;[^}]*overscroll-behavior-block: contain;[^}]*scrollbar-gutter: stable both-edges;/s,
     );
+    expect(desktopBlock).not.toMatch(/\.transcript-document__segments\s*\{[^}]*padding-block-end:/s);
     expect(desktopBlock).toMatch(
       /\.casefile-main\[data-revision="true"\] \.transcript-segment\s*\{[^}]*grid-template-columns: auto minmax\(8rem, auto\) minmax\(0, 1fr\) auto;[^}]*padding-block: var\(--space-1\);/s,
     );
