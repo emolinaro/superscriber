@@ -179,23 +179,35 @@ describe("product css contract", () => {
     expect(casefile).not.toContain(
       ".casefile-page:has(> .casefile-layout > .casefile-main[data-revision=\"true\"]) {",
     );
-    const desktopBlock = casefile.match(
-      /@media \(min-width: 1100px\) \{([\s\S]*?)\n\}\n/,
+    // casefile.css holds several >=1100px media blocks (workbench,
+    // banner density, summary density); the scroll targeting lives in the
+    // one carrying the scroll-padding rule.
+    const desktopBlocks = [
+      ...casefile.matchAll(/@media \(min-width: 1100px\) \{([\s\S]*?)\n\}\n/g),
+    ].map((match) => match[1]);
+    const desktopBlock = desktopBlocks.find((block) =>
+      block.includes("scroll-padding-block"),
     );
-    expect(desktopBlock?.[1]).toMatch(
+    expect(desktopBlock).toBeDefined();
+    expect(desktopBlock).toMatch(
       /html:has\(\.casefile-page\)\s*\{\s*scroll-padding-block: var\(--action-bar-clearance/,
     );
     // Beside workbench: the player column pins (sticky) left of the
     // transcript column, and the rendered video frame stays bounded so
     // the transcript zone always shares the first viewport.
-    expect(desktopBlock?.[1]).toMatch(
+    expect(desktopBlock).toMatch(
       /\.casefile-main\[data-revision="true"\]\s*\{[^}]*grid-template-columns: minmax\(300px, 5fr\) minmax\(0, 7fr\)/,
     );
-    expect(desktopBlock?.[1]).toMatch(
+    expect(desktopBlock).toMatch(
       /\.casefile-main\[data-revision="true"\] \.media-transport\s*\{[^}]*position: sticky;\s*top: 0/s,
     );
-    expect(desktopBlock?.[1]).toMatch(
+    expect(desktopBlock).toMatch(
       /\.media-transport__controls video\s*\{[^}]*max-height: 34vh/,
+    );
+    // Rest-state readability: the action-mode banner compacts into a
+    // wrapped row so the first segment card stays above the fold.
+    expect(casefile).toMatch(
+      /@media \(min-width: 1100px\)[\s\S]*?\.casefile-page \.action-mode-banner\s*\{[^}]*display: flex/,
     );
     const baseTransport = casefile.match(/\.media-transport\s*\{([^}]*)\}/);
     expect(baseTransport?.[1]).toContain("position: static");
