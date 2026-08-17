@@ -168,10 +168,12 @@ describe("product css contract", () => {
 
   it("window-scrolls the desktop casefile with viewport-middle follow targeting", () => {
     // visible-context: on >=1100px the casefile page window-scrolls - no
-    // bounded shell, no nested transcript scrollport, no pinned transport,
-    // and chrome flows away. Symmetric scroll-padding makes
-    // scrollIntoView block:"center" land the active segment on the exact
-    // viewport middle (the action bar is the only fixed chrome there).
+    // bounded shell, no nested transcript scrollport - and the media
+    // player PINS in its own workbench column beside the transcript (the
+    // captain's standing law: the player never scrolls away). Symmetric
+    // scroll-padding makes scrollIntoView block:"center" land the active
+    // segment on the exact vertical viewport middle (the action bar is
+    // the only fixed chrome crossing the transcript column).
     const casefile = readFileSync(resolve(STYLES_DIR, "casefile.css"), "utf8");
     expect(casefile).not.toContain("player-clearance");
     expect(casefile).not.toContain(
@@ -182,6 +184,18 @@ describe("product css contract", () => {
     );
     expect(desktopBlock?.[1]).toMatch(
       /html:has\(\.casefile-page\)\s*\{\s*scroll-padding-block: var\(--action-bar-clearance/,
+    );
+    // Beside workbench: the player column pins (sticky) left of the
+    // transcript column, and the rendered video frame stays bounded so
+    // the transcript zone always shares the first viewport.
+    expect(desktopBlock?.[1]).toMatch(
+      /\.casefile-main\[data-revision="true"\]\s*\{[^}]*grid-template-columns: minmax\(300px, 5fr\) minmax\(0, 7fr\)/,
+    );
+    expect(desktopBlock?.[1]).toMatch(
+      /\.casefile-main\[data-revision="true"\] \.media-transport\s*\{[^}]*position: sticky;\s*top: 0/s,
+    );
+    expect(desktopBlock?.[1]).toMatch(
+      /\.media-transport__controls video\s*\{[^}]*max-height: 34vh/,
     );
     const baseTransport = casefile.match(/\.media-transport\s*\{([^}]*)\}/);
     expect(baseTransport?.[1]).toContain("position: static");

@@ -3,12 +3,15 @@
    segment in the middle of the viewport, with a working band of
    neighboring segments above and below it. Centering clearance lives on
    scroll-padding instead of per-row scroll-margin, which would extend
-   the row's box and push the centered line low. On desktop the padding
-   is symmetric (the action bar is the only fixed chrome), so block:center
-   lands the active row on the exact viewport middle; below 1100px the
-   pinned transport claims an asymmetric top clearance (responsive.css).
-   Segment cards never clamp: every segment keeps its full text and the
-   card grows to fit it, so the transcript stays fully scrollable. */
+   the row's box and push the centered line low. On desktop the media
+   workbench is a two-column affair: the player pins in its own column
+   (sticky, it never scrolls away) while the transcript column keeps the
+   full viewport height, so the symmetric padding lands block:center on
+   the exact vertical viewport middle with plenty of context room; below
+   1100px the pinned transport claims an asymmetric top clearance
+   instead (responsive.css). Segment cards never clamp: every segment
+   keeps its full text and the card grows to fit it, so the transcript
+   stays fully scrollable. */
 
 .casefile-page {
   display: grid;
@@ -116,9 +119,10 @@ body:has(.casefile-page) .banner-emergency,
 }
 
 .media-transport {
-  /* Visible-context on desktop: the transport leads the casefile main
-     column and scrolls with the page; below 1100px responsive.css pins
-     it to the viewport top instead. */
+  /* The media player pins and never scrolls away: below 1100px
+     responsive.css parks it at the viewport top; at desktop width it
+     sticks inside its own workbench column beside the transcript (see
+     the >=1100px block below). */
   position: static;
   z-index: 5;
   display: grid;
@@ -343,12 +347,14 @@ body:has(.casefile-page) .banner-emergency,
 
 .transcript-segment {
   display: grid;
-  grid-template-columns: 112px 128px minmax(0, 1fr);
-  gap: var(--space-3);
+  /* Visible-context density: timestamp and speaker share one row and the
+     text spans the full card width below them, so a working band of
+     context segments (5 is the floor, more when room allows) fits around
+     the active row inside the workbench's transcript column - without
+     ever clamping the content itself. */
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: var(--space-1) var(--space-3);
   align-items: start;
-  /* Visible-context density: compact one-surface padding keeps a working
-     band of 5-10 context segments around the active row at desktop
-     viewport sizes, without ever clamping the content itself. */
   padding: var(--space-2) var(--space-3);
   border: 1px solid var(--color-line);
   border-radius: var(--radius-surface);
@@ -372,6 +378,10 @@ body:has(.casefile-page) .banner-emergency,
 .transcript-segment__speaker,
 .transcript-segment__text {
   min-width: 0;
+}
+
+.transcript-segment__text {
+  grid-column: 1 / -1;
 }
 
 .transcript-segment__text p {
@@ -630,17 +640,45 @@ body:has(.casefile-page) .banner-emergency,
        (no standalone toggle card on the rail when closed). */
   }
 
-  /* Visible-context desktop rest state: the casefile page window-scrolls
-     (no bounded shell, no nested scrollport, no pinned transport - the
-     transport leads the main column and flows with the page), so the whole
-     viewport is available to the transcript. Follow-scroll centers the
-     active segment on the exact viewport middle: symmetric scroll-padding
-     keeps both scrollIntoView block:center and the nearest-edge visibility
-     check aiming at the region between the action bar and the top edge -
-     an equal top offset keeps that region's middle on the viewport's
-     middle. The action bar is the only fixed chrome (sticky bottom). */
+  /* Visible-context desktop workbench: the media player owns a pinned
+     left column and the transcript owns the right column, which keeps the
+     FULL viewport height as its working band (5-10 context segments is
+     the floor; the column shows more whenever room allows). Stacking the
+     player above the transcript cannot satisfy that band - the app bar,
+     case header, and action-mode entry already claim ~380px before the
+     player even starts - so the player sits beside the transcript
+     instead. The player column never scrolls away (sticky at the
+     viewport top); the transcript column window-scrolls, so on the first
+     viewport the segment cards always share the screen with the media.
+     Follow-scroll still centers the active segment on the exact vertical
+     viewport middle: symmetric scroll-padding keeps both scrollIntoView
+     block:center and the nearest-edge visibility check aiming at the
+     region between the action bar and the top edge (the pinned player
+     never overlaps the transcript column). The action bar is the only
+     fixed chrome crossing the transcript column (sticky bottom). */
   html:has(.casefile-page) {
     scroll-padding-block: var(--action-bar-clearance, 88px);
+  }
+
+  .casefile-main[data-revision="true"] {
+    grid-template-columns: minmax(300px, 5fr) minmax(0, 7fr);
+    align-items: start;
+  }
+
+  .casefile-main[data-revision="true"] > .inline-notice {
+    grid-column: 1 / -1;
+  }
+
+  .casefile-main[data-revision="true"] .media-transport {
+    position: sticky;
+    top: 0;
+    align-self: start;
+  }
+
+  /* Media-denied casefiles carry no player column: the notice spans the
+     full workbench width. */
+  .casefile-main[data-revision="true"] .media-transport--empty {
+    grid-column: 1 / -1;
   }
 
   .transcript-document__segments {
@@ -648,11 +686,52 @@ body:has(.casefile-page) .banner-emergency,
     padding-block-end: 48vh;
   }
 
-  /* The video keeps its frame and native controls inside the flowing
-     transport; the height cap is a reading-size bound, not a clamp of the
-     transcript. */
+  /* Workbench card density: the confidence note sits inline in the card's
+     header row instead of claiming its own line under the text, so the
+     context band keeps more whole cards at the canonical viewport. No
+     type scale changes and no content compression - purely where the
+     note stands. The diff badge takes the first full-width row when it
+     exists, so the note targets the header row (row 1, or row 2 with a
+     badge) explicitly. */
+  .casefile-main[data-revision="true"] .transcript-segment {
+    grid-template-columns: auto auto minmax(0, 1fr);
+  }
+
+  .casefile-main[data-revision="true"] .transcript-segment__text {
+    display: contents;
+  }
+
+  .casefile-main[data-revision="true"] .transcript-segment__text > :is(p, textarea) {
+    grid-column: 1 / -1;
+  }
+
+  .casefile-main[data-revision="true"] .transcript-segment__text > .field-note {
+    grid-column: 3;
+    justify-self: end;
+    align-self: center;
+    margin: 0;
+  }
+
+  .casefile-main[data-revision="true"]
+    .transcript-segment:not([data-edited-diff])
+    .transcript-segment__text
+    > .field-note {
+    grid-row: 1;
+  }
+
+  .casefile-main[data-revision="true"]
+    .transcript-segment[data-edited-diff]
+    .transcript-segment__text
+    > .field-note {
+    grid-row: 2;
+  }
+
+  /* The video keeps its frame and native controls inside the pinned
+     column; the height cap bounds the rendered frame so the rail and
+     transport actions stay within reach above it, never shrinking the
+     transcript - the width set by the column governs the picture first. */
   .casefile-main[data-revision="true"] .media-transport__controls video {
-    max-height: 45vh;
+    max-height: 34vh;
     object-fit: contain;
   }
 }

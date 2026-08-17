@@ -19,21 +19,39 @@ import {
 // surface - review mode AND approver mode, audio AND video - keeps every
 // segment at its natural height (no line clamps, no truncation, no expand
 // affordances), the transcript window-scrolls end to end, the ACTIVE segment
-// sits in the exact middle of the viewport on both axes while the track
-// plays (including across short -> long segment transitions), and 5-10
-// context segments stay visible around it. Media keeps its restored form:
-// video keeps its frame with the previous controls, audio keeps the full
-// transport. All geometry is asserted viewport-relative
-// (getBoundingClientRect vs window.innerWidth/innerHeight), never from
-// internal scrollport heights.
+// sits in the exact vertical middle of the viewport while the track plays
+// (including across short -> long segment transitions), and at least five
+// context segments stay visible around it (more whenever room allows -
+// the 5-10 band is the floor, not a ceiling).
+//
+// Media workbench (captain's standing laws, round 1 live-pilot receipts):
+// the player PINS and never scrolls away - at desktop width it owns a
+// sticky left column BESIDE the transcript column - and the transcript
+// zone always shares the first viewport, so the first segment card is
+// reachable without any scroll. The video's rendered height is bounded
+// (max 34vh) so the media column stays compact; the video keeps its frame
+// and native controls, audio keeps the full transport. Stacking the
+// player above the transcript cannot satisfy the band at 1280x800 (the
+// app bar, case header, and action-mode entry already claim ~380px of
+// the 800px viewport before the player starts), which is why the player
+// sits beside the transcript.
+//
+// All geometry is asserted viewport-relative (getBoundingClientRect vs
+// window.innerWidth/innerHeight), never from internal scrollport heights.
 
 const CANONICAL_VIEWPORT = { width: 1280, height: 800 };
 // Centering tolerance: the scroll-padding boxes are symmetric so the exact
-// landing point is the viewport middle; a few px of slack covers sub-pixel
-// rounding and cross-lane font metric drift.
+// landing point is the viewport vertical middle; a few px of slack covers
+// sub-pixel rounding and cross-lane font metric drift.
 const CENTER_TOLERANCE_PX = 24;
 const MIN_CONTEXT = 5;
-const MAX_CONTEXT = 10;
+const MIN_CONTEXT_EACH_SIDE = 2;
+// Loose anti-collapse guard only - the captain's band (5-10) is a floor,
+// and "more when room allows" has no hard ceiling; this just catches
+// runaway density regressions.
+const MAX_CONTEXT_GUARD = 16;
+// Video frame bound (matches casefile.css max-height: 34vh).
+const VIDEO_MAX_VH = 0.34;
 
 type SegmentSeed = {
   id: string;
@@ -44,25 +62,38 @@ type SegmentSeed = {
   confidence: number;
 };
 
-// 24 segments over 240s: a short/medium/long mix with a genuinely long card
-// every fifth segment so the band holds across short -> long transitions.
+// 24 segments over 240s: a short/medium/long rhythm ([short, mid, long,
+// short, short]) with a genuinely long utterance every fifth segment so
+// the band holds across short -> long transitions - longs sit between
+// short neighbors, which is what makes the 5-segment combined floor
+// physically reachable inside a 723px working band. One card is an
+// extreme monster (~630 characters) that only serves the no-clamp proof;
+// no band assertion runs with the monster as the active row's neighbor
+// because a card that tall cannot physically share the band with four
+// whole neighbors (accepted outlier of "never clamp", same idea as the
+// single >800px-segment outlier from the review gates).
+const MONSTER_INDEX = 22;
+
 function buildSegmentSeeds(recordingId: string, label: string): SegmentSeed[] {
   const short = (n: number) => `${label} segment ${n}: a brief note.`;
   const mid = (n: number) =>
     `${label} segment ${n}: the speaker walks through the timeline of the interview and confirms the sequence of events for the record.`;
   const long = (n: number) =>
-    `${label} segment ${n}: a deliberately long segment proving the layout never clamps or truncates card content. The speaker gives full background on the case, covering the initial outreach, the on-site visit, the follow-up calls with the coordination team, and the written summary that was circulated afterwards. Every sentence stays visible in the transcript at all times, because reviewers must be able to read the complete record while playback follows the active segment. No expand control, no ellipsis, no hidden copy - the full text stands on the card and the card grows to fit it.`;
+    `${label} segment ${n}: a genuinely long utterance keeping every sentence on the card. The speaker covers the initial outreach, the on-site visit, and the follow-up calls with the coordination team, all standing on the card at once with no expand control and no ellipsis.`;
+  const monster = (n: number) =>
+    `${label} segment ${n}: a deliberately extreme segment proving the layout never clamps or truncates card content. The speaker gives full background on the case, covering the initial outreach, the on-site visit, the follow-up calls with the coordination team, and the written summary that was circulated afterwards. Every sentence stays visible in the transcript at all times, because reviewers must be able to read the complete record while playback follows the active segment. No expand control, no ellipsis, no hidden copy - the full text stands on the card and the card grows to fit it.`;
   const seeds: SegmentSeed[] = [];
   for (let i = 0; i < 24; i += 1) {
     const n = i + 1;
     const kind = i % 5;
+    const monsterHere = i === MONSTER_INDEX;
     seeds.push({
       id: `${recordingId}-vc-segment-${n}`,
       speakerLabel: i % 2 === 0 ? "Speaker A" : "Speaker B",
       startMs: i * 10_000,
       endMs: (i + 1) * 10_000,
-      text: kind === 2 ? long(n) : kind % 2 === 0 ? mid(n) : short(n),
-      confidence: kind === 2 ? 0.81 : 0.93,
+      text: monsterHere ? monster(n) : kind === 2 ? long(n) : kind === 1 ? mid(n) : short(n),
+      confidence: monsterHere || kind === 2 ? 0.81 : 0.93,
     });
   }
   return seeds;
@@ -81,7 +112,8 @@ async function seekSegment(page: Page, oneBasedIndex: number) {
 }
 
 type ActiveGeometry = {
-  centerX: number;
+  left: number;
+  right: number;
   centerY: number;
   contextAfter: number;
   contextBefore: number;
@@ -120,7 +152,8 @@ async function measureActive(page: Page): Promise<ActiveGeometry | null> {
       return visibleHeight >= rowRect.height / 2 ? [index] : [];
     });
     return {
-      centerX: rect.left + rect.width / 2,
+      left: rect.left,
+      right: rect.right,
       centerY: rect.top + rect.height / 2,
       contextAfter: visibleIndices.filter((index) => index > activeIndex).length,
       contextBefore: visibleIndices.filter((index) => index < activeIndex).length,
@@ -132,9 +165,13 @@ async function measureActive(page: Page): Promise<ActiveGeometry | null> {
   });
 }
 
-// The active segment sits in the MIDDLE of the viewport on BOTH axes, with
-// the 5-10 segment context band visible around it. Polls so smooth-scroll
-// settle and one-frame re-centers never flake the assertion.
+// The active segment sits in the MIDDLE of the viewport vertically and is
+// fully visible horizontally inside its transcript column (the pinned
+// media column owns the left of the workbench: "horizontal if any wide
+// content exists" - the page never scrolls horizontally). The context
+// band around it is split before/after with the 5-segment combined floor.
+// Polls so smooth-scroll settle and one-frame re-centers never flake the
+// assertion.
 async function expectActiveMidViewport(
   page: Page,
   options: { contextBand?: boolean } = {},
@@ -143,24 +180,102 @@ async function expectActiveMidViewport(
   await expect(async () => {
     last = await measureActive(page);
     expect(last).not.toBeNull();
-    expect(Math.abs(last!.centerX - last!.viewportWidth / 2)).toBeLessThanOrEqual(
-      CENTER_TOLERANCE_PX,
-    );
+    expect(last!.left).toBeGreaterThanOrEqual(-1);
+    expect(last!.right).toBeLessThanOrEqual(last!.viewportWidth + 1);
     expect(Math.abs(last!.centerY - last!.viewportHeight / 2)).toBeLessThanOrEqual(
       CENTER_TOLERANCE_PX,
     );
     if (options.contextBand !== false) {
-      expect(last!.contextBefore).toBeGreaterThanOrEqual(2);
-      expect(last!.contextAfter).toBeGreaterThanOrEqual(2);
+      expect(last!.contextBefore).toBeGreaterThanOrEqual(MIN_CONTEXT_EACH_SIDE);
+      expect(last!.contextAfter).toBeGreaterThanOrEqual(MIN_CONTEXT_EACH_SIDE);
       expect(last!.contextBefore + last!.contextAfter).toBeGreaterThanOrEqual(
         MIN_CONTEXT,
       );
       expect(last!.contextBefore + last!.contextAfter).toBeLessThanOrEqual(
-        MAX_CONTEXT,
+        MAX_CONTEXT_GUARD,
       );
     }
   }).toPass({ timeout: 10_000, intervals: [250, 500, 1_000] });
   return last!;
+}
+
+// The two standing laws at rest (no seek, no playback, scrollY === 0):
+// the transcript zone shares the FIRST viewport with the media (the first
+// segment card is reachable without scrolling), and the player pins in
+// its own column beside the transcript. Then, after a window scroll, the
+// player must NOT scroll away with the case header.
+async function expectRestStateWorkbench(page: Page, input: { video: boolean }) {
+  const geometry = await page.evaluate(() => {
+    const q = (selector: string) =>
+      document.querySelector<HTMLElement>(selector)?.getBoundingClientRect();
+    const header = q(".case-header");
+    const transport = q(".media-transport");
+    const video = q(".media-transport video");
+    const firstCard = q(".transcript-segment");
+    const actionBar = q(".casefile-action-bar");
+    const transportEl =
+      document.querySelector<HTMLElement>(".media-transport");
+    if (!header || !transport || !firstCard || !actionBar || !transportEl) {
+      return null;
+    }
+    return {
+      headerBottom: header.bottom,
+      transportTop: transport.top,
+      transportRight: transport.right,
+      transportPosition: getComputedStyle(transportEl).position,
+      videoBottom: video?.bottom ?? null,
+      videoHeight: video?.height ?? null,
+      firstCardTop: firstCard.top,
+      firstCardLeft: firstCard.left,
+      actionBarTop: actionBar.top,
+      viewportHeight: window.innerHeight,
+    };
+  });
+  expect(geometry).not.toBeNull();
+  // Pinned column: the player sticks beside the transcript.
+  expect(geometry!.transportPosition).toBe("sticky");
+  // Beside, not stacked: the media column ends left of the transcript.
+  expect(geometry!.transportRight).toBeLessThanOrEqual(geometry!.firstCardLeft + 1);
+  // The first card is reachable without scrolling.
+  expect(geometry!.firstCardTop).toBeLessThan(geometry!.actionBarTop);
+  if (input.video) {
+    expect(geometry!.videoHeight).not.toBeNull();
+    expect(geometry!.videoHeight!).toBeGreaterThanOrEqual(96);
+    // The rendered frame is bounded so the media column stays compact.
+    expect(geometry!.videoHeight!).toBeLessThanOrEqual(
+      Math.round(geometry!.viewportHeight * VIDEO_MAX_VH) + 1,
+    );
+    // The video frame itself shares the first viewport.
+    expect(geometry!.videoBottom!).toBeLessThanOrEqual(geometry!.actionBarTop);
+  }
+
+  // Scroll deep into the transcript: the case header flows away but the
+  // pinned player stays put at the viewport top.
+  await page.evaluate(() =>
+    window.scrollTo(0, document.documentElement.scrollHeight / 2),
+  );
+  const scrolled = await page.evaluate(() => {
+    const q = (selector: string) =>
+      document.querySelector<HTMLElement>(selector)?.getBoundingClientRect();
+    const header = q(".case-header");
+    const transport = q(".media-transport");
+    const rail = q(".media-transport__rail");
+    const actions = q(".media-transport__actions");
+    return {
+      headerGone: (header?.bottom ?? 1) <= 0,
+      transportTop: transport?.top ?? null,
+      railVisible: rail ? rail.bottom > 0 && rail.top < window.innerHeight : false,
+      actionsVisible: actions
+        ? actions.bottom > 0 && actions.top < window.innerHeight
+        : false,
+    };
+  });
+  expect(scrolled.headerGone).toBe(true);
+  expect(scrolled.transportTop).toBe(0);
+  expect(scrolled.railVisible).toBe(true);
+  expect(scrolled.actionsVisible).toBe(true);
+  // Back to rest for the remainder of the flow.
+  await page.evaluate(() => window.scrollTo(0, 0));
 }
 
 async function expectActiveIndex(page: Page, zeroBasedIndex: number) {
@@ -312,17 +427,21 @@ test.describe.serial("visible-context casefile transcript surface", () => {
       page.locator(".media-transport__wave-stage, .media-transport audio[controls]").first(),
     ).toBeVisible();
 
+    // Standing laws at rest: transcript zone shares the first viewport and
+    // the player pins beside it (never scrolls away).
+    await expectRestStateWorkbench(page, { video: false });
+
     // Explicit seek recenters the target mid-viewport (both axes) with the
-    // context band around it - a short row first...
+    // context band around it - a mid-size row first...
     await seekSegment(page, 7);
     await expectActiveIndex(page, 6);
-    const shortGeometry = await expectActiveMidViewport(page);
+    const midGeometry = await expectActiveMidViewport(page);
 
     // ...then a long row: the card grows, centering and band hold.
     await seekSegment(page, 13);
     await expectActiveIndex(page, 12);
     const longGeometry = await expectActiveMidViewport(page);
-    expect(longGeometry.height).toBeGreaterThan(shortGeometry.height);
+    expect(longGeometry.height).toBeGreaterThan(midGeometry.height);
 
     // Playback crossing a short -> long boundary keeps the active row
     // mid-viewport while the track moves on its own.
@@ -341,6 +460,9 @@ test.describe.serial("visible-context casefile transcript surface", () => {
     await expectActiveMidViewport(page, { contextBand: false });
     await stopPlayback(page);
 
+    // The extreme monster stands complete too - cards grow, never clamp.
+    await expectNoClamp(page, MONSTER_INDEX + 1, seeds[MONSTER_INDEX].text);
+
     // The transcript is fully scrollable end to end.
     await expectFullyScrollable(page, 24);
 
@@ -354,8 +476,8 @@ test.describe.serial("visible-context casefile transcript surface", () => {
       segmentRow(page, 1).getByRole("textbox"),
     ).toHaveCount(0);
 
-    await seekSegment(page, 10);
-    await expectActiveIndex(page, 9);
+    await seekSegment(page, 9);
+    await expectActiveIndex(page, 8);
     await expectActiveMidViewport(page);
 
     await playAcrossBoundary(page, 130_000);
@@ -383,9 +505,11 @@ test.describe.serial("visible-context casefile transcript surface", () => {
     // Video keeps its frame and the previous (native) controls.
     const video = page.locator(".media-transport video[controls]");
     await expect(video).toBeVisible();
-    const videoBox = await video.boundingBox();
-    expect(videoBox?.height ?? 0).toBeGreaterThanOrEqual(96);
     expect(await video.evaluate((node) => (node as HTMLVideoElement).controls)).toBe(true);
+
+    // Standing laws at rest: bounded frame, transcript zone shares the
+    // first viewport, player pinned beside the transcript.
+    await expectRestStateWorkbench(page, { video: true });
 
     await seekSegment(page, 8);
     await expectActiveIndex(page, 7);
