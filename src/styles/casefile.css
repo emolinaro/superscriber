@@ -994,10 +994,14 @@
     white-space: nowrap;
   }
 
-  .casefile-main[data-revision="true"] .transcript-segment[data-edited-diff] .transcript-segment__text > .field-note {
-    grid-column: 3;
+  .casefile-main[data-revision="true"] .transcript-segment[data-edited-diff] .transcript-segment__text > :is(p, textarea) {
     grid-row: 2;
-    justify-self: start;
+  }
+
+  .casefile-main[data-revision="true"] .transcript-segment[data-edited-diff] .transcript-segment__text > .field-note {
+    grid-column: 4;
+    grid-row: 2;
+    justify-self: end;
   }
 }
 

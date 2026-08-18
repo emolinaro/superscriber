@@ -77,7 +77,7 @@ export function MediaTransport({
   // touch drag on the rail pauses ONLY the rail's follow; rail gestures
   // never pause the transcript's vertical follow
   // (FOLLOW_SCROLL_IGNORED_TARGETS), and any explicit seek re-engages both
-  // axes. The nonce mirrors the workspace's followResumeNonce so a repeated
+  // axes. The nonce mirrors the workspace's followActivationNonce so a repeated
   // seek that does not change the active segment still re-centers the chip.
   const railFollowPausedRef = useRef(false);
   const [railFollowResumeNonce, setRailFollowResumeNonce] = useState(0);
