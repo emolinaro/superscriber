@@ -88,7 +88,8 @@
 }
 
 @media (max-width: 1099px) {
-  /* Pinned player chrome (player-pinned-center) on every window-scrolling
+  /* Pinned player chrome (casefile-pin-transcript-zone) on every
+     window-scrolling
      casefile width. The stacked offsets behind the old desktop stickies
      (case-header top: 64px, transport top: 132px) were calibrated for the
      single-row desktop chrome; below 1100px the app bar wraps to several
