@@ -27,6 +27,12 @@ type MediaTransportProps = {
   seekRequest: { segmentId: string; startMs: number; endMs: number } | null;
   onSeekHandled: () => void;
   onMediaSeek?: () => void;
+  /**
+   * First playback tick gate (casefile-pin-transcript-zone): fired on each
+   * timeupdate while the media is actually playing, so the transcript's
+   * dormant-on-mount follow activates exactly when the track starts moving.
+   */
+  onPlaybackTick?: () => void;
   onActiveSegmentChange: (segmentId: string | null) => void;
   /** Mirrors the media element's playing state so the transcript document
    * renders the active segment button as a truthful play/pause toggle. */
@@ -58,6 +64,7 @@ export function MediaTransport({
   seekRequest,
   onSeekHandled,
   onMediaSeek,
+  onPlaybackTick,
   onActiveSegmentChange,
   onLocateSegment,
   onPlayingChange,
@@ -271,6 +278,7 @@ export function MediaTransport({
     };
 
     const decision = decideFollowScroll(
+      true,
       railFollowPausedRef.current,
       isTargetInHorizontalView(scrollport, target),
     );
@@ -325,6 +333,13 @@ export function MediaTransport({
   function syncActiveSegment(currentTimeSeconds: number) {
     const match = segmentAtTime(segments, currentTimeSeconds);
     onActiveSegmentChange(match?.id ?? null);
+  }
+
+  function handleTimeUpdate(event: SyntheticEvent<HTMLMediaElement>) {
+    syncActiveSegment(event.currentTarget.currentTime);
+    if (!event.currentTarget.paused) {
+      onPlaybackTick?.();
+    }
   }
 
   function handleSeeking(event: SyntheticEvent<HTMLMediaElement>) {
@@ -386,7 +401,7 @@ export function MediaTransport({
           <video
             controls
             onSeeking={handleSeeking}
-            onTimeUpdate={(event) => syncActiveSegment(event.currentTarget.currentTime)}
+            onTimeUpdate={handleTimeUpdate}
             ref={attachMedia}
             src={mediaUrl}
           />
@@ -394,7 +409,7 @@ export function MediaTransport({
           <audio
             controls={nativeControls || undefined}
             onSeeking={handleSeeking}
-            onTimeUpdate={(event) => syncActiveSegment(event.currentTarget.currentTime)}
+            onTimeUpdate={handleTimeUpdate}
             preload="metadata"
             ref={attachMedia}
             src={mediaUrl}

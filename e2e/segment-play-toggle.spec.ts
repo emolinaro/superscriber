@@ -108,7 +108,10 @@ test("a deep active transcript segment pauses and resumes in place with transpor
   expect(afterNonActiveClick.currentTime).toBeLessThan(42);
   expect(afterNonActiveClick.mediaPaused).toBe(false);
   expect(afterNonActiveClick.transcriptButtonInViewport).toBe(true);
-  expect(afterNonActiveClick.transportButtonInViewport).toBe(false);
+  // casefile-pin-transcript-zone: the transport is pinned inside the bounded
+  // desktop page, so it stays on the window viewport even for a deep active
+  // row (previously the window scrolled it off-screen).
+  expect(afterNonActiveClick.transportButtonInViewport).toBe(true);
 
   await activeSegment.click();
   await expect(activeSegment).toHaveAttribute("aria-pressed", "false");
@@ -125,16 +128,16 @@ test("a deep active transcript segment pauses and resumes in place with transpor
   expect(paused.transportLabel).toBe("Play");
   expect(paused.transportPressed).toBe("false");
   expect(paused.transcriptButtonInViewport).toBe(true);
-  expect(paused.transportButtonInViewport).toBe(false);
+  expect(paused.transportButtonInViewport).toBe(true);
 
-  await testInfo.attach("active-segment-paused-with-transport-offscreen", {
+  await testInfo.attach("active-segment-paused-with-pinned-transport", {
     body: await page.screenshot(),
     contentType: "image/png",
   });
   const evidenceDir = process.env.SUPERSCRIBER_E2E_EVIDENCE_DIR?.trim();
   if (evidenceDir) {
     await page.screenshot({
-      path: `${evidenceDir}/active-segment-paused-transport-offscreen.png`,
+      path: `${evidenceDir}/active-segment-paused-pinned-transport.png`,
     });
   }
 

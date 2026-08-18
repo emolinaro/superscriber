@@ -166,32 +166,58 @@ describe("product css contract", () => {
     expect(shell).toContain(".account-menu__appearance-option");
   });
 
-  it("pins the playback transport on both the desktop scrollport and the phone viewport", () => {
-    // player-pinned-center: the playback surface and progress wave must never
-    // scroll out of view on either surface.
+  it("pins the desktop casefile zone and gives the transcript the only scrollport", () => {
+    // casefile-pin-transcript-zone: the case header, media box, transport,
+    // and segment rail form a pinned zone inside the bounded page; ONLY the
+    // transcript segments list scrolls, inside its own viewport, and the
+    // viewport keeps default overscroll behavior so wheel/touch gestures
+    // chain outward at its edges instead of trapping.
     const casefile = readFileSync(resolve(STYLES_DIR, "casefile.css"), "utf8");
     const desktopTransport = casefile.match(
       /\.casefile-main\[data-revision="true"\] \.media-transport\s*\{([^}]*)\}/,
     );
-    expect(desktopTransport?.[1]).toContain("position: sticky");
-    expect(desktopTransport?.[1]).toContain("top: 0");
-    const desktopScrollport = casefile.match(
+    expect(desktopTransport?.[1]).toContain("position: static");
+    expect(desktopTransport?.[1]).toContain("flex: 0 0 auto");
+    const desktopMain = casefile.match(
       /\.casefile-main\[data-revision="true"\]\s*\{([^}]*)\}/,
     );
-    expect(desktopScrollport?.[1]).toContain(
-      "scroll-padding-block: var(--player-clearance",
+    expect(desktopMain?.[1]).not.toContain("overflow-y");
+    expect(desktopMain?.[1]).not.toContain("scroll-padding");
+    const transcriptViewport = casefile.match(
+      /\.casefile-main\[data-revision="true"\] \.transcript-document__segments\s*\{([^}]*)\}/,
     );
+    expect(transcriptViewport?.[1]).toContain("overflow-y: auto");
+    expect(transcriptViewport?.[1]).toContain("min-height: var(--transcript-viewport-min");
+    expect(transcriptViewport?.[1]).not.toContain("overscroll-behavior");
+    // The bounded page subtracts every shell offset (including the main
+    // column's bottom padding) so the window never gains scroll range and
+    // the pinned zone can never be scrolled away.
+    const boundedPage = casefile.match(
+      /\.casefile-page:has\(> \.casefile-layout > \.casefile-main\[data-revision="true"\]\)\s*\{([^}]*)\}/,
+    );
+    expect(boundedPage?.[1]).toContain("overflow: hidden");
+    expect(boundedPage?.[1]).toContain("var(--space-12)");
     const desktopDensityStart = casefile.lastIndexOf("@media (min-width: 1100px) {");
     const compactHeightStart = casefile.indexOf(
       "@media (min-width: 1100px) and (max-height: 920px)",
     );
     expect(compactHeightStart).toBeGreaterThan(desktopDensityStart);
-    const compactHeight = casefile.slice(compactHeightStart);
-    expect(compactHeight).toMatch(
+    // Pinned-zone density applies at every desktop height...
+    const desktopDensity = casefile.slice(desktopDensityStart, compactHeightStart);
+    expect(desktopDensity).toMatch(
       /\.media-transport\s*\{[^}]*padding: var\(--space-2\)/,
     );
-    expect(compactHeight).toMatch(
+    expect(desktopDensity).toMatch(
       /\.case-header__body\s*\{[^}]*padding: var\(--space-2\) var\(--space-3\)/,
+    );
+    // ...and the laptop-height tier additionally collapses the rail and
+    // trades media height for transcript room.
+    const compactHeight = casefile.slice(compactHeightStart);
+    expect(compactHeight).toMatch(
+      /\.media-transport__rail\s*\{[^}]*display: none/,
+    );
+    expect(compactHeight).toMatch(
+      /\.transcript-document__segments\s*\{[^}]*min-height: var\(--transcript-viewport-min, 224px\)/,
     );
 
     const responsive = readFileSync(resolve(STYLES_DIR, "responsive.css"), "utf8");
