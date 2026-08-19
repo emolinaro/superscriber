@@ -410,30 +410,6 @@ describe("CasefileWorkspace", () => {
     expect(screen.queryByDisplayValue("")) .not.toBeInTheDocument();
   });
 
-  it("keeps follow dormant when unavailable media rejects a timestamp seek", async () => {
-    const user = userEvent.setup();
-    const scrollIntoView = vi.spyOn(
-      window.HTMLElement.prototype,
-      "scrollIntoView",
-    );
-    renderWorkspace({
-      media: {
-        kind: "audio",
-        url: null,
-        denialReason: "No media asset is attached to this recording yet.",
-      },
-    });
-    scrollIntoView.mockClear();
-
-    await user.click(
-      screen.getByRole("button", {
-        name: "Play or pause segment 1, 00:00-00:10",
-      }),
-    );
-
-    expect(scrollIntoView).not.toHaveBeenCalled();
-  });
-
   it("registers beforeunload only while dirty and saves with retained focus", async () => {
     const user = userEvent.setup();
     const nextCasefile = createCasefile({

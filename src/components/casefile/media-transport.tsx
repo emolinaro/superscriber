@@ -27,7 +27,6 @@ type MediaTransportProps = {
   seekRequest: { segmentId: string; startMs: number; endMs: number } | null;
   onSeekHandled: () => void;
   onMediaSeek?: () => void;
-  onPlaybackTick?: () => void;
   onActiveSegmentChange: (segmentId: string | null) => void;
   /** Mirrors the media element's playing state so the transcript document
    * renders the active segment button as a truthful play/pause toggle. */
@@ -59,7 +58,6 @@ export function MediaTransport({
   seekRequest,
   onSeekHandled,
   onMediaSeek,
-  onPlaybackTick,
   onActiveSegmentChange,
   onLocateSegment,
   onPlayingChange,
@@ -72,8 +70,8 @@ export function MediaTransport({
   // touch drag on the rail pauses ONLY the rail's follow; rail gestures
   // never pause the transcript's vertical follow
   // (FOLLOW_SCROLL_IGNORED_TARGETS), and any explicit seek re-engages both
-  // axes. The nonce lets a repeated seek that does not change the active
-  // segment still re-center the chip.
+  // axes. The nonce mirrors the workspace's followResumeNonce so a repeated
+  // seek that does not change the active segment still re-centers the chip.
   const railFollowPausedRef = useRef(false);
   const [railFollowResumeNonce, setRailFollowResumeNonce] = useState(0);
   const [railWidth, setRailWidth] = useState(0);
@@ -273,7 +271,6 @@ export function MediaTransport({
     };
 
     const decision = decideFollowScroll(
-      true,
       railFollowPausedRef.current,
       isTargetInHorizontalView(scrollport, target),
     );
@@ -338,13 +335,6 @@ export function MediaTransport({
     onMediaSeek?.();
   }
 
-  function handleTimeUpdate(event: SyntheticEvent<HTMLMediaElement>) {
-    syncActiveSegment(event.currentTarget.currentTime);
-    if (!event.currentTarget.paused) {
-      onPlaybackTick?.();
-    }
-  }
-
   function togglePlayback() {
     const media = mediaRef.current;
     if (!media) {
@@ -396,7 +386,7 @@ export function MediaTransport({
           <video
             controls
             onSeeking={handleSeeking}
-            onTimeUpdate={handleTimeUpdate}
+            onTimeUpdate={(event) => syncActiveSegment(event.currentTarget.currentTime)}
             ref={attachMedia}
             src={mediaUrl}
           />
@@ -404,7 +394,7 @@ export function MediaTransport({
           <audio
             controls={nativeControls || undefined}
             onSeeking={handleSeeking}
-            onTimeUpdate={handleTimeUpdate}
+            onTimeUpdate={(event) => syncActiveSegment(event.currentTarget.currentTime)}
             preload="metadata"
             ref={attachMedia}
             src={mediaUrl}
