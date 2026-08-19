@@ -837,8 +837,12 @@ export function CasefileWorkspace({
     );
   }
 
+  // data-media-kind scopes the captain's 2026-08-19 video ruling in CSS:
+  // video casefiles restore the original (pre-pinned-handled) frame size and
+  // get a video-only transcript budget, while audio casefiles stay byte-for-
+  // byte on the pinned-zone layout they already had.
   return (
-    <div className="casefile-page">
+    <div className="casefile-page" data-media-kind={casefile.media.kind}>
       {pageNotice ? <InlineNotice tone="success">{pageNotice}</InlineNotice> : null}
       <span aria-live="polite" className="sr-only" role="status">
         {liveMessage}

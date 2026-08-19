@@ -178,6 +178,28 @@ describe("product css contract", () => {
     );
     expect(desktopTransport?.[1]).toContain("position: static");
     expect(desktopTransport?.[1]).toContain("flex: 0 0 auto");
+    // Captain ruling 2026-08-19: the video frame renders at its original
+    // pre-pinned-zone 30vh cap (the withdrawn 96px band must not come back),
+    // and the transcript budget that makes room for it is video-scoped so
+    // the audio layout stays byte-for-byte on the pinned-zone contract.
+    const desktopVideo = casefile.match(
+      /\.casefile-main\[data-revision="true"\] \.media-transport__controls video\s*\{([^}]*)\}/,
+    );
+    expect(desktopVideo?.[1]).toContain("max-height: 30vh");
+    expect(casefile).not.toContain("max-height: 96px");
+    expect(casefile).not.toContain("max-height: 12vh");
+    expect(casefile).toContain(
+      '.app-shell__main:has(> .casefile-page[data-media-kind="video"] > .casefile-layout > .casefile-main[data-revision="true"])',
+    );
+    expect(casefile).toContain(
+      '.casefile-page[data-media-kind="video"]:has(> .casefile-layout > .casefile-main[data-revision="true"])',
+    );
+    const videoViewport = casefile.match(
+      /\.casefile-page\[data-media-kind="video"\] \.casefile-main\[data-revision="true"\] \.transcript-document__segments\s*\{([^}]*)\}/,
+    );
+    expect(videoViewport?.[1]).toContain(
+      "min-height: var(--transcript-viewport-min, 176px)",
+    );
     const desktopMain = casefile.match(
       /\.casefile-main\[data-revision="true"\]\s*\{([^}]*)\}/,
     );
