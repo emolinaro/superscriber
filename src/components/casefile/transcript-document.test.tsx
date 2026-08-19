@@ -215,6 +215,7 @@ describe("TranscriptDocument", () => {
       <TranscriptDocument
         activeSegmentId="seg-2"
         editable={false}
+        followActivationNonce={1}
         onSeek={vi.fn()}
         onUpdateSpeaker={vi.fn()}
         onUpdateText={vi.fn()}
@@ -228,8 +229,103 @@ describe("TranscriptDocument", () => {
     expect(scrollIntoViewMock).toHaveBeenCalledTimes(1);
     expect(scrollIntoViewMock).toHaveBeenCalledWith({
       block: "center",
+      inline: "center",
       behavior: "smooth",
     });
+  });
+
+  it("anchors the first and final rows without scrolling the page", () => {
+    const windowScrollTo = vi.spyOn(window, "scrollTo").mockImplementation(() => {});
+    const { rerender } = render(
+      <TranscriptDocument
+        activeSegmentId={null}
+        editable={false}
+        onSeek={vi.fn()}
+        onUpdateSpeaker={vi.fn()}
+        onUpdateText={vi.fn()}
+        phoneSafetyMode={false}
+        segments={baseSegments}
+        summary="Ready for review."
+        onSummaryChange={vi.fn()}
+      />,
+    );
+    const scrollport = document.querySelector<HTMLElement>(
+      ".transcript-document__segments",
+    )!;
+    const scrollTo = vi.fn();
+    scrollport.style.overflowY = "auto";
+    Object.defineProperty(scrollport, "clientHeight", { configurable: true, value: 200 });
+    Object.defineProperty(scrollport, "scrollHeight", { configurable: true, value: 600 });
+    Object.defineProperty(scrollport, "scrollTo", { configurable: true, value: scrollTo });
+
+    rerender(
+      <TranscriptDocument
+        activeSegmentId="seg-2"
+        editable={false}
+        followActivationNonce={1}
+        onSeek={vi.fn()}
+        onUpdateSpeaker={vi.fn()}
+        onUpdateText={vi.fn()}
+        phoneSafetyMode={false}
+        segments={baseSegments}
+        summary="Ready for review."
+        onSummaryChange={vi.fn()}
+      />,
+    );
+    expect(scrollTo).toHaveBeenLastCalledWith({ behavior: "smooth", top: 400 });
+
+    rerender(
+      <TranscriptDocument
+        activeSegmentId="seg-1"
+        editable={false}
+        followActivationNonce={2}
+        onSeek={vi.fn()}
+        onUpdateSpeaker={vi.fn()}
+        onUpdateText={vi.fn()}
+        phoneSafetyMode={false}
+        segments={baseSegments}
+        summary="Ready for review."
+        onSummaryChange={vi.fn()}
+      />,
+    );
+    expect(scrollTo).toHaveBeenLastCalledWith({ behavior: "smooth", top: 0 });
+    expect(windowScrollTo).not.toHaveBeenCalled();
+  });
+
+  it("keeps mount-time follow dormant until track movement activates it", () => {
+    const { rerender } = render(
+      <TranscriptDocument
+        activeSegmentId="seg-1"
+        editable={false}
+        followActivationNonce={0}
+        onSeek={vi.fn()}
+        onUpdateSpeaker={vi.fn()}
+        onUpdateText={vi.fn()}
+        phoneSafetyMode={false}
+        segments={baseSegments}
+        summary="Ready for review."
+        onSummaryChange={vi.fn()}
+      />,
+    );
+
+    expect(scrollIntoViewMock).not.toHaveBeenCalled();
+
+    rerender(
+      <TranscriptDocument
+        activeSegmentId="seg-1"
+        editable={false}
+        followActivationNonce={1}
+        onSeek={vi.fn()}
+        onUpdateSpeaker={vi.fn()}
+        onUpdateText={vi.fn()}
+        phoneSafetyMode={false}
+        segments={baseSegments}
+        summary="Ready for review."
+        onSummaryChange={vi.fn()}
+      />,
+    );
+
+    expect(scrollIntoViewMock).toHaveBeenCalledTimes(1);
   });
 
   it("uses an instant follow-scroll under prefers-reduced-motion", () => {
@@ -238,6 +334,7 @@ describe("TranscriptDocument", () => {
       <TranscriptDocument
         activeSegmentId="seg-2"
         editable={false}
+        followActivationNonce={1}
         onSeek={vi.fn()}
         onUpdateSpeaker={vi.fn()}
         onUpdateText={vi.fn()}
@@ -250,6 +347,7 @@ describe("TranscriptDocument", () => {
 
     expect(scrollIntoViewMock).toHaveBeenCalledWith({
       block: "center",
+      inline: "center",
       behavior: "auto",
     });
   });
@@ -261,6 +359,7 @@ describe("TranscriptDocument", () => {
       <TranscriptDocument
         activeSegmentId="seg-1"
         editable={false}
+        followActivationNonce={1}
         onSeek={vi.fn()}
         onUpdateSpeaker={vi.fn()}
         onUpdateText={vi.fn()}
@@ -280,6 +379,7 @@ describe("TranscriptDocument", () => {
       <TranscriptDocument
         activeSegmentId="seg-2"
         editable={false}
+        followActivationNonce={1}
         onSeek={vi.fn()}
         onUpdateSpeaker={vi.fn()}
         onUpdateText={vi.fn()}
@@ -302,6 +402,7 @@ describe("TranscriptDocument", () => {
       <TranscriptDocument
         activeSegmentId="seg-1"
         editable={false}
+        followActivationNonce={1}
         onSeek={vi.fn()}
         onUpdateSpeaker={vi.fn()}
         onUpdateText={vi.fn()}
@@ -314,6 +415,7 @@ describe("TranscriptDocument", () => {
     expect(scrollIntoViewMock).toHaveBeenCalledTimes(1);
     expect(scrollIntoViewMock).toHaveBeenCalledWith({
       block: "center",
+      inline: "center",
       behavior: "smooth",
     });
   });
@@ -325,6 +427,7 @@ describe("TranscriptDocument", () => {
           <TranscriptDocument
             activeSegmentId="seg-1"
             editable={false}
+            followActivationNonce={1}
             onSeek={vi.fn()}
             onUpdateSpeaker={vi.fn()}
             onUpdateText={vi.fn()}
@@ -348,6 +451,7 @@ describe("TranscriptDocument", () => {
         <TranscriptDocument
           activeSegmentId="seg-2"
           editable={false}
+          followActivationNonce={1}
           onSeek={vi.fn()}
           onUpdateSpeaker={vi.fn()}
           onUpdateText={vi.fn()}
@@ -369,6 +473,7 @@ describe("TranscriptDocument", () => {
           <TranscriptDocument
             activeSegmentId={activeSegmentId}
             editable
+            followActivationNonce={1}
             onSeek={vi.fn()}
             onUpdateSpeaker={vi.fn()}
             onUpdateText={vi.fn()}
@@ -405,6 +510,7 @@ describe("TranscriptDocument", () => {
           <TranscriptDocument
             activeSegmentId={activeSegmentId}
             editable={false}
+            followActivationNonce={1}
             onSeek={vi.fn()}
             onUpdateSpeaker={vi.fn()}
             onUpdateText={vi.fn()}
@@ -456,6 +562,7 @@ describe("TranscriptDocument", () => {
       <TranscriptDocument
         activeSegmentId="seg-2"
         editable={false}
+        followActivationNonce={1}
         onSeek={onSeek}
         onUpdateSpeaker={vi.fn()}
         onUpdateText={vi.fn()}
@@ -467,6 +574,7 @@ describe("TranscriptDocument", () => {
     );
     expect(scrollIntoViewMock).toHaveBeenCalledWith({
       block: "center",
+      inline: "center",
       behavior: "smooth",
     });
   });
@@ -476,7 +584,7 @@ describe("TranscriptDocument", () => {
       <TranscriptDocument
         activeSegmentId="seg-1"
         editable={false}
-        followResumeNonce={0}
+        followActivationNonce={0}
         onSeek={vi.fn()}
         onUpdateSpeaker={vi.fn()}
         onUpdateText={vi.fn()}
@@ -493,7 +601,7 @@ describe("TranscriptDocument", () => {
       <TranscriptDocument
         activeSegmentId="seg-1"
         editable={false}
-        followResumeNonce={1}
+        followActivationNonce={1}
         onSeek={vi.fn()}
         onUpdateSpeaker={vi.fn()}
         onUpdateText={vi.fn()}
@@ -506,6 +614,7 @@ describe("TranscriptDocument", () => {
 
     expect(scrollIntoViewMock).toHaveBeenCalledWith({
       block: "center",
+      inline: "center",
       behavior: "smooth",
     });
   });
@@ -554,6 +663,7 @@ describe("TranscriptDocument", () => {
 
     expect(scrollIntoViewMock).toHaveBeenCalledWith({
       block: "center",
+      inline: "center",
       behavior: "auto",
     });
     expect(
@@ -580,6 +690,7 @@ describe("TranscriptDocument", () => {
     expect(scrollIntoViewMock).toHaveBeenCalledTimes(1);
     expect(scrollIntoViewMock).toHaveBeenCalledWith({
       block: "center",
+      inline: "center",
       behavior: "auto",
     });
     expect(

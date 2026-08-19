@@ -369,7 +369,7 @@ export function CasefileWorkspace({
   // segment button can expose a truthful play/pause toggle (see
   // TranscriptDocument aria-pressed).
   const [activeSegmentPlaying, setActiveSegmentPlaying] = useState(false);
-  const [followResumeNonce, setFollowResumeNonce] = useState(0);
+  const [followActivationNonce, setFollowActivationNonce] = useState(0);
   const [reviewFocus, setReviewFocus] = useState<{ segmentId: string; nonce: number } | null>(
     null,
   );
@@ -893,7 +893,12 @@ export function CasefileWorkspace({
                 mediaKind={casefile.media.kind}
                 mediaUrl={casefile.media.url}
                 onActiveSegmentChange={setActiveSegmentId}
-                onMediaSeek={() => setFollowResumeNonce((current) => current + 1)}
+                onMediaSeek={() =>
+                  setFollowActivationNonce((current) => current + 1)
+                }
+                onPlaybackTick={() =>
+                  setFollowActivationNonce((current) => (current === 0 ? 1 : current))
+                }
                 onLocateSegment={(segment) => {
                   // Player rail/marker seek already happened in the
                   // transport; here the transcript list surfaces the segment
@@ -912,20 +917,20 @@ export function CasefileWorkspace({
                 activeSegmentId={activeSegmentId}
                 activeSegmentPlaying={activeSegmentPlaying}
                 editable={editable}
-                followResumeNonce={followResumeNonce}
+                followActivationNonce={followActivationNonce}
                 onOpenSpeakerRename={
                   editable ? () => setSpeakerRenameOpen(true) : undefined
                 }
                 speakerRenameNote={
                   dirty ? "Save or discard unsaved changes before renaming speakers." : null
                 }
-                onSeek={(segment) =>
+                onSeek={(segment) => {
                   setSeekRequest({
                     segmentId: segment.id,
                     startMs: segment.startMs,
                     endMs: segment.endMs,
-                  })
-                }
+                  });
+                }}
                 onSummaryChange={updateSummary}
                 onUpdateSpeaker={updateSpeaker}
                 onUpdateText={updateText}

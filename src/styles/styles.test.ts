@@ -166,40 +166,85 @@ describe("product css contract", () => {
     expect(shell).toContain(".account-menu__appearance-option");
   });
 
-  it("pins the playback transport on both the desktop scrollport and the phone viewport", () => {
-    // player-pinned-center: the playback surface and progress wave must never
-    // scroll out of view on either surface.
+  it("stacks the pinned desktop transport above a centered transcript", () => {
+    // visible-context: on >=1100px only the transcript scrolls below the
+    // pinned media band. The combined page remains naturally flowing.
     const casefile = readFileSync(resolve(STYLES_DIR, "casefile.css"), "utf8");
-    const desktopTransport = casefile.match(
-      /\.casefile-main\[data-revision="true"\] \.media-transport\s*\{([^}]*)\}/,
+    expect(casefile).not.toMatch(
+      /\.casefile-page:has\(> \.casefile-layout > \.casefile-main\[data-revision="true"\]\)\s*\{[^}]*(?:block-size|max-height|overflow-y):/s,
     );
-    expect(desktopTransport?.[1]).toContain("position: sticky");
-    expect(desktopTransport?.[1]).toContain("top: 0");
-    const desktopScrollport = casefile.match(
-      /\.casefile-main\[data-revision="true"\]\s*\{([^}]*)\}/,
+    // casefile.css holds several >=1100px media blocks; the workbench block
+    // is the one carrying the transcript overflow contract.
+    const desktopBlocks = [
+      ...casefile.matchAll(/@media \(min-width: 1100px\) \{([\s\S]*?)\n\}\n/g),
+    ].map((match) => match[1]);
+    const desktopBlock = desktopBlocks.find((block) =>
+      block.includes("overscroll-behavior-block"),
     );
-    expect(desktopScrollport?.[1]).toContain(
-      "scroll-padding-block: var(--player-clearance",
+    expect(desktopBlock).toBeDefined();
+    // Vertical workbench: the single-column main stacks the player above a
+    // centered transcript. The transport's own two-column band bounds its
+    // height so the transcript zone always shares the first viewport.
+    expect(desktopBlock).toMatch(
+      /\.casefile-main\[data-revision="true"\]\s*\{[^}]*grid-template-columns: minmax\(0, 1fr\)/,
     );
-    const desktopDensityStart = casefile.lastIndexOf("@media (min-width: 1100px) {");
-    const compactHeightStart = casefile.indexOf(
-      "@media (min-width: 1100px) and (max-height: 920px)",
+    expect(desktopBlock).toMatch(
+      /\.casefile-layout:not\(\[data-governance-open="true"\]\)[\s\S]*?\.media-transport\s*\{[^}]*position: sticky;\s*top: 0;[^}]*grid-template-columns: minmax\(0, 1fr\) minmax\(0, 1fr\)/s,
     );
-    expect(compactHeightStart).toBeGreaterThan(desktopDensityStart);
-    const compactHeight = casefile.slice(compactHeightStart);
-    expect(compactHeight).toMatch(
-      /\.media-transport\s*\{[^}]*padding: var\(--space-2\)/,
+    expect(desktopBlock).toMatch(
+      /\.media-transport:has\(video\)\s*\{\s*padding: 0;/,
     );
-    expect(compactHeight).toMatch(
-      /\.case-header__body\s*\{[^}]*padding: var\(--space-2\) var\(--space-3\)/,
+    expect(desktopBlock).toMatch(
+      /\.transcript-document__segments\s*\{[^}]*block-size: var\(--transcript-scrollport-block-size\);[^}]*overflow-y: auto;[^}]*overscroll-behavior-block: contain;[^}]*scrollbar-gutter: stable both-edges;/s,
     );
+    expect(desktopBlock).not.toMatch(/\.transcript-document__segments\s*\{[^}]*padding-block-end:/s);
+    expect(desktopBlock).toMatch(
+      /\.casefile-main\[data-revision="true"\] \.transcript-segment\s*\{[^}]*grid-template-columns: auto minmax\(8rem, auto\) minmax\(0, 1fr\) auto;[^}]*padding-block: var\(--space-1\);/s,
+    );
+    expect(desktopBlock).toMatch(
+      /\.transcript-segment__text > :is\(p, textarea\)\s*\{\s*grid-column: 3;/,
+    );
+    expect(desktopBlock).toMatch(
+      /\.casefile-layout:not\(\[data-governance-open="true"\]\)[\s\S]*?\.transcript-document\s*\{[^}]*position: sticky;[^}]*top: calc\(var\(--player-clearance, 0px\) \+ var\(--space-2\)\);[^}]*max-width: var\(--work-max\);[^}]*justify-self: center/s,
+    );
+    expect(desktopBlock).toMatch(
+      /\.casefile-layout\[data-governance-open="true"\][\s\S]*?\.casefile-main\[data-revision="true"\]\s*\{\s*grid-template-columns: minmax\(300px, 5fr\) minmax\(0, 7fr\);\s*gap: var\(--space-4\);/,
+    );
+    expect(desktopBlock).toMatch(
+      /\.casefile-layout\[data-governance-open="true"\][\s\S]*?\.transcript-document\s*\{[^}]*grid-column: 2;[^}]*block-size: 100vh;[^}]*max-width: none;/s,
+    );
+    expect(desktopBlock).toMatch(
+      /:has\(> \.media-transport--empty\)[\s\S]*?\.transcript-document\s*\{[^}]*grid-column: 1 \/ -1;[^}]*max-width: var\(--work-max\);[^}]*justify-self: center;/s,
+    );
+    expect(desktopBlock).toMatch(
+      /\.media-transport__controls video\s*\{[^}]*max-height: 32\.5vh/,
+    );
+    // Rest-state readability: the action-mode banner compacts into a
+    // wrapped row so the first segment card stays above the fold.
+    expect(casefile).toMatch(
+      /@media \(min-width: 1100px\)[\s\S]*?\.casefile-page \.action-mode-banner\s*\{[^}]*display: flex/,
+    );
+    const baseTransport = casefile.match(/\.media-transport\s*\{([^}]*)\}/);
+    expect(baseTransport?.[1]).toContain("position: static");
+    // Chrome parking is banned on casefile pages at every width.
+    expect(casefile).toMatch(
+      /body:has\(\.casefile-page\) \.app-shell__header,[\s\S]*?\.case-header\s*\{[^}]*position: static/,
+    );
+    // No segment clamping ever: the editor hugs its content instead.
+    const segmentEditor = casefile.match(
+      /\.transcript-segment textarea\s*\{([^}]*)\}/,
+    );
+    expect(segmentEditor?.[1]).toContain("field-sizing: content");
+    expect(segmentEditor?.[1]).not.toContain("8rem");
+    expect(casefile).not.toMatch(/line-clamp/);
 
     const responsive = readFileSync(resolve(STYLES_DIR, "responsive.css"), "utf8");
     const windowScrollMedia = responsive.match(
       /@media \(max-width: 1099px\) \{([\s\S]*?)\n\}\n/,
     );
-    expect(windowScrollMedia?.[1]).toContain("body:has(.casefile-page) .app-shell__header");
-    expect(windowScrollMedia?.[1]).toContain("body:has(.casefile-page) .banner-emergency");
+    // Below 1100px the transport stays viewport-pinned with its own
+    // asymmetric clearance (the desktop window-scroll contract above does
+    // not apply there).
     const windowTransport = windowScrollMedia?.[1].match(/\.media-transport\s*\{([^}]*)\}/);
     expect(windowTransport?.[1]).toContain("position: sticky");
     expect(windowTransport?.[1]).toContain("top: 0");
@@ -214,9 +259,6 @@ describe("product css contract", () => {
     );
     expect(compactVideo?.[1]).toContain("max-height: 42vh");
     expect(compactVideo?.[1]).toContain("object-fit: contain");
-    // The case header must not double-park above the pinned transport on
-    // window-scrolling surfaces.
-    expect(windowScrollMedia?.[1]).toMatch(/\.case-header[\s,\{][^}]*position: static/);
     expect(windowScrollMedia?.[1]).toMatch(
       /\.media-transport__rail\s*\{[^}]*display: none/,
     );
@@ -256,8 +298,7 @@ describe("product css contract", () => {
     expect(css).toContain("min-height: var(--type-44)");
     expect(css).toContain("html, body {");
     expect(css).toContain("overflow-x: clip");
-    expect(css).toContain("top: 64px");
-    expect(css).toContain("top: 132px");
+    expect(css).toContain("top: 0");
     expect(css).toContain("bottom: 0");
     expect(css).toContain("position: fixed");
     expect(css).toContain("@media (max-width: 389px)");
