@@ -3,6 +3,7 @@
 import userEvent from "@testing-library/user-event";
 import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import type { TranscriptSegment } from "@/domain/models";
 import { createCasefile } from "./test-fixtures";
 import { CasefileWorkspace } from "./casefile-workspace";
 
@@ -766,6 +767,129 @@ describe("CasefileWorkspace", () => {
     phoneSafetyModeMock.mockReturnValue(true);
     rerenderWorkspace({});
 
+    expect(
+      screen.queryByRole("dialog", { name: "Rename speaker everywhere" }),
+    ).not.toBeInTheDocument();
+    expect(renameSpeakerAction).not.toHaveBeenCalled();
+  });
+
+  it("renames a speaker across every segment through the governed dialog and applies the new revision", async () => {
+    const user = userEvent.setup();
+    const baseRevision = createCasefile().revision;
+    const nextCasefile = createCasefile({
+      revision: {
+        ...baseRevision,
+        id: "rev-2",
+        version: 2,
+        segments: [
+          { ...baseRevision.segments[0], speakerLabel: "Namo" },
+          baseRevision.segments[1],
+        ],
+      },
+    });
+    const { renameSpeakerAction } = renderWorkspace();
+    renameSpeakerAction.mockResolvedValue({
+      ok: true,
+      notice: 'Renamed "Speaker 1" to "Namo" across 1 segment.',
+      data: {
+        casefile: nextCasefile,
+        nextPath: "/recordings/rec-1",
+        focusTarget: "retain",
+      },
+    });
+
+    await user.click(screen.getByRole("button", { name: "Rename speaker..." }));
+
+    const dialog = screen.getByRole("dialog", { name: "Rename speaker everywhere" });
+    await user.type(within(dialog).getByLabelText("New speaker name"), "Namo");
+
+    expect(within(dialog).getByTestId("speaker-rename-summary")).toHaveTextContent(
+      'Renamed "Speaker 1" to "Namo" across 1 segment.',
+    );
+
+    await user.click(within(dialog).getByRole("button", { name: "Rename speaker" }));
+
+    await waitFor(() =>
+      expect(renameSpeakerAction).toHaveBeenCalledWith({
+        recordingId: "rec-1",
+        expectedCurrentRevisionId: "rev-1",
+        fromSpeaker: "Speaker 1",
+        toSpeaker: "Namo",
+        summary: "Ready for review.",
+        actionModeId: null,
+      }),
+    );
+    await waitFor(() =>
+      expect(
+        screen.queryByRole("dialog", { name: "Rename speaker everywhere" }),
+      ).not.toBeInTheDocument(),
+    );
+    expect(await screen.findByTestId("speaker-toolbar-list")).toHaveTextContent(
+      "Speakers: Namo (1 segment), Speaker 2 (1 segment)",
+    );
+  });
+
+  it("supports merging into an existing speaker name through the governed dialog", async () => {
+    const user = userEvent.setup();
+    const baseRevision = createCasefile().revision;
+    const mergedCasefile = createCasefile({
+      revision: {
+        ...baseRevision,
+        id: "rev-2",
+        version: 2,
+        segments: baseRevision.segments.map((segment: TranscriptSegment) => ({
+          ...segment,
+          speakerLabel: "Speaker 2",
+        })),
+      },
+    });
+    const { renameSpeakerAction } = renderWorkspace();
+    renameSpeakerAction.mockResolvedValue({
+      ok: true,
+      notice:
+        'Renamed "Speaker 1" to "Speaker 2" across 1 segment. Merged with existing "Speaker 2" (1 segment).',
+      data: {
+        casefile: mergedCasefile,
+        nextPath: "/recordings/rec-1",
+        focusTarget: "retain",
+      },
+    });
+
+    await user.click(screen.getByRole("button", { name: "Rename speaker..." }));
+
+    const dialog = screen.getByRole("dialog", { name: "Rename speaker everywhere" });
+    await user.type(within(dialog).getByLabelText("New speaker name"), "Speaker 2");
+
+    expect(within(dialog).getByTestId("speaker-rename-summary")).toHaveTextContent(
+      'Renamed "Speaker 1" to "Speaker 2" across 1 segment. Merged with existing "Speaker 2" (1 segment).',
+    );
+
+    await user.click(within(dialog).getByRole("button", { name: "Rename speaker" }));
+
+    await waitFor(() =>
+      expect(renameSpeakerAction).toHaveBeenCalledWith(
+        expect.objectContaining({
+          fromSpeaker: "Speaker 1",
+          toSpeaker: "Speaker 2",
+        }),
+      ),
+    );
+  });
+
+  it("withholds the bulk rename entry point while unsaved edits are pending", async () => {
+    const user = userEvent.setup();
+    const { renameSpeakerAction } = renderWorkspace();
+
+    const editor = screen.getByRole("textbox", {
+      name: "Transcript for segment 1, 00:00-00:10",
+    });
+    await user.click(editor);
+    await user.type(editor, " Updated");
+
+    expect(screen.getByRole("button", { name: "Rename speaker..." })).toBeDisabled();
+    expect(
+      screen.getByText("Save or discard unsaved changes before renaming speakers."),
+    ).toBeVisible();
     expect(
       screen.queryByRole("dialog", { name: "Rename speaker everywhere" }),
     ).not.toBeInTheDocument();
