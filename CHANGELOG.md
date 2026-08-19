@@ -4,6 +4,13 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.5.1] - 2026-08-19
+
+### Fixed
+- Pinned the casefile chrome: header, media, and transport stay fixed above the fold while the transcript owns its own centered scroll viewport, with edge-anchored follow-scroll (PRs #57, #60).
+- Restored the original video size and grew the transcript scroll budget on the pinned-zone media layout (PRs #58, #60).
+- Verified the pinned-zone layout batch with live-lane proofs: geometry, dormant accepted-seek follow, and follow-scroll behavior exercised end-to-end against a running instance.
+
 ## [0.5.0] - 2026-08-14
 
 ### Added
