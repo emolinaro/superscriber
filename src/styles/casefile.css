@@ -638,7 +638,7 @@
     );
     padding-bottom: 0;
     overflow: hidden;
-    gap: var(--space-4);
+    gap: var(--space-2);
   }
 
   .casefile-page:has(> .casefile-layout > .casefile-main[data-revision="true"]) .case-header {
@@ -660,7 +660,7 @@
     min-height: 0;
     display: flex;
     flex-direction: column;
-    gap: var(--space-4);
+    gap: var(--space-2);
   }
 
   /* Pinned player chrome (casefile-pin-transcript-zone): the media box,
@@ -672,8 +672,17 @@
     flex: 0 0 auto;
   }
 
+  /* Video frame bound (captain ruling 2026-08-19): inside the bounded
+     casefile the video band takes an audio-wave-like footprint (96px
+     letterboxed frame with native controls) at every desktop height -
+     above 920px the rail is also visible, so a taller video would
+     otherwise crowd the transcript viewport into a slide-under behind the
+     action bar and land the centered active card at the visible bottom
+     edge. */
   .casefile-main[data-revision="true"] .media-transport__controls video {
-    max-height: 30vh;
+    max-height: 96px;
+    object-fit: contain;
+    background: var(--color-bone);
   }
 
   .casefile-main[data-revision="true"] .transcript-document {
@@ -681,7 +690,7 @@
     min-height: 0;
     display: flex;
     flex-direction: column;
-    gap: var(--space-4);
+    gap: var(--space-2);
   }
 
   .casefile-main[data-revision="true"] .transcript-document__summary {
@@ -697,7 +706,7 @@
      trapped in a hidden scrollport. */
   .casefile-main[data-revision="true"] .transcript-document__segments {
     flex: 1 1 auto;
-    min-height: var(--transcript-viewport-min, 192px);
+    min-height: var(--transcript-viewport-min, 160px);
     overflow-y: auto;
     scrollbar-gutter: stable;
   }
@@ -1029,6 +1038,8 @@
     gap: var(--space-2);
   }
 
+
+
   .casefile-main[data-revision="true"] {
     gap: var(--space-1);
   }
@@ -1041,6 +1052,8 @@
     --wave-height: 56px;
   }
 
+  /* Same 96px audio-like frame at the short-height tier (12vh == 96px at
+     the canonical 800px window). */
   .casefile-main[data-revision="true"] .media-transport__controls video {
     max-height: 12vh;
   }
@@ -1068,9 +1081,11 @@
      viewport gap is 4px, so a centered active card shows middle-2 through
      middle+2 fully once the viewport is at least 2*(22+48+48) = 236px.
      Measured at 1280x800 on both acceptance-shaped fixtures: audio and
-     video in rest, reviewer, and approver modes all leave >= 259px of
-     natural room (237px with a two-row action banner), so this floor is a
-     safety rail, never a forced slide-under. */
+     video in rest, reviewer, and approver modes all leave >= 253px of
+     natural room, so this floor is a safety rail. The 96px video frame
+     bound above keeps the same room at taller desktop windows: a 1319x1001
+     video casefile with the rail visible leaves ~250px even with a
+     two-line summary, clear of any slide-under. */
   .casefile-main[data-revision="true"] .transcript-document__segments {
     min-height: var(--transcript-viewport-min, 224px);
   }
