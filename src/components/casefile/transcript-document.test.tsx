@@ -215,6 +215,7 @@ describe("TranscriptDocument", () => {
       <TranscriptDocument
         activeSegmentId="seg-2"
         editable={false}
+        followActivationNonce={1}
         onSeek={vi.fn()}
         onUpdateSpeaker={vi.fn()}
         onUpdateText={vi.fn()}
@@ -232,12 +233,149 @@ describe("TranscriptDocument", () => {
     });
   });
 
+  it("keeps mount-time follow dormant until track movement activates it", () => {
+    const { rerender } = render(
+      <TranscriptDocument
+        activeSegmentId="seg-1"
+        editable={false}
+        followActivationNonce={0}
+        onSeek={vi.fn()}
+        onUpdateSpeaker={vi.fn()}
+        onUpdateText={vi.fn()}
+        phoneSafetyMode={false}
+        segments={baseSegments}
+        summary="Ready for review."
+        onSummaryChange={vi.fn()}
+      />,
+    );
+
+    expect(scrollIntoViewMock).not.toHaveBeenCalled();
+
+    rerender(
+      <TranscriptDocument
+        activeSegmentId="seg-1"
+        editable={false}
+        followActivationNonce={1}
+        onSeek={vi.fn()}
+        onUpdateSpeaker={vi.fn()}
+        onUpdateText={vi.fn()}
+        phoneSafetyMode={false}
+        segments={baseSegments}
+        summary="Ready for review."
+        onSummaryChange={vi.fn()}
+      />,
+    );
+
+    expect(scrollIntoViewMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("centers interior rows and anchors edge rows inside the declared scrollport", () => {
+    const segments = [
+      ...baseSegments,
+      {
+        id: "seg-3",
+        speakerLabel: "Speaker 1",
+        startMs: 20_000,
+        endMs: 30_000,
+        text: "Third row.",
+        confidence: 0.9,
+      },
+    ];
+    const windowScrollTo = vi.spyOn(window, "scrollTo").mockImplementation(() => {});
+
+    // Dormant mount (nonce 0): no scrolling while the stub geometry goes in.
+    const { rerender } = render(
+      <TranscriptDocument
+        activeSegmentId="seg-2"
+        editable={false}
+        followActivationNonce={0}
+        onSeek={vi.fn()}
+        onUpdateSpeaker={vi.fn()}
+        onUpdateText={vi.fn()}
+        phoneSafetyMode={false}
+        segments={segments}
+        summary="Ready for review."
+        onSummaryChange={vi.fn()}
+      />,
+    );
+
+    const scrollport = document.querySelector<HTMLElement>(
+      ".transcript-document__segments",
+    )!;
+    scrollport.style.overflowY = "auto";
+    Object.defineProperty(scrollport, "clientHeight", { configurable: true, value: 200 });
+    Object.defineProperty(scrollport, "scrollHeight", { configurable: true, value: 600 });
+    const scrollTo = vi.fn();
+    Object.defineProperty(scrollport, "scrollTo", { configurable: true, value: scrollTo });
+    const zeroRect = scrollport.getBoundingClientRect();
+    scrollport.getBoundingClientRect = () =>
+      ({ ...zeroRect, top: 100, bottom: 300, height: 200, y: 100 }) as DOMRect;
+    const middleRow = screen.getByRole("article", { name: /Transcript segment 2,/ });
+    middleRow.getBoundingClientRect = () =>
+      ({ ...zeroRect, top: 240, bottom: 280, height: 40, y: 240 }) as DOMRect;
+
+    // Interior row centers in the viewport: 0 + (240 + 20) - (100 + 100).
+    rerender(
+      <TranscriptDocument
+        activeSegmentId="seg-2"
+        editable={false}
+        followActivationNonce={1}
+        onSeek={vi.fn()}
+        onUpdateSpeaker={vi.fn()}
+        onUpdateText={vi.fn()}
+        phoneSafetyMode={false}
+        segments={segments}
+        summary="Ready for review."
+        onSummaryChange={vi.fn()}
+      />,
+    );
+    expect(scrollTo).toHaveBeenLastCalledWith({ behavior: "smooth", top: 60 });
+
+    // First row anchors at the top edge.
+    rerender(
+      <TranscriptDocument
+        activeSegmentId="seg-1"
+        editable={false}
+        followActivationNonce={2}
+        onSeek={vi.fn()}
+        onUpdateSpeaker={vi.fn()}
+        onUpdateText={vi.fn()}
+        phoneSafetyMode={false}
+        segments={segments}
+        summary="Ready for review."
+        onSummaryChange={vi.fn()}
+      />,
+    );
+    expect(scrollTo).toHaveBeenLastCalledWith({ behavior: "smooth", top: 0 });
+
+    // Final row anchors at the bottom edge. Neither path ever touches the
+    // window or a page-level scroll: no browser-window follow exists.
+    rerender(
+      <TranscriptDocument
+        activeSegmentId="seg-3"
+        editable={false}
+        followActivationNonce={3}
+        onSeek={vi.fn()}
+        onUpdateSpeaker={vi.fn()}
+        onUpdateText={vi.fn()}
+        phoneSafetyMode={false}
+        segments={segments}
+        summary="Ready for review."
+        onSummaryChange={vi.fn()}
+      />,
+    );
+    expect(scrollTo).toHaveBeenLastCalledWith({ behavior: "smooth", top: 400 });
+    expect(scrollIntoViewMock).not.toHaveBeenCalled();
+    expect(windowScrollTo).not.toHaveBeenCalled();
+  });
+
   it("uses an instant follow-scroll under prefers-reduced-motion", () => {
     reducedMotion = true;
     render(
       <TranscriptDocument
         activeSegmentId="seg-2"
         editable={false}
+        followActivationNonce={1}
         onSeek={vi.fn()}
         onUpdateSpeaker={vi.fn()}
         onUpdateText={vi.fn()}
@@ -261,6 +399,7 @@ describe("TranscriptDocument", () => {
       <TranscriptDocument
         activeSegmentId="seg-1"
         editable={false}
+        followActivationNonce={1}
         onSeek={vi.fn()}
         onUpdateSpeaker={vi.fn()}
         onUpdateText={vi.fn()}
@@ -280,6 +419,7 @@ describe("TranscriptDocument", () => {
       <TranscriptDocument
         activeSegmentId="seg-2"
         editable={false}
+        followActivationNonce={1}
         onSeek={vi.fn()}
         onUpdateSpeaker={vi.fn()}
         onUpdateText={vi.fn()}
@@ -302,6 +442,7 @@ describe("TranscriptDocument", () => {
       <TranscriptDocument
         activeSegmentId="seg-1"
         editable={false}
+        followActivationNonce={1}
         onSeek={vi.fn()}
         onUpdateSpeaker={vi.fn()}
         onUpdateText={vi.fn()}
@@ -325,6 +466,7 @@ describe("TranscriptDocument", () => {
           <TranscriptDocument
             activeSegmentId="seg-1"
             editable={false}
+            followActivationNonce={1}
             onSeek={vi.fn()}
             onUpdateSpeaker={vi.fn()}
             onUpdateText={vi.fn()}
@@ -348,6 +490,7 @@ describe("TranscriptDocument", () => {
         <TranscriptDocument
           activeSegmentId="seg-2"
           editable={false}
+          followActivationNonce={1}
           onSeek={vi.fn()}
           onUpdateSpeaker={vi.fn()}
           onUpdateText={vi.fn()}
@@ -369,6 +512,7 @@ describe("TranscriptDocument", () => {
           <TranscriptDocument
             activeSegmentId={activeSegmentId}
             editable
+            followActivationNonce={1}
             onSeek={vi.fn()}
             onUpdateSpeaker={vi.fn()}
             onUpdateText={vi.fn()}
@@ -405,6 +549,7 @@ describe("TranscriptDocument", () => {
           <TranscriptDocument
             activeSegmentId={activeSegmentId}
             editable={false}
+            followActivationNonce={1}
             onSeek={vi.fn()}
             onUpdateSpeaker={vi.fn()}
             onUpdateText={vi.fn()}
@@ -435,6 +580,7 @@ describe("TranscriptDocument", () => {
       <TranscriptDocument
         activeSegmentId="seg-1"
         editable={false}
+        followActivationNonce={1}
         onSeek={onSeek}
         onUpdateSpeaker={vi.fn()}
         onUpdateText={vi.fn()}
@@ -456,6 +602,7 @@ describe("TranscriptDocument", () => {
       <TranscriptDocument
         activeSegmentId="seg-2"
         editable={false}
+        followActivationNonce={1}
         onSeek={onSeek}
         onUpdateSpeaker={vi.fn()}
         onUpdateText={vi.fn()}
@@ -476,7 +623,7 @@ describe("TranscriptDocument", () => {
       <TranscriptDocument
         activeSegmentId="seg-1"
         editable={false}
-        followResumeNonce={0}
+        followActivationNonce={0}
         onSeek={vi.fn()}
         onUpdateSpeaker={vi.fn()}
         onUpdateText={vi.fn()}
@@ -493,7 +640,7 @@ describe("TranscriptDocument", () => {
       <TranscriptDocument
         activeSegmentId="seg-1"
         editable={false}
-        followResumeNonce={1}
+        followActivationNonce={1}
         onSeek={vi.fn()}
         onUpdateSpeaker={vi.fn()}
         onUpdateText={vi.fn()}

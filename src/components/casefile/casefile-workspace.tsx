@@ -369,7 +369,13 @@ export function CasefileWorkspace({
   // segment button can expose a truthful play/pause toggle (see
   // TranscriptDocument aria-pressed).
   const [activeSegmentPlaying, setActiveSegmentPlaying] = useState(false);
-  const [followResumeNonce, setFollowResumeNonce] = useState(0);
+  // Follow activation gate (casefile-pin-transcript-zone): 0 keeps
+  // transcript follow dormant so the player-led rest state stays at the
+  // top; the first playback tick or any accepted explicit seek activates
+  // it. Transcript timestamp clicks are routed through the transport's
+  // seekRequest path, so a rejected seek (media unavailable, blocked
+  // playback) never activates follow and never centers a stale row.
+  const [followActivationNonce, setFollowActivationNonce] = useState(0);
   const [reviewFocus, setReviewFocus] = useState<{ segmentId: string; nonce: number } | null>(
     null,
   );
@@ -893,7 +899,12 @@ export function CasefileWorkspace({
                 mediaKind={casefile.media.kind}
                 mediaUrl={casefile.media.url}
                 onActiveSegmentChange={setActiveSegmentId}
-                onMediaSeek={() => setFollowResumeNonce((current) => current + 1)}
+                onMediaSeek={() =>
+                  setFollowActivationNonce((current) => current + 1)
+                }
+                onPlaybackTick={() =>
+                  setFollowActivationNonce((current) => (current === 0 ? 1 : current))
+                }
                 onLocateSegment={(segment) => {
                   // Player rail/marker seek already happened in the
                   // transport; here the transcript list surfaces the segment
@@ -912,7 +923,7 @@ export function CasefileWorkspace({
                 activeSegmentId={activeSegmentId}
                 activeSegmentPlaying={activeSegmentPlaying}
                 editable={editable}
-                followResumeNonce={followResumeNonce}
+                followActivationNonce={followActivationNonce}
                 onOpenSpeakerRename={
                   editable ? () => setSpeakerRenameOpen(true) : undefined
                 }

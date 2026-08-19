@@ -6,6 +6,7 @@ import { InlineNotice } from "@/components/ui/inline-notice";
 import {
   FOLLOW_SCROLL_PAUSE_KEYS,
   decideFollowScroll,
+  findScrollParent,
   isRowInScrollView,
 } from "./follow-scroll";
 
@@ -13,7 +14,12 @@ type TranscriptDocumentProps = {
   activeSegmentId: string | null;
   editable: boolean;
   phoneSafetyMode: boolean;
-  followResumeNonce?: number;
+  /**
+   * Follow activation gate (casefile-pin-transcript-zone): 0 keeps playback
+   * follow dormant (player-led rest state); the workspace bumps it on the
+   * first playback tick and on every accepted explicit seek.
+   */
+  followActivationNonce?: number;
   /** True when phone safety (not permissions or history) removed the editors. */
   safetyStripped?: boolean;
   summary: string;
@@ -55,10 +61,51 @@ function isFollowScrollIgnoredTarget(target: EventTarget | null): boolean {
   );
 }
 
+// Vertical centering (casefile-pin-transcript-zone): inside the desktop
+// containment the transcript segments list is the only vertical scrollport,
+// so centering is computed against that viewport directly and never touches
+// the window; the first and final rows anchor honestly at the block edges
+// (no artificial runways - scrollTo clamping is the edge rule per the
+// captain's ruling (b)). Below 1100px there is no transcript scrollport and
+// the window-scroll follow keeps its previous scrollIntoView behavior.
+function centerRow(row: HTMLElement, behavior: ScrollBehavior): void {
+  const scrollParent = findScrollParent(row);
+  if (!scrollParent) {
+    row.scrollIntoView({ block: "center", behavior });
+    return;
+  }
+
+  const rows = Array.from(
+    scrollParent.querySelectorAll<HTMLElement>(".transcript-segment"),
+  );
+  if (row === rows[0]) {
+    scrollParent.scrollTo({ top: 0, behavior });
+    return;
+  }
+  if (row === rows.at(-1)) {
+    scrollParent.scrollTo({
+      top: Math.max(0, scrollParent.scrollHeight - scrollParent.clientHeight),
+      behavior,
+    });
+    return;
+  }
+
+  const rowRect = row.getBoundingClientRect();
+  const scrollportRect = scrollParent.getBoundingClientRect();
+  scrollParent.scrollTo({
+    top:
+      scrollParent.scrollTop +
+      rowRect.top +
+      rowRect.height / 2 -
+      (scrollportRect.top + scrollportRect.height / 2),
+    behavior,
+  });
+}
+
 export function TranscriptDocument({
   activeSegmentId,
   editable,
-  followResumeNonce = 0,
+  followActivationNonce = 0,
   phoneSafetyMode,
   summary,
   segments,
@@ -81,9 +128,11 @@ export function TranscriptDocument({
   // `safetyStripped` when editing would otherwise be possible - permission-
   // or history-based read-only states keep their own, separate story.
   const segmentsRef = useRef<HTMLDivElement>(null);
-  // Non-fighting playback follow (player-pinned-center): a user scroll
-  // gesture pauses follow; follow re-engages when the active line is visible
-  // in the scrollport again, or on any explicit seek.
+  // Non-fighting playback follow (casefile-pin-transcript-zone): follow
+  // stays dormant until the track moves (first playback tick or accepted
+  // explicit seek); after activation a user scroll gesture pauses follow,
+  // and follow re-engages when the active line is visible in the viewport
+  // again, or on any accepted explicit seek.
   const followPausedRef = useRef(false);
 
   // Pause follow on user scroll gestures: wheel, touch drag, or page-scroll
@@ -135,10 +184,7 @@ export function TranscriptDocument({
     }
 
     const reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
-    row.scrollIntoView({
-      block: "center",
-      behavior: reducedMotion ? "auto" : "smooth",
-    });
+    centerRow(row, reducedMotion ? "auto" : "smooth");
 
     // Priority order matters: querySelector would otherwise return the first
     // match in tree order (the timestamp precedes the editors in the row).
@@ -151,14 +197,14 @@ export function TranscriptDocument({
 
   useEffect(() => {
     followPausedRef.current = false;
-  }, [followResumeNonce]);
+  }, [followActivationNonce]);
 
-  // Playback follow: CENTER the active segment inside the nearest scrollport
-  // (the bounded .casefile-main scrollport on desktop, the window elsewhere)
-  // so roughly half a screen of context sits on both sides of the playing
-  // line. The segments list itself is never a scroller - the bounded shell
-  // keeps .casefile-main as the single scrollport. The pause contract is
-  // decided by follow-scroll.ts so the whole matrix stays unit-tested.
+  // Playback follow: once activated, CENTER the active segment inside the
+  // transcript scrollport (the segments viewport on desktop, the window
+  // below 1100px) so context sits on both sides of the playing line; the
+  // first and final rows anchor at the viewport's block edges instead. The
+  // activation and pause contract is decided by follow-scroll.ts so the
+  // whole matrix stays unit-tested.
   useEffect(() => {
     const container = segmentsRef.current;
     if (!container || !activeSegmentId) {
@@ -169,18 +215,19 @@ export function TranscriptDocument({
       return;
     }
 
-    const decision = decideFollowScroll(followPausedRef.current, isRowInScrollView(row));
-    if (decision === "skip") {
+    const decision = decideFollowScroll(
+      followActivationNonce > 0,
+      followPausedRef.current,
+      isRowInScrollView(row),
+    );
+    if (decision === "dormant" || decision === "skip") {
       return;
     }
     followPausedRef.current = false;
 
     const reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
-    row.scrollIntoView({
-      block: "center",
-      behavior: reducedMotion ? "auto" : "smooth",
-    });
-  }, [activeSegmentId, followResumeNonce]);
+    centerRow(row, reducedMotion ? "auto" : "smooth");
+  }, [activeSegmentId, followActivationNonce]);
 
   return (
     <section aria-label="Transcript document" className="transcript-document" data-testid="transcript-start">

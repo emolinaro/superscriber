@@ -11,19 +11,25 @@ import {
 } from "./follow-scroll";
 
 describe("decideFollowScroll", () => {
+  it("keeps follow dormant before playback or an accepted explicit seek moves the track", () => {
+    expect(decideFollowScroll(false, false, true)).toBe("dormant");
+    expect(decideFollowScroll(false, true, false)).toBe("dormant");
+    expect(decideFollowScroll(false, false, false)).toBe("dormant");
+  });
+
   it("centers the active segment while follow is engaged", () => {
-    expect(decideFollowScroll(false, true)).toBe("center");
+    expect(decideFollowScroll(true, false, true)).toBe("center");
     // Engaged follow centers regardless of visibility - the whole point is
-    // to bring the active line to mid-window.
-    expect(decideFollowScroll(false, false)).toBe("center");
+    // to bring the active line to the viewport middle.
+    expect(decideFollowScroll(true, false, false)).toBe("center");
   });
 
   it("skips the scroll while paused and the active line is out of view", () => {
-    expect(decideFollowScroll(true, false)).toBe("skip");
+    expect(decideFollowScroll(true, true, false)).toBe("skip");
   });
 
   it("resumes follow when the active line is back in view", () => {
-    expect(decideFollowScroll(true, true)).toBe("resume");
+    expect(decideFollowScroll(true, true, true)).toBe("resume");
   });
 });
 
@@ -177,7 +183,7 @@ describe("isRowInScrollView", () => {
 });
 
 describe("findScrollParent", () => {
-  it("walks past non-scrolling ancestors to the overflowing scrollport", () => {
+  it("walks past non-scrolling ancestors to the declared scrollport", () => {
     const outer = document.createElement("div");
     outer.style.overflowY = "auto";
     Object.defineProperty(outer, "clientHeight", { value: 200 });
@@ -195,7 +201,10 @@ describe("findScrollParent", () => {
     outer.remove();
   });
 
-  it("ignores auto-overflow ancestors that do not actually overflow", () => {
+  it("keeps an auto-overflow ancestor as the scroll owner before it overflows", () => {
+    // casefile-pin-transcript-zone: the transcript viewport is a declared
+    // scroller even on short transcripts that fit without overflow, so
+    // centering and visibility checks must target it from the start.
     const outer = document.createElement("div");
     outer.style.overflowY = "auto";
     Object.defineProperty(outer, "clientHeight", { value: 200 });
@@ -205,7 +214,7 @@ describe("findScrollParent", () => {
     outer.appendChild(row);
     document.body.appendChild(outer);
 
-    expect(findScrollParent(row)).toBeNull();
+    expect(findScrollParent(row)).toBe(outer);
 
     outer.remove();
   });

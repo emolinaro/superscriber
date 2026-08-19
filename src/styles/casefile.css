@@ -1,12 +1,14 @@
-/* Casefile scroll targeting (player-pinned-center): the follow-scroll
-   centers the active segment, and centering must aim at the VISIBLE
-   transcript region - the area below the pinned transport - not the raw
-   scrollport. Clearance therefore lives on scroll-padding (symmetric
-   boxes keep block:center honest) instead of per-row scroll-margin,
-   which would extend the row's box and push the centered line low. The
-   concrete floors live next to the rules that pin the transport:
-   responsive.css for window-scrolling widths, the containment block
-   below for the desktop scrollport. */
+/* Casefile scroll targeting (casefile-pin-transcript-zone): on desktop
+   the casefile is a bounded shell and everything above the transcript -
+   the case header, the media box, the transport controls, and the
+   horizontal segment rail - is pinned: no browser-window scroll can move
+   those blocks. Below the pinned zone the transcript segments list is the
+   ONLY vertical scrollport; the follow-scroll centers the active segment
+   inside it with the first and final segments anchored at its block edges
+   (natural scrollTo clamping, no artificial runways). The viewport keeps
+   default overscroll behavior so wheel/touch chains outward at its edges
+   instead of trapping gestures. Below 1100px the window remains the
+   scrollport with the transport pinned on top (responsive.css). */
 
 .casefile-page {
   display: grid;
@@ -613,26 +615,30 @@
        (no standalone toggle card on the rail when closed). */
   }
 
-  /* Playback containment (demo-transcript-scroll 2026-08-05), revised by
-     demo-casefile-ux: the PAGE is a fixed viewport-high flex column (shell
-     header's 64px stays outside). Case header, action banner, layout, and
-     action bar keep natural order; the layout row gets exactly what is left
-     over and the MAIN column is the single scrollport - the transcript has
-     no nested mini-scroller, so follow-scroll and wheel scrolling just work
-     and the full page can never run away. Applies only when a revision is
-     on screen; status-only and unresolved flows keep natural flow. Within
-     that scrollport the transport is sticky (see player-pinned-center below)
-     so the playback surface and progress wave never scroll out of view. */
+  /* Two-zone containment (casefile-pin-transcript-zone): the PAGE is a
+     fixed viewport-high flex column (shell header's 64px stays outside).
+     Case header, action-mode banner, media transport, and the action bar
+     are pinned flex-none blocks; the layout row gets exactly what is left
+     over and passes it down to the transcript viewport. Nothing in the
+     pinned zone scrolls - the window itself cannot scroll because the page
+     height subtracts the shell bar, the main column's vertical padding,
+     and the page's own top margin. Applies only when a revision is on
+     screen; status-only and unresolved flows keep natural flow. */
   .casefile-page:has(> .casefile-layout > .casefile-main[data-revision="true"]) {
     display: flex;
     flex-direction: column;
     /* 65px shell bar + main's space-8 top pad + the page's own space-8
-       margin (demo-casefile-top-offset): the bounded page fills exactly the
-       remaining viewport - the action bar lands flush at the bottom edge. */
-    height: calc(100vh - 65px - var(--space-8) - var(--space-8) - env(safe-area-inset-bottom));
+       top margin + the main column's space-12 bottom pad
+       (demo-casefile-top-offset, casefile-pin-transcript-zone): the bounded
+       page fills exactly the remaining viewport, so html/body never gain
+       scroll range and the pinned zone can never be scrolled away. */
+    height: calc(
+      100vh - 65px - var(--space-8) - var(--space-8) - var(--space-12) -
+        env(safe-area-inset-bottom)
+    );
     padding-bottom: 0;
     overflow: hidden;
-    gap: var(--space-4);
+    gap: var(--space-2);
   }
 
   .casefile-page:has(> .casefile-layout > .casefile-main[data-revision="true"]) .case-header {
@@ -644,33 +650,65 @@
   .casefile-page:has(> .casefile-layout > .casefile-main[data-revision="true"]) .casefile-layout {
     flex: 1 1 0;
     min-height: 0;
+    grid-template-rows: minmax(0, 1fr);
   }
 
+  /* The main column no longer scrolls: it passes the leftover height down
+     to the transcript viewport. */
   .casefile-main[data-revision="true"] {
-    max-height: 100%;
-    overflow-y: auto;
+    align-self: stretch;
+    min-height: 0;
     display: flex;
     flex-direction: column;
-    gap: var(--space-4);
-    scroll-padding-block: var(--player-clearance, 328px) var(--space-3);
+    gap: var(--space-2);
   }
 
-  /* Pinned player chrome (player-pinned-center): inside the bounded shell
-     the main column is the single scrollport, so the transport sticks to the
-     scrollport's leading edge while the transcript scrolls underneath. The
-     card stays fully opaque so the transcript reads as passing below. */
+  /* Pinned player chrome (casefile-pin-transcript-zone): the media box,
+     the rail, and the transport controls sit above the transcript as a
+     static flex-none block inside the bounded page - they cannot scroll in
+     any direction, on any casefile mode. */
   .casefile-main[data-revision="true"] .media-transport {
-    position: sticky;
-    top: 0;
+    position: static;
     flex: 0 0 auto;
   }
 
+  /* Video frame bound (captain ruling 2026-08-19): inside the bounded
+     casefile the video band takes an audio-wave-like footprint (96px
+     letterboxed frame with native controls) at every desktop height -
+     above 920px the rail is also visible, so a taller video would
+     otherwise crowd the transcript viewport into a slide-under behind the
+     action bar and land the centered active card at the visible bottom
+     edge. */
   .casefile-main[data-revision="true"] .media-transport__controls video {
-    max-height: 30vh;
+    max-height: 96px;
+    object-fit: contain;
+    background: var(--color-bone);
+  }
+
+  .casefile-main[data-revision="true"] .transcript-document {
+    flex: 1 1 0;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-2);
   }
 
   .casefile-main[data-revision="true"] .transcript-document__summary {
     flex: 0 0 auto;
+  }
+
+  /* The transcript viewport: the ONLY vertical scrollport on the desktop
+     casefile. Every segment renders its full text as its own card (no
+     clamp), the full list scrolls, and the follow-scroll centers the
+     active card inside this box with the first/last cards anchored at its
+     edges. Default overscroll behavior is deliberate: wheel and touch
+     gestures chain outward at the viewport's edges instead of being
+     trapped in a hidden scrollport. */
+  .casefile-main[data-revision="true"] .transcript-document__segments {
+    flex: 1 1 auto;
+    min-height: var(--transcript-viewport-min, 160px);
+    overflow-y: auto;
+    scrollbar-gutter: stable;
   }
 
   .casefile-layout[data-governance-open="true"] .governance-drawer {
@@ -809,13 +847,90 @@
   width: fit-content;
 }
 
-/* demo-casefile-ux: density inside the desktop casefile containment. The
-   transport is the vertical hog at laptop heights, so the summary keeps its
-   reading width but drops its box padding, and the header card tightens.
-   All inside the >=1100px containment block's scope. */
+/* Pinned-zone density (casefile-pin-transcript-zone), applied at every
+   desktop height: the pinned blocks stay compact so the transcript
+   viewport keeps a several-card floor. Facts run inline in the header,
+   the summary reads as a single horizontal row, cards render timestamp,
+   speaker, full text, and inline confidence on one grid row, and the
+   editor hugs its content. Cards grow naturally with their content and
+   the full list scrolls - nothing clamps or truncates, ever. */
 @media (min-width: 1100px) {
-  .casefile-main[data-revision="true"] .transcript-document__summary-copy {
+  .casefile-page:has(> .casefile-layout > .casefile-main[data-revision="true"]) .case-header__body {
     padding: var(--space-2) var(--space-3);
+    gap: var(--space-2);
+  }
+
+  .casefile-page:has(> .casefile-layout > .casefile-main[data-revision="true"]) .case-header__facts {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--space-1) var(--space-6);
+  }
+
+  .casefile-page:has(> .casefile-layout > .casefile-main[data-revision="true"]) .case-header__facts > div {
+    display: flex;
+    align-items: baseline;
+    gap: var(--space-2);
+  }
+
+  .casefile-page:has(> .casefile-layout > .casefile-main[data-revision="true"]) .case-header__facts dt {
+    margin: 0;
+  }
+
+  .casefile-page:has(> .casefile-layout > .casefile-main[data-revision="true"]) .case-header__governance {
+    /* Compacted but still a >= 32px target (responsive control floor). */
+    min-height: 32px;
+  }
+
+  /* In-session action-mode banner compacts to one wrapping row inside the
+     pinned zone; the session facts stay fully readable. */
+  .casefile-page:has(> .casefile-layout > .casefile-main[data-revision="true"]) > .action-mode-banner {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--space-1) var(--space-3);
+    padding: var(--space-1) var(--space-3);
+    font-size: var(--type-14);
+  }
+
+  .casefile-page:has(> .casefile-layout > .casefile-main[data-revision="true"]) > .action-mode-banner .button {
+    min-height: 28px;
+  }
+
+  .casefile-page:has(> .casefile-layout > .casefile-main[data-revision="true"]) .case-header__row .button,
+  .casefile-page:has(> .casefile-layout > .casefile-main[data-revision="true"]) .casefile-action-bar .button {
+    min-height: 36px;
+  }
+
+  .casefile-page:has(> .casefile-layout > .casefile-main[data-revision="true"]) > .casefile-action-bar {
+    padding-block: var(--space-1);
+  }
+
+  .casefile-main[data-revision="true"] .transcript-document__summary {
+    display: flex;
+    align-items: baseline;
+    gap: var(--space-3);
+  }
+
+  .casefile-main[data-revision="true"] .transcript-document__summary .field-label {
+    flex: 0 0 auto;
+    margin: 0;
+  }
+
+  .casefile-main[data-revision="true"] .transcript-document__summary-copy {
+    flex: 1 1 auto;
+    min-width: 0;
+    padding: var(--space-1) var(--space-3);
+  }
+
+  .casefile-main[data-revision="true"] .transcript-document__summary input {
+    flex: 1 1 auto;
+    min-width: 0;
+    min-height: 36px;
+  }
+
+  .casefile-main[data-revision="true"] .media-transport {
+    padding: var(--space-2);
+    gap: var(--space-2);
   }
 
   .casefile-main[data-revision="true"] .media-transport__rail {
@@ -834,29 +949,111 @@
     right: calc(var(--space-1) + 1px);
   }
 
-  .casefile-main[data-revision="true"] .media-transport {
-    padding: var(--space-3);
-    gap: var(--space-2);
-  }
-  .casefile-page:has(> .casefile-layout > .casefile-main[data-revision="true"]) .case-header__body {
-    padding: var(--space-3);
+  .casefile-main[data-revision="true"] .media-transport__actions .button,
+  .casefile-main[data-revision="true"] .media-transport__rate-field select {
+    min-height: 36px;
   }
 
-  .casefile-page:has(> .casefile-layout > .casefile-main[data-revision="true"]) .case-header__facts {
-    gap: var(--space-2) var(--space-6);
+  .casefile-main[data-revision="true"] .transcript-document__segments {
+    gap: var(--space-1);
+  }
+
+  .casefile-main[data-revision="true"] .transcript-segment {
+    grid-template-columns: auto minmax(8rem, auto) minmax(0, 1fr) auto;
+    gap: var(--space-2) var(--space-3);
+    padding-block: var(--space-1);
+  }
+
+  .casefile-main[data-revision="true"] .transcript-segment__timestamp {
+    grid-column: 1;
+    /* Compact but never below the responsive control floor (32px). */
+    min-height: 32px;
+  }
+
+  .casefile-main[data-revision="true"] .transcript-segment__speaker {
+    grid-column: 2;
+  }
+
+  .casefile-main[data-revision="true"] .transcript-segment__speaker input {
+    min-height: 32px;
+    padding: 0 var(--space-2);
+  }
+
+  .casefile-main[data-revision="true"] .transcript-segment__text {
+    display: contents;
+  }
+
+  .casefile-main[data-revision="true"] .transcript-segment__text > :is(p, textarea) {
+    grid-column: 3;
+    margin: 0;
+  }
+
+  .casefile-main[data-revision="true"] .transcript-segment textarea {
+    min-height: 24px;
+    padding: 2px var(--space-2);
+    field-sizing: content;
+  }
+
+  .casefile-main[data-revision="true"] .transcript-segment__text > .field-note {
+    grid-column: 4;
+    grid-row: 1;
+    align-self: center;
+    justify-self: end;
+    margin: 0;
+    white-space: nowrap;
+  }
+
+  .casefile-main[data-revision="true"] .transcript-segment[data-edited-diff] .transcript-segment__text > :is(p, textarea) {
+    grid-row: 2;
+  }
+
+  .casefile-main[data-revision="true"] .transcript-segment[data-edited-diff] .transcript-segment__text > .field-note {
+    grid-column: 4;
+    grid-row: 2;
+    justify-self: end;
   }
 }
 
 @media (min-width: 1100px) and (max-height: 920px) {
-  /* Pinned-chrome vertical budget (player-pinned-center): once the transport
-     pins to the scrollport's leading edge, its full height (~300px) would
-     leave only a sliver of transcript visible on laptop-height windows. The
-     horizontal chip rail collapses (every segment still seeks from its
-     transcript row timestamp), the rate field goes inline, and the card
-     tightens - the wave progress surface itself stays full height. */
-  .casefile-main[data-revision="true"] .media-transport {
-    padding: var(--space-2);
+  /* Pinned-chrome vertical budget (casefile-pin-transcript-zone): at
+     laptop window heights the pinned zone must still leave the transcript
+     viewport enough room to hold several cards around the centered active
+     one (the captain's 1280x800 contract: middle-2 and middle+2 stay
+     visible). The shell hands back its unused padding, the page margin
+     halves, the rail collapses (every segment still seeks from its
+     transcript row timestamp), the rate field goes inline, and media
+     surfaces trade height for transcript room. */
+  /* Nested :has is not valid CSS, so the shell give-back targets the main
+     column through a flat descendant chain instead. */
+  .app-shell__main:has(> .casefile-page > .casefile-layout > .casefile-main[data-revision="true"]) {
+    padding-block: var(--space-6) var(--space-4);
+  }
+
+  .casefile-page:has(> .casefile-layout > .casefile-main[data-revision="true"]) {
+    margin-top: var(--space-2);
+    height: calc(
+      100vh - 65px - var(--space-6) - var(--space-2) - var(--space-4) -
+        env(safe-area-inset-bottom)
+    );
     gap: var(--space-2);
+  }
+
+  .casefile-main[data-revision="true"] {
+    gap: var(--space-1);
+  }
+
+  .casefile-main[data-revision="true"] .transcript-document {
+    gap: var(--space-1);
+  }
+
+  .casefile-main[data-revision="true"] .media-transport__wave {
+    --wave-height: 56px;
+  }
+
+  /* Same 96px audio-like frame at the short-height tier (12vh == 96px at
+     the canonical 800px window). */
+  .casefile-main[data-revision="true"] .media-transport__controls video {
+    max-height: 12vh;
   }
 
   .casefile-main[data-revision="true"] .media-transport__rail {
@@ -874,13 +1071,20 @@
     white-space: nowrap;
   }
 
-  /* Cap-height scrollport padding tracks the compacted transport (~198px)
-     so block:center still lands the active line mid-visible-region. */
-  .casefile-main[data-revision="true"] {
-    scroll-padding-block: var(--player-clearance, 216px) var(--space-3);
+  .casefile-page:has(> .casefile-layout > .casefile-main[data-revision="true"]) .action-mode-entry-row .button {
+    min-height: 36px;
   }
-  .casefile-page:has(> .casefile-layout > .casefile-main[data-revision="true"]) .case-header__body {
-    padding: var(--space-2) var(--space-3);
-    gap: var(--space-2);
+
+  /* Evidence math floor (1280x800 contract): cards measure 44px and the
+     viewport gap is 4px, so a centered active card shows middle-2 through
+     middle+2 fully once the viewport is at least 2*(22+48+48) = 236px.
+     Measured at 1280x800 on both acceptance-shaped fixtures: audio and
+     video in rest, reviewer, and approver modes all leave >= 253px of
+     natural room, so this floor is a safety rail. The 96px video frame
+     bound above keeps the same room at taller desktop windows: a 1319x1001
+     video casefile with the rail visible leaves ~250px even with a
+     two-line summary, clear of any slide-under. */
+  .casefile-main[data-revision="true"] .transcript-document__segments {
+    min-height: var(--transcript-viewport-min, 224px);
   }
 }
