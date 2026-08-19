@@ -28,8 +28,11 @@ import {
 // segments list scrolls, inside its own viewport below the pinned zone.
 // Follow-scroll stays dormant at the player-led rest state, activates on the
 // first playback tick or an accepted explicit seek, then centers the active
-// card with its two neighbours on each side fully visible at 1280x800; the
-// first and final cards anchor honestly at the viewport's block edges.
+// card - with both neighbours on each side fully visible at 1280x800 where
+// geometry allows (audio casefiles at that canonical size; video casefiles
+// keep several full cards below the original-size frame per the captain's
+// 2026-08-19 ruling); the first and final cards anchor honestly at the
+// viewport's block edges.
 
 async function waitForRestStateTranscript(page: Page): Promise<void> {
   for (let attempt = 0; attempt < 45; attempt += 1) {
@@ -120,6 +123,19 @@ test("video casefile rest state: full player leads, compact chip strip below, tr
 
   expect(geometry).not.toBeNull();
   expect(geometry?.transportFirst).toBe(true);
+  // Original-size video frame (captain ruling 2026-08-19): the pre-pinned
+  // 30vh cap is back and the withdrawn 96px band must not come back. The
+  // promoted fixture has no decodable video track, so the element sits at
+  // its intrinsic 150px height; the contract is the restored CSS cap, read
+  // as the computed max-height against the current window height.
+  const videoCap = await page.evaluate(() => {
+    const video = document.querySelector("video");
+    return video
+      ? { cap: getComputedStyle(video).maxHeight, innerHeight: window.innerHeight }
+      : null;
+  });
+  expect(videoCap).not.toBeNull();
+  expect(videoCap?.cap).toBe(`${Math.round((videoCap?.innerHeight ?? 0) * 0.3)}px`);
   expect(geometry?.videoHeight).toBeGreaterThanOrEqual(96);
   expect(geometry?.videoAboveRail).toBe(true);
   expect(geometry?.railAboveTranscript).toBe(true);
@@ -184,11 +200,13 @@ test("video casefile rest state: full player leads, compact chip strip below, tr
   });
   expect(scrollerShape.viewportOverflow).toBe("auto");
   expect(scrollerShape.mainOverflow).not.toBe("auto");
-  // Several-segment floor (1280x800 contract): the viewport holds more than
-  // the active card - the dormant rest state opens at the top of the list.
-  expect(scrollerShape.viewportHeight).toBeGreaterThanOrEqual(
-    2 * (20 + 48 + 48),
-  );
+  // Several-segment floor (captain ruling 2026-08-19): the video frame is
+  // back at its original 30vh size, so the 1280x800 video casefile holds
+  // the audio middle-2..middle+2 contract no longer; its budget guarantee is
+  // several full cards below the video box (a card costs 42px plus a 4px
+  // gap, so 176px holds three whole cards and part of the fourth). The
+  // dormant rest state opens at the top of the list.
+  expect(scrollerShape.viewportHeight).toBeGreaterThanOrEqual(176);
   expect(scrollerShape.viewportScrollTop).toBe(0);
 });
 

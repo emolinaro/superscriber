@@ -672,17 +672,14 @@
     flex: 0 0 auto;
   }
 
-  /* Video frame bound (captain ruling 2026-08-19): inside the bounded
-     casefile the video band takes an audio-wave-like footprint (96px
-     letterboxed frame with native controls) at every desktop height -
-     above 920px the rail is also visible, so a taller video would
-     otherwise crowd the transcript viewport into a slide-under behind the
-     action bar and land the centered active card at the visible bottom
-     edge. */
+  /* Video frame (captain ruling 2026-08-19, superseding the same-day 96px
+     band): inside the bounded casefile the video renders at its original
+     pre-pinned-zone size - the 30vh cap the player-first layout carried
+     before the pinned-zone work - at every desktop height. The transcript
+     budget that makes room for it lives in the video-scoped block below;
+     audio casefiles are untouched. */
   .casefile-main[data-revision="true"] .media-transport__controls video {
-    max-height: 96px;
-    object-fit: contain;
-    background: var(--color-bone);
+    max-height: 30vh;
   }
 
   .casefile-main[data-revision="true"] .transcript-document {
@@ -709,6 +706,62 @@
     min-height: var(--transcript-viewport-min, 160px);
     overflow-y: auto;
     scrollbar-gutter: stable;
+  }
+
+  /* Video-casefile transcript budget (captain ruling 2026-08-19): with the
+     video frame back at its original 30vh size, the video casefile reclaims
+     vertical room from chrome that the pinned contract does not depend on
+     - shell padding, page margin, header density, transport padding, rail
+     chip padding, and the summary row - so the transcript viewport below
+     the pinned zone keeps several full cards at every desktop height. Every
+     rule here is scoped to data-media-kind="video"; the audio layout is
+     byte-for-byte the pinned-zone layout it already had. */
+  .app-shell__main:has(> .casefile-page[data-media-kind="video"] > .casefile-layout > .casefile-main[data-revision="true"]) {
+    padding-block: var(--space-4) var(--space-2);
+  }
+
+  .casefile-page[data-media-kind="video"]:has(> .casefile-layout > .casefile-main[data-revision="true"]) {
+    margin-top: 0;
+    gap: var(--space-1);
+    height: calc(
+      100vh - 65px - var(--space-4) - 0px - var(--space-2) -
+        env(safe-area-inset-bottom)
+    );
+  }
+
+  .casefile-page[data-media-kind="video"] .casefile-main[data-revision="true"] {
+    gap: var(--space-1);
+  }
+
+  .casefile-page[data-media-kind="video"]:has(> .casefile-layout > .casefile-main[data-revision="true"]) .case-header__body {
+    padding: var(--space-1) var(--space-3);
+    gap: var(--space-1);
+  }
+
+  .casefile-page[data-media-kind="video"] .casefile-main[data-revision="true"] .media-transport {
+    padding: var(--space-1);
+    gap: var(--space-1);
+  }
+
+  .casefile-page[data-media-kind="video"] .casefile-main[data-revision="true"] .media-transport__rail {
+    gap: var(--space-1);
+    padding: 2px;
+  }
+
+  .casefile-page[data-media-kind="video"] .casefile-main[data-revision="true"] .media-transport__rail-chip {
+    padding: var(--space-1) var(--space-2);
+  }
+
+  .casefile-page[data-media-kind="video"] .casefile-main[data-revision="true"] .transcript-document__summary-copy {
+    padding: 2px var(--space-2);
+  }
+
+  /* Video viewport floor: several full cards (a 42px card plus the 4px
+     gap costs 46px, so 176px always holds at least three whole cards and
+     part of the fourth). It stays a safety rail below the natural budget,
+     never a forced slide-under. */
+  .casefile-page[data-media-kind="video"] .casefile-main[data-revision="true"] .transcript-document__segments {
+    min-height: var(--transcript-viewport-min, 176px);
   }
 
   .casefile-layout[data-governance-open="true"] .governance-drawer {
@@ -1050,12 +1103,6 @@
     --wave-height: 56px;
   }
 
-  /* Same 96px audio-like frame at the short-height tier (12vh == 96px at
-     the canonical 800px window). */
-  .casefile-main[data-revision="true"] .media-transport__controls video {
-    max-height: 12vh;
-  }
-
   .casefile-main[data-revision="true"] .media-transport__rail {
     display: none;
   }
@@ -1078,13 +1125,18 @@
   /* Evidence math floor (1280x800 contract): cards measure 44px and the
      viewport gap is 4px, so a centered active card shows middle-2 through
      middle+2 fully once the viewport is at least 2*(22+48+48) = 236px.
-     Measured at 1280x800 on both acceptance-shaped fixtures: audio and
-     video in rest, reviewer, and approver modes all leave >= 253px of
-     natural room, so this floor is a safety rail. The 96px video frame
-     bound above keeps the same room at taller desktop windows: a 1319x1001
-     video casefile with the rail visible leaves ~250px even with a
-     two-line summary, clear of any slide-under. */
+     Measured at 1280x800 on the audio acceptance-shaped fixture: audio in
+     rest, reviewer, and approver modes leaves >= 253px of natural room,
+     so this floor is a safety rail, never a forced slide-under. */
   .casefile-main[data-revision="true"] .transcript-document__segments {
     min-height: var(--transcript-viewport-min, 224px);
+  }
+
+  /* Video casefile at the short-height tier (captain ruling 2026-08-19):
+     the restored 30vh frame costs ~240px at an 800px window, so the
+     honest several-cards floor here is lower than the audio middle+-2
+     contract; video scoped so the audio layout never shifts. */
+  .casefile-page[data-media-kind="video"] .casefile-main[data-revision="true"] .transcript-document__segments {
+    min-height: var(--transcript-viewport-min, 144px);
   }
 }

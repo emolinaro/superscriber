@@ -198,6 +198,19 @@ describe("CasefileWorkspace", () => {
     vi.restoreAllMocks();
   });
 
+  it("tags the casefile page with the media kind so CSS can scope the video transcript budget", () => {
+    renderWorkspace({
+      media: { kind: "video", url: "https://example.test/v.mp4", denialReason: null },
+    });
+    // Video casefiles carry the captain's 2026-08-19 ruling (original-size
+    // frame plus a video-scoped transcript budget); audio casefiles render
+    // the pinned-zone layout untouched, which the styles test pins down.
+    expect(document.querySelector(".casefile-page")).toHaveAttribute(
+      "data-media-kind",
+      "video",
+    );
+  });
+
   it("renders a page-level success notice from the recording route", () => {
     renderWorkspace({}, "Recovered archived content into active draft v3; history kept.");
 
