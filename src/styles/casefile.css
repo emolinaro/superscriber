@@ -1038,8 +1038,6 @@
     gap: var(--space-2);
   }
 
-
-
   .casefile-main[data-revision="true"] {
     gap: var(--space-1);
   }

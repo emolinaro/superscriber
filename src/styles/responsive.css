@@ -89,15 +89,15 @@
 
 @media (max-width: 1099px) {
   /* Pinned player chrome (casefile-pin-transcript-zone) on every
-     window-scrolling
-     casefile width. The stacked offsets behind the old desktop stickies
-     (case-header top: 64px, transport top: 132px) were calibrated for the
-     single-row desktop chrome; below 1100px the app bar wraps to several
-     rows and the header card grows tall, so the parked transport always
-     ended up hidden behind the header card (z-index 6 beat 5). On the
-     casefile page the shell bar and case header instead flow away and the
-     transport takes the single pinned slot - no overlap, no stacked-chrome
-     jumpiness. Other pages keep their sticky shell bar untouched. */
+     window-scrolling casefile width. The stacked offsets behind the old
+     desktop stickies (case-header top: 64px, transport top: 132px) were
+     calibrated for the single-row desktop chrome; below 1100px the app
+     bar wraps to several rows and the header card grows tall, so the
+     parked transport always ended up hidden behind the header card
+     (z-index 6 beat 5). On the casefile page the shell bar and case
+     header instead flow away and the transport takes the single pinned
+     slot - no overlap, no stacked-chrome jumpiness. Other pages keep
+     their sticky shell bar untouched. */
   body:has(.casefile-page) .app-shell__header,
   body:has(.casefile-page) .banner-emergency,
   .case-header {
