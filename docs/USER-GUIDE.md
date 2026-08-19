@@ -122,23 +122,17 @@ tracks the position.
 - **Click-to-pause.** Clicking the currently playing segment pauses in
   place; clicking it again resumes from the unchanged paused position. The
   transport toggle and the Space key do exactly the same.
-- **Centered follow, full context.** Follow scroll keeps the active
-  segment in the exact middle of the viewport as playback advances, with
-  a band of several context segments above and below it; the transcript
-  scrolls end to end and no segment is ever clipped. On compact layouts
-  the transport, wave, and timecode stay pinned above the transcript so
-  the controls never scroll away. Follow stays dormant on mount so the
-  player-led rest state remains at the top, and activates only after the
-  track moves - the first playback tick or an accepted explicit seek. Once
-  active, it yields the moment you scroll manually. A rejected seek,
-  including one attempted while media is unavailable, never centers a
-  stale row.
+- **Pinned chrome, centered follow.** Transport, wave, and timecode stay
+  pinned above the transcript while it scrolls, so the controls never
+  scroll away. Follow scroll keeps the active segment centered as playback
+  advances, yields the moment you scroll manually, and re-engages on any
+  explicit seek.
 - **Segment rail.** On wider layouts a numbered rail under the wave seeks
   the same segments. The rail follows playback on its own horizontal axis,
   keeping the active chip centered as the transcript centers the same
   segment. Scrolling the rail by hand pauses only the rail's follow - the
-  transcript's follow is unaffected - and an accepted explicit seek
-  re-engages it immediately.
+  transcript's follow is unaffected - and any explicit seek re-engages it
+  immediately.
 
 Where the browser cannot decode the audio, native media controls remain the
 fallback (and always are for video).

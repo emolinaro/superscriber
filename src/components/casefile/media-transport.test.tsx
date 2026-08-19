@@ -157,31 +157,6 @@ describe("MediaTransport", () => {
     }
   });
 
-  it("activates transcript follow only after playback advances", () => {
-    const onPlaybackTick = vi.fn();
-    render(
-      <MediaTransport
-        activeSegmentId="seg-1"
-        mediaKind="audio"
-        mediaUrl="/api/media/rec-1"
-        onActiveSegmentChange={() => undefined}
-        onPlaybackTick={onPlaybackTick}
-        onSeekHandled={() => undefined}
-        seekRequest={null}
-        segments={baseSegments}
-      />,
-    );
-
-    const audio = document.querySelector("audio")!;
-    const playback = stubMediaPlayback(audio);
-    fireEvent.timeUpdate(audio);
-    expect(onPlaybackTick).not.toHaveBeenCalled();
-
-    void playback.play();
-    fireEvent.timeUpdate(audio);
-    expect(onPlaybackTick).toHaveBeenCalledTimes(1);
-  });
-
   it("publishes the rendered transport height as player clearance", () => {
     const resizeCallbacks = new Map<Element, ResizeObserverCallback>();
     const observe = vi.fn();

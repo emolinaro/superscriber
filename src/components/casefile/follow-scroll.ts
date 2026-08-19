@@ -1,21 +1,15 @@
 /**
- * Playback follow-scroll decision logic (visible-context).
+ * Playback follow-scroll decision logic (player-pinned-center).
  *
- * The transcript is fully scrollable and every segment keeps its complete
- * text (no clamping ever); follow centers interior active segments in the
- * transcript scrollport while the first and final segments anchor to its
- * block edges. On desktop the transcript owns the vertical scrollport below
- * the pinned media band. Below 1100px the window remains the scrollport with
- * asymmetric player clearance.
- * Follow stays dormant while the player is resting at its initial position,
- * then activates on the first playback tick or an explicit seek. Once active,
- * any user scroll gesture pauses it, and it re-engages the moment the active
- * line is visible in the viewport again -
- * the same "only while you can see it" boundary the previous nearest-edge
- * alignment held - or immediately on an explicit seek (segment timestamp
- * click, rail chip, wave marker).
+ * The transcript follow centers the active segment in the scrollport
+ * (scrollIntoView block: "center") so context stays visible on both sides
+ * of the playing line. Follow is non-fighting: any user scroll gesture
+ * pauses it, and it re-engages the moment the active line is visible in
+ * the scrollport again - the same "only while you can see it" boundary the
+ * previous nearest-edge alignment held - or immediately on an explicit
+ * seek (segment timestamp click, rail chip, wave marker).
  *
- * The segment rail inside the transport mirrors this contract on the
+ * The segment rail inside the pinned transport mirrors this contract on the
  * horizontal axis (wave-track scroll sync): the same decision matrix, the
  * same pause-on-user-gesture boundary, applied to the rail's scrollLeft so
  * the active segment's chip stays centered-ish while the transcript centers
@@ -26,8 +20,6 @@
  */
 
 export type FollowDecision =
-  /** The track has not moved yet: preserve the player-led rest state. */
-  | "dormant"
   /** Not paused: center the active segment. */
   | "center"
   /** Paused and the active segment left the scrollport: leave the user's reading position alone. */
@@ -36,13 +28,9 @@ export type FollowDecision =
   | "resume";
 
 export function decideFollowScroll(
-  activated: boolean,
   paused: boolean,
   activeRowVisible: boolean,
 ): FollowDecision {
-  if (!activated) {
-    return "dormant";
-  }
   if (!paused) {
     return "center";
   }
@@ -93,10 +81,9 @@ export function isTargetInHorizontalView(
 
 /**
  * The scrollLeft that centers the target inside the scrollport
- * ("centered-ish" horizontal tracking, mirroring block: "center" /
- * inline: "center" on the transcript axes). Clamped at zero;
- * Element.scrollTo clamps the overshoot at the far end itself, so only
- * the leading clamp lives here.
+ * ("centered-ish" horizontal tracking, mirroring block: "center" on the
+ * vertical axis). Clamped at zero; Element.scrollTo clamps the overshoot
+ * at the far end itself, so only the leading clamp lives here.
  */
 export function centeredHorizontalScrollLeft(
   scrollport: HorizontalScrollport,
@@ -119,12 +106,15 @@ export const FOLLOW_SCROLL_PAUSE_KEYS = new Set([
   "ArrowDown",
 ]);
 
-/** The nearest declared vertical scrollport, or null for window scroll. */
+/** The nearest overflowing ancestor scrollport, or null for window scroll. */
 export function findScrollParent(element: HTMLElement): HTMLElement | null {
   let node = element.parentElement;
   while (node) {
     const { overflowY } = window.getComputedStyle(node);
-    if (overflowY === "auto" || overflowY === "scroll") {
+    if (
+      (overflowY === "auto" || overflowY === "scroll") &&
+      node.scrollHeight > node.clientHeight
+    ) {
       return node;
     }
     node = node.parentElement;

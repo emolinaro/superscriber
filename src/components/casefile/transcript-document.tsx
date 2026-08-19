@@ -6,7 +6,6 @@ import { InlineNotice } from "@/components/ui/inline-notice";
 import {
   FOLLOW_SCROLL_PAUSE_KEYS,
   decideFollowScroll,
-  findScrollParent,
   isRowInScrollView,
 } from "./follow-scroll";
 
@@ -14,7 +13,7 @@ type TranscriptDocumentProps = {
   activeSegmentId: string | null;
   editable: boolean;
   phoneSafetyMode: boolean;
-  followActivationNonce?: number;
+  followResumeNonce?: number;
   /** True when phone safety (not permissions or history) removed the editors. */
   safetyStripped?: boolean;
   summary: string;
@@ -56,53 +55,10 @@ function isFollowScrollIgnoredTarget(target: EventTarget | null): boolean {
   );
 }
 
-function centerRow(row: HTMLElement, behavior: ScrollBehavior): void {
-  const scrollParent = findScrollParent(row);
-  if (!scrollParent) {
-    row.scrollIntoView({ block: "center", inline: "center", behavior });
-    return;
-  }
-
-  const rows = Array.from(
-    scrollParent.querySelectorAll<HTMLElement>(".transcript-segment"),
-  );
-  if (row === rows[0]) {
-    scrollParent.scrollTo({ top: 0, behavior });
-    return;
-  }
-  if (row === rows.at(-1)) {
-    scrollParent.scrollTo({
-      top: Math.max(0, scrollParent.scrollHeight - scrollParent.clientHeight),
-      behavior,
-    });
-    return;
-  }
-
-  const rect = row.getBoundingClientRect();
-  const scrollportRect = scrollParent.getBoundingClientRect();
-  const actionBarTop =
-    document.querySelector<HTMLElement>(".casefile-action-bar")?.getBoundingClientRect()
-      .top ?? window.innerHeight;
-  const visibleTop = Math.max(0, scrollportRect.top);
-  const visibleBottom = Math.min(
-    window.innerHeight,
-    actionBarTop,
-    scrollportRect.bottom,
-  );
-  scrollParent.scrollTo({
-    top:
-      scrollParent.scrollTop +
-      rect.top +
-      rect.height / 2 -
-      (visibleTop + visibleBottom) / 2,
-    behavior,
-  });
-}
-
 export function TranscriptDocument({
   activeSegmentId,
   editable,
-  followActivationNonce = 0,
+  followResumeNonce = 0,
   phoneSafetyMode,
   summary,
   segments,
@@ -125,68 +81,10 @@ export function TranscriptDocument({
   // `safetyStripped` when editing would otherwise be possible - permission-
   // or history-based read-only states keep their own, separate story.
   const segmentsRef = useRef<HTMLDivElement>(null);
-  // Non-fighting playback follow (visible-context): a user scroll gesture
-  // stays dormant while the media rests at its initial position, pauses on
-  // user scrolling after activation, and re-engages when the active line is
-  // visible in the viewport again or on any explicit seek.
+  // Non-fighting playback follow (player-pinned-center): a user scroll
+  // gesture pauses follow; follow re-engages when the active line is visible
+  // in the scrollport again, or on any explicit seek.
   const followPausedRef = useRef(false);
-
-  useEffect(() => {
-    const scrollport = segmentsRef.current;
-    if (!scrollport) {
-      return;
-    }
-
-    const actionBar = document.querySelector<HTMLElement>(".casefile-action-bar");
-    const transcript = scrollport.closest<HTMLElement>(".transcript-document");
-    const workspace = transcript?.closest<HTMLElement>(".casefile-page");
-    const transport = transcript?.parentElement?.querySelector<HTMLElement>(
-      ":scope > .media-transport",
-    );
-    const updateBlockSize = () => {
-      if (window.innerWidth < 1100) {
-        scrollport.style.removeProperty("--transcript-scrollport-block-size");
-        return;
-      }
-      const actionBarHeight = actionBar?.getBoundingClientRect().height ?? 0;
-      const visibleBottom = window.innerHeight - actionBarHeight;
-      const visibleTop = Math.max(0, scrollport.getBoundingClientRect().top);
-      const value = `${Math.max(0, Math.floor(visibleBottom - visibleTop))}px`;
-      if (
-        scrollport.style.getPropertyValue("--transcript-scrollport-block-size") !== value
-      ) {
-        scrollport.style.setProperty("--transcript-scrollport-block-size", value);
-      }
-    };
-
-    updateBlockSize();
-    const observer =
-      typeof ResizeObserver === "undefined" ? null : new ResizeObserver(updateBlockSize);
-    if (transcript) {
-      for (const child of transcript.children) {
-        if (child !== scrollport) {
-          observer?.observe(child);
-        }
-      }
-    }
-    if (actionBar) {
-      observer?.observe(actionBar);
-    }
-    if (transport) {
-      observer?.observe(transport);
-    }
-    if (workspace) {
-      observer?.observe(workspace);
-    }
-    window.addEventListener("resize", updateBlockSize);
-    window.addEventListener("scroll", updateBlockSize, { passive: true });
-    return () => {
-      observer?.disconnect();
-      window.removeEventListener("resize", updateBlockSize);
-      window.removeEventListener("scroll", updateBlockSize);
-      scrollport.style.removeProperty("--transcript-scrollport-block-size");
-    };
-  }, [safetyStripped, segments.length, speakerTools]);
 
   // Pause follow on user scroll gestures: wheel, touch drag, or page-scroll
   // keys pressed outside editors/sliders (keyboard editing never pauses).
@@ -237,7 +135,10 @@ export function TranscriptDocument({
     }
 
     const reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
-    centerRow(row, reducedMotion ? "auto" : "smooth");
+    row.scrollIntoView({
+      block: "center",
+      behavior: reducedMotion ? "auto" : "smooth",
+    });
 
     // Priority order matters: querySelector would otherwise return the first
     // match in tree order (the timestamp precedes the editors in the row).
@@ -250,13 +151,14 @@ export function TranscriptDocument({
 
   useEffect(() => {
     followPausedRef.current = false;
-  }, [followActivationNonce]);
+  }, [followResumeNonce]);
 
-  // Playback follow centers interior segments in the transcript scrollport.
-  // The first and final rows anchor to its block edges. Below 1100px the
-  // window remains the scrollport and the pinned transport claims its
-  // asymmetric top clearance. The pause contract is decided by
-  // follow-scroll.ts so the whole matrix stays unit-tested.
+  // Playback follow: CENTER the active segment inside the nearest scrollport
+  // (the bounded .casefile-main scrollport on desktop, the window elsewhere)
+  // so roughly half a screen of context sits on both sides of the playing
+  // line. The segments list itself is never a scroller - the bounded shell
+  // keeps .casefile-main as the single scrollport. The pause contract is
+  // decided by follow-scroll.ts so the whole matrix stays unit-tested.
   useEffect(() => {
     const container = segmentsRef.current;
     if (!container || !activeSegmentId) {
@@ -267,19 +169,18 @@ export function TranscriptDocument({
       return;
     }
 
-    const decision = decideFollowScroll(
-      followActivationNonce > 0,
-      followPausedRef.current,
-      isRowInScrollView(row),
-    );
-    if (decision === "dormant" || decision === "skip") {
+    const decision = decideFollowScroll(followPausedRef.current, isRowInScrollView(row));
+    if (decision === "skip") {
       return;
     }
     followPausedRef.current = false;
 
     const reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
-    centerRow(row, reducedMotion ? "auto" : "smooth");
-  }, [activeSegmentId, followActivationNonce]);
+    row.scrollIntoView({
+      block: "center",
+      behavior: reducedMotion ? "auto" : "smooth",
+    });
+  }, [activeSegmentId, followResumeNonce]);
 
   return (
     <section aria-label="Transcript document" className="transcript-document" data-testid="transcript-start">
@@ -301,39 +202,38 @@ export function TranscriptDocument({
         )}
       </div>
 
-      {speakerTools ? (
-        <div className="transcript-document__speaker-tools">
-          <p className="field-note" data-testid="speaker-toolbar-list">
-            Speakers:{" "}
-            {listSpeakers(segments)
-              .map(
-                (speaker) =>
-                  `${speaker.label} (${speaker.segmentCount} ${
-                    speaker.segmentCount === 1 ? "segment" : "segments"
-                  })`,
-              )
-              .join(", ")}
-          </p>
-          <button
-            className="button button-secondary"
-            disabled={Boolean(speakerRenameNote)}
-            onClick={onOpenSpeakerRename}
-            type="button"
-          >
-            Rename speaker...
-          </button>
-          {speakerRenameNote ? (
-            <span className="field-note">{speakerRenameNote}</span>
-          ) : null}
-        </div>
-      ) : null}
-      {safetyStripped ? (
-        <InlineNotice tone="info">
-          Review and decisions require a tablet or desktop.
-        </InlineNotice>
-      ) : null}
-
       <div className="transcript-document__segments" ref={segmentsRef}>
+        {speakerTools ? (
+          <div className="transcript-document__speaker-tools">
+            <p className="field-note" data-testid="speaker-toolbar-list">
+              Speakers:{" "}
+              {listSpeakers(segments)
+                .map(
+                  (speaker) =>
+                    `${speaker.label} (${speaker.segmentCount} ${
+                      speaker.segmentCount === 1 ? "segment" : "segments"
+                    })`,
+                )
+                .join(", ")}
+            </p>
+            <button
+              className="button button-secondary"
+              disabled={Boolean(speakerRenameNote)}
+              onClick={onOpenSpeakerRename}
+              type="button"
+            >
+              Rename speaker...
+            </button>
+            {speakerRenameNote ? (
+              <span className="field-note">{speakerRenameNote}</span>
+            ) : null}
+          </div>
+        ) : null}
+        {safetyStripped ? (
+          <InlineNotice tone="info">
+            Review and decisions require a tablet or desktop.
+          </InlineNotice>
+        ) : null}
         {segments.map((segment, index) => {
           const windowLabel = formatSegmentWindow(segment.startMs, segment.endMs);
           const active = segment.id === activeSegmentId;
