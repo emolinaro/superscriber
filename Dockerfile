@@ -22,6 +22,12 @@ ENV PORT=3000
 ENV SUPERSCRIBER_ENGINE_MODE=internal
 ARG SUPERSCRIBER_TRANSCRIBE_MODEL=small
 ARG SUPERSCRIBER_PRELOAD_MODEL=1
+# diarization-bundle: set SUPERSCRIBER_PRELOAD_DIARIZATION=1 and pass the
+# gated Hugging Face token once via --build-arg SUPERSCRIBER_HUGGINGFACE_TOKEN
+# to vendor the pinned speaker-diarization-3.1 bundle into the image. The
+# token is used for that RUN layer only and never persisted into the image.
+ARG SUPERSCRIBER_PRELOAD_DIARIZATION=0
+ARG SUPERSCRIBER_HUGGINGFACE_TOKEN=
 ENV PATH="/opt/venv/bin:${PATH}"
 ENV SUPERSCRIBER_TRANSCRIBE_MODEL=${SUPERSCRIBER_TRANSCRIBE_MODEL}
 ENV SUPERSCRIBER_TRANSCRIBE_MODEL_DIR=/app/models
@@ -42,11 +48,18 @@ COPY --from=builder /app/scripts ./scripts
 
 RUN python3 -m venv /opt/venv \
   && python3 -m pip install --no-cache-dir --upgrade pip \
+  # CPU-only torch wheels keep the appliance image free of CUDA runtimes.
+  && python3 -m pip install --no-cache-dir torch==2.8.0 torchaudio==2.8.0 \
+       --index-url https://download.pytorch.org/whl/cpu \
   && python3 -m pip install --no-cache-dir -r /app/worker/requirements.txt \
   && if [ "${SUPERSCRIBER_PRELOAD_MODEL}" = "1" ]; then \
        SUPERSCRIBER_TRANSCRIBE_OFFLINE=0 \
        SUPERSCRIBER_TRANSCRIBE_ALLOW_RUNTIME_DOWNLOAD=1 \
        python3 /app/worker/prefetch_model.py; \
+     fi \
+  && if [ "${SUPERSCRIBER_PRELOAD_DIARIZATION}" = "1" ]; then \
+       SUPERSCRIBER_HUGGINGFACE_TOKEN="${SUPERSCRIBER_HUGGINGFACE_TOKEN}" \
+       python3 /app/worker/prefetch_diarization.py || true; \
      fi \
   && chmod +x /app/scripts/container-entrypoint.sh \
   && mkdir -p /app/data /app/models \

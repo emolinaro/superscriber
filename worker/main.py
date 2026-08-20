@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Any
 from urllib import error, request
 
+from diarization_support import apply_diarization
 from runtime_support import (
     ModelUnavailable,
     SpeechStackUnavailable,
@@ -326,16 +327,24 @@ class Transcriber:
         if not segments:
             raise RuntimeError("Transcription finished without producing transcript segments.")
 
+        # diarization-bundle: attribution never breaks a job - any bundle or
+        # engine problem degrades to the historical single-speaker result.
+        segments, diarization_status, diarization_note = apply_diarization(
+            self.config, media_path, segments
+        )
+
         summary = (
             f"Transcript prepared by faster-whisper on {self.config.device} "
-            f"using local model bundle {model_path.name}. Speaker separation remains degraded until diarization is added."
+            f"using local model bundle {model_path.name}."
         )
+        if diarization_note:
+            summary += f" {diarization_note}"
         if used_default_instead:
             summary += (
                 f" Requested model '{requested_model}' is not provisioned on this host;"
                 f" ran the default '{self.config.model_name}' instead."
             )
-        return summary, segments, "degraded"
+        return summary, segments, diarization_status
 
 
 class HeartbeatLoop:

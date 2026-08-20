@@ -305,6 +305,8 @@ SUPERSCRIBER_TRANSCRIBE_MODEL=tiny npm run worker:prefetch
 
 The selected tier is stored with the recording, included as `transcriptModel` in internal-worker claims, and exposed as `recording.transcriptModel` in webhook dispatches. If a stored override can no longer be provisioned or cannot be loaded, the internal worker falls back to its configured default and says so in the revision summary; the configured default itself remains load-or-fail. Explicit stub mode also identifies its fallback in the summary.
 
+Speaker diarization rides the same vendored-bytes contract: the pinned pyannote speaker-diarization-3.1 bundle (`worker/diarization-bundle.json`, about 31 MiB) installs once per home with `npx tsx scripts/provision-model-tier.ts --diarization` after the operator accepts the Hugging Face click-gate, and every completed job then attributes segments to real speakers (`diarizationStatus=available`) that the casefile's batch speaker rename merges like any other label. Without the bundle, jobs complete single-speaker with `degraded` exactly as before - attribution never fails a job. Full operator runbook: [docs/operators/diarization.md](docs/operators/diarization.md).
+
 For webhook mode, configure:
 
 - `SUPERSCRIBER_ENGINE_DISPATCH_URL`
@@ -315,7 +317,7 @@ For webhook mode, configure:
 ## Current Limitations
 
 - GPU acceleration depends on compatible host/runtime support being available to the worker process
-- Diarization is still degraded; the worker currently produces a transcript-first result without full speaker separation
+- Speaker separation ships as an opt-in one-time gated install: the vendored pyannote bundle attributes segments once provisioned (see [docs/operators/diarization.md](docs/operators/diarization.md)); before that, transcripts carry a single `Speaker 1` and report `degraded`
 - This is still a single-institution appliance, not a shared multi-tenant SaaS deployment
 
 ## Testing

@@ -10,12 +10,25 @@
 //   npx tsx scripts/provision-model-tier.ts --list
 //   npx tsx scripts/provision-model-tier.ts --verify small
 //   SUPERSCRIBER_TRANSCRIBE_MODEL_DIR=<dir> npx tsx scripts/provision-model-tier.ts --tier small
+//   npx tsx scripts/provision-model-tier.ts --diarization
+//   npx tsx scripts/provision-model-tier.ts --verify-diarization
+//
+// --diarization vendors the pinned pyannote speaker-diarization-3.1 bundle
+// (captain engine ruling 2026-08-20, option A) through the same
+// pinned-artifact flow. The gated Hugging Face repos need a personal token
+// for this one download: export SUPERSCRIBER_HUGGINGFACE_TOKEN (or HF_TOKEN)
+// for the duration of the run only; the token is never persisted.
 
 import {
   isModelProvisioned,
   listModelCatalog,
   MODEL_TIER_IDS,
 } from "@/server/models/catalog";
+import {
+  DIARIZATION_BUNDLE,
+  isDiarizationBundleProvisioned,
+  provisionDiarizationBundle,
+} from "@/server/models/diarization";
 import {
   listProvisioningStatus,
   ProvisioningError,
@@ -27,7 +40,7 @@ const POLL_INTERVAL_MS = 1000;
 
 function usage(): never {
   console.error(
-    "Usage: provision-model-tier.ts --list | --verify <tier-id> | --tier <tier-id>\n" +
+    "Usage: provision-model-tier.ts --list | --verify <tier-id> | --tier <tier-id> | --diarization | --verify-diarization\n" +
       `Known tiers: ${MODEL_TIER_IDS.join(", ")}`,
   );
   process.exit(64);
@@ -37,10 +50,14 @@ function parseArgs(argv: string[]): {
   list: boolean;
   tierId: string | null;
   verifyTierId: string | null;
+  diarization: boolean;
+  verifyDiarization: boolean;
 } {
   let list = false;
   let tierId: string | null = null;
   let verifyTierId: string | null = null;
+  let diarization = false;
+  let verifyDiarization = false;
   for (let index = 0; index < argv.length; index += 1) {
     const arg = argv[index];
     if (arg === "--list") {
@@ -51,11 +68,15 @@ function parseArgs(argv: string[]): {
     } else if (arg === "--verify") {
       verifyTierId = argv[index + 1] ?? null;
       index += 1;
+    } else if (arg === "--diarization") {
+      diarization = true;
+    } else if (arg === "--verify-diarization") {
+      verifyDiarization = true;
     } else {
       usage();
     }
   }
-  return { list, tierId, verifyTierId };
+  return { list, tierId, verifyTierId, diarization, verifyDiarization };
 }
 
 function sleep(ms: number) {
@@ -73,6 +94,15 @@ function printCatalog() {
       `${tier.id.padEnd(18)} ${String(sizeMiB).padStart(6)} MiB  ${state}${marker}`,
     );
   }
+  const diarizationSizeMiB = Math.round(
+    DIARIZATION_BUNDLE.sizeBytes / (1024 * 1024),
+  );
+  const diarizationState = isDiarizationBundleProvisioned()
+    ? "provisioned"
+    : "not installed";
+  console.log(
+    `${DIARIZATION_BUNDLE.bundleId.padEnd(18)} ${String(diarizationSizeMiB).padStart(6)} MiB  ${diarizationState} (diarization bundle)`,
+  );
 }
 
 function tierView(tierId: string) {
@@ -173,10 +203,57 @@ async function provision(tierId: string): Promise<number> {
   }
 }
 
+async function provisionDiarization(): Promise<number> {
+  if (isDiarizationBundleProvisioned()) {
+    console.log("Diarization bundle is already provisioned; skipping download.");
+    return 0;
+  }
+  console.log(
+    `Provisioning diarization bundle '${DIARIZATION_BUNDLE.bundleId}' (${Math.round(DIARIZATION_BUNDLE.sizeBytes / (1024 * 1024))} MiB, pinned)...`,
+  );
+  let lastLoggedPercent = -10;
+  const result = await provisionDiarizationBundle({
+    onProgress: ({ bytesReceived, bytesTotal }) => {
+      const percent =
+        bytesTotal > 0 ? Math.floor((bytesReceived / bytesTotal) * 100) : 0;
+      if (percent >= lastLoggedPercent + 10) {
+        lastLoggedPercent = percent;
+        console.log(`  ...${percent}%`);
+      }
+    },
+  });
+  if (result.state === "already_provisioned") {
+    console.log("Diarization bundle is already provisioned; skipping download.");
+    return 0;
+  }
+  if (result.state !== "completed") {
+    console.error(`Diarization bundle provisioning failed: ${result.error}`);
+    return 1;
+  }
+  console.log("Diarization bundle provisioned successfully; transcription can now attribute speakers offline.");
+  return 0;
+}
+
 async function main() {
-  const { list, tierId, verifyTierId } = parseArgs(process.argv.slice(2));
+  const { list, tierId, verifyTierId, diarization, verifyDiarization } =
+    parseArgs(process.argv.slice(2));
   if (list) {
     printCatalog();
+    return;
+  }
+  if (verifyDiarization) {
+    if (!isDiarizationBundleProvisioned()) {
+      console.error(
+        `Diarization bundle is not provisioned in ${process.env.SUPERSCRIBER_TRANSCRIBE_MODEL_DIR ?? "the configured model directory"}.`,
+      );
+      process.exitCode = 1;
+      return;
+    }
+    console.log("Diarization bundle is provisioned and available offline.");
+    return;
+  }
+  if (diarization) {
+    process.exitCode = await provisionDiarization();
     return;
   }
   if (verifyTierId) {

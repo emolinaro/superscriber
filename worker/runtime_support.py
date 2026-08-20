@@ -115,6 +115,10 @@ class WorkerConfig:
     device: str
     device_reason: str
     compute_type: str
+    # diarization-bundle: on by default; degrades silently when the vendored
+    # bundle or the pyannote stack is absent. Defaulted so test constructors
+    # written before the bundle existed keep working.
+    diarization_enabled: bool = True
 
     @classmethod
     def from_env(cls) -> "WorkerConfig":
@@ -163,6 +167,7 @@ class WorkerConfig:
             device=device,
             device_reason=device_reason,
             compute_type=compute_type,
+            diarization_enabled=env_flag("SUPERSCRIBER_DIARIZATION_ENABLED", True),
         )
 
     @property

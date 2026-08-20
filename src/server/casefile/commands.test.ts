@@ -1453,6 +1453,65 @@ describe("casefile draft commands", () => {
     }
   });
 
+  // diarization-bundle (d): a label emitted by the vendored pyannote
+  // attribution ("Speaker 2" on a completed draft) merges onto an existing
+  // human-named label through the normal governed rename path - the worker's
+  // labels land as ordinary speaker labels, not a forked concept.
+  it("merges a diarized label onto an existing speaker name", async () => {
+    const { bundle, reviewer } = await setupDraftFixture();
+    const diarizedSegments = [
+      { ...baseSegments[0], speakerLabel: "Speaker 2" },
+      { ...baseSegments[1], speakerLabel: "Speaker 2" },
+      {
+        ...baseSegments[0],
+        id: "seg-3",
+        startMs: 9_000,
+        endMs: 12_000,
+        speakerLabel: "Speaker 1",
+      },
+    ];
+
+    try {
+      bundle.db
+        .update(revisions)
+        .set({ segmentsJson: JSON.stringify(diarizedSegments) })
+        .where(eq(revisions.id, "rev-1"))
+        .run();
+
+      const result = renameSpeakerCommand(reviewer, {
+        recordingId: "rec-1",
+        expectedCurrentRevisionId: "rev-1",
+        fromSpeaker: "Speaker 2",
+        toSpeaker: "Namo",
+      }, bundle);
+
+      expect(result.rename.renamedSegmentCount).toBe(2);
+      expect(result.rename.mergesWithExisting).toBe(false);
+      expect(result.revision.segments.map((segment) => segment.speakerLabel)).toEqual([
+        "Namo",
+        "Namo",
+        "Speaker 1",
+      ]);
+
+      // And the remaining diarized label itself merges onto the human name.
+      const merged = renameSpeakerCommand(reviewer, {
+        recordingId: "rec-1",
+        expectedCurrentRevisionId: result.revision.id,
+        fromSpeaker: "Speaker 1",
+        toSpeaker: "Namo",
+      }, bundle);
+
+      expect(merged.rename.mergesWithExisting).toBe(true);
+      expect(merged.rename.existingTargetSegmentCount).toBe(2);
+      expect(merged.rename.renamedSegmentCount).toBe(1);
+      expect(
+        new Set(merged.revision.segments.map((segment) => segment.speakerLabel)),
+      ).toEqual(new Set(["Namo"]));
+    } finally {
+      bundle.sqlite.close();
+    }
+  });
+
   it("rejects a rename with an empty, oversized, or unchanged speaker name", async () => {
     const { bundle, reviewer } = await setupDraftFixture();
 

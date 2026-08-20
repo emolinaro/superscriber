@@ -1,0 +1,30 @@
+{
+  "bundleId": "pyannote-diarization-3.1",
+  "notes": "Vendored pyannote speaker-diarization-3.1 bundle (captain engine ruling 2026-08-20, option A). Files are gated on Hugging Face and are fetched once per home with a personal access token, then run from this local byte cache only. Commit SHAs and byte sizes were read from the Hugging Face API on 2026-08-20 (api.models?blobs=true). The MIT licensing of pyannote-audio and these models is documented in docs/operators/diarization.md.",
+  "parts": {
+    "pipeline": {
+      "repository": "pyannote/speaker-diarization-3.1",
+      "revision": "84fd25912480287da0247647c3d2b4853cb3ee5d",
+      "files": [
+        { "path": "config.yaml", "sizeBytes": 469 }
+      ]
+    },
+    "segmentation": {
+      "repository": "pyannote/segmentation-3.0",
+      "revision": "e66f3d3b9eb0873085418a7b813d3b369bf160bb",
+      "files": [
+        { "path": "segmentation/config.yaml", "sizeBytes": 399 },
+        { "path": "segmentation/pytorch_model.bin", "sizeBytes": 5905440 }
+      ]
+    },
+    "embedding": {
+      "repository": "pyannote/wespeaker-voxceleb-resnet34-LM",
+      "revision": "837717ddb9ff5507820346191109dc79c958d614",
+      "files": [
+        { "path": "embedding/config.yaml", "sizeBytes": 221 },
+        { "path": "embedding/pytorch_model.bin", "sizeBytes": 26645418 }
+      ]
+    }
+  },
+  "sizeBytes": 32551947
+}
