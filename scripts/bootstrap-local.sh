@@ -965,7 +965,7 @@ provision_model() {
 # separation on the historical degraded path, so bootstrap never wedges on it.
 provision_diarization() {
   local args=(--verify-diarization)
-  if [[ -n "${SUPERSCRIBER_HUGGINGFACE_TOKEN:-}${HF_TOKEN:-}" ]]; then
+  if [[ "${SKIP_MODEL_DOWNLOAD}" -ne 1 && -n "${SUPERSCRIBER_HUGGINGFACE_TOKEN:-}${HF_TOKEN:-}" ]]; then
     args=(--diarization)
   fi
   if (cd "${REPO_ROOT}" && SUPERSCRIBER_TRANSCRIBE_MODEL_DIR="${INSTANCE_ROOT}/model-cache" \

@@ -288,13 +288,14 @@ export async function provisionDiarizationBundle(opts: {
     renameSync(staging, target);
   } catch (error) {
     rmSync(staging, { recursive: true, force: true });
+    const cause = error instanceof Error ? error.message : String(error);
     return {
       state: "failed",
       fixtureSeam: Boolean(fixtureDir),
       error:
-        error instanceof Error
-          ? bundleErrorMessage(token, error.message)
-          : String(error),
+        fixtureDir || !(error instanceof Error)
+          ? cause
+          : bundleErrorMessage(token, cause),
     };
   }
 

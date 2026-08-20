@@ -55,13 +55,16 @@ bytes into the image is opt-in at build time:
 ```sh
 docker build \
   --build-arg SUPERSCRIBER_PRELOAD_DIARIZATION=1 \
-  --build-arg SUPERSCRIBER_HUGGINGFACE_TOKEN=hf_... .
+  --secret id=hf_token,env=SUPERSCRIBER_HUGGINGFACE_TOKEN .
 ```
 
-Without a token the prefetch logs a warning and the image still builds;
-speaker separation then simply degrades until the bundle reaches the mounted
-model cache. Pass the token only when prefetching, and prefer short-lived,
-read-scoped tokens.
+The token travels via a BuildKit secret mount, so it is visible to that one
+build step only and never lands in image history or the final image. With a
+token supplied, a failed gated fetch fails the build (token means
+required-and-verified); without one the prefetch logs a warning and the
+image still builds, and speaker separation then simply degrades until the
+bundle reaches the mounted model cache. Pass the token only when
+prefetching, and prefer short-lived, read-scoped tokens.
 
 ## Runtime behavior
 

@@ -76,6 +76,16 @@ function parseArgs(argv: string[]): {
       usage();
     }
   }
+  const modeCount = [
+    list,
+    tierId !== null,
+    verifyTierId !== null,
+    diarization,
+    verifyDiarization,
+  ].filter(Boolean).length;
+  if (modeCount !== 1) {
+    usage();
+  }
   return { list, tierId, verifyTierId, diarization, verifyDiarization };
 }
 
