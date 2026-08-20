@@ -201,6 +201,7 @@ Local worker notes:
 - The worker defaults to `SUPERSCRIBER_ENGINE_MODE=internal`, `SUPERSCRIBER_APP_BASE_URL=http://127.0.0.1:3000`, and model storage under `./models`.
 - A local, non-container worker permits a missing configured model to download at runtime by default. For a strictly offline worker, prefetch first, then set `SUPERSCRIBER_TRANSCRIBE_OFFLINE=1` and `SUPERSCRIBER_TRANSCRIBE_ALLOW_RUNTIME_DOWNLOAD=0`.
 - If you only want the browser workflow without the real speech stack, use `SUPERSCRIBER_ENGINE_MODE=mock` for the app instead of running the Python worker.
+- Speaker separation additionally needs the pinned torch/diarization stack in the same venv (`scripts/install-worker-torch-wheels.sh .venv` - the script self-classifies the host and skips platforms with no usable wheel) plus the one-time gated bundle install; see the [diarization runbook](./docs/operators/diarization.md). Without them the worker still transcribes, with jobs reporting `diarizationStatus=degraded`.
 
 ## Container Runtime
 
@@ -284,7 +285,7 @@ Optional configuration:
 - [`DESIGN.md`](./DESIGN.md) — design record and behavioral contract for the governed casefile workspace
 - [`TODOS.md`](./TODOS.md) - deferred follow-on work
 - [`docs/USER-GUIDE.md`](./docs/USER-GUIDE.md) - end-to-end user guide: sign-in, ingest, casefile review, governed workflow, export, and administration
-- [`docs/operators/`](./docs/operators/) - operator runbooks for authentication and account recovery, including [governed folder-watch ingest](./docs/operators/ingest-watch.md)
+- [`docs/operators/`](./docs/operators/) - operator runbooks for authentication and account recovery, [governed folder-watch ingest](./docs/operators/ingest-watch.md), and [speaker diarization](./docs/operators/diarization.md)
 
 ## Orchestration Modes
 
@@ -350,7 +351,7 @@ npm run e2e:container
 
 The container-backed E2E runner deliberately builds a lightweight test image with model prefetch disabled, then starts the worker in explicit stub-fallback mode. That keeps the browser suite deterministic while still exercising the real Docker entrypoint, Next.js server, SQLite volume, upload pipeline, internal queue, and Python worker contract in one image.
 
-The model-provisioning browser specs use the test-only `SUPERSCRIBER_MODEL_DOWNLOAD_FIXTURE_DIR` seam. When `<dir>/<tier>/` contains a tier's complete pinned file set, that request copies the fixture from disk; removing the fixture restores the real pinned huggingface.co transport on the next request. Set the variable on both the app and Playwright processes for a host-local lane. The container runner configures it automatically. Never set it in production.
+The model-provisioning browser specs use the test-only `SUPERSCRIBER_MODEL_DOWNLOAD_FIXTURE_DIR` seam. When `<dir>/<tier>/` contains a tier's complete pinned file set, that request copies the fixture from disk; removing the fixture restores the real pinned huggingface.co transport on the next request. The diarization-bundle installer honors the same seam at `<dir>/diarization/`. Set the variable on both the app and Playwright processes for a host-local lane. The container runner configures it automatically. Never set it in production.
 
 Before starting, the runner probes `/api/health` on the app port (`SUPERSCRIBER_E2E_PORT`, default 3105) and refuses to proceed if anything already answers: a foreign server on that port - for example a leftover `npm run dev` - silently vacates the whole suite, because the health probe, browser, and DB helpers would all talk to it instead of the container. Stop the other server or set `SUPERSCRIBER_E2E_PORT` to a free port. The runner also refuses to start when the fake-OIDC sidecar port (`SUPERSCRIBER_E2E_OIDC_PORT`, default 4105) is already occupied; the container suite runs in `dual` auth mode against that sidecar. With `SUPERSCRIBER_E2E_RESET_MAIL=smtp`, the runner likewise refuses to start when the fake-SMTP control port (`SUPERSCRIBER_E2E_SMTP_CONTROL_PORT`, default 4206) is already occupied. Each run gets a fresh data dir under `.tmp/e2e-data.XXXXXX` that the runner removes on exit (a caller-supplied `SUPERSCRIBER_E2E_DATA_DIR` is preserved). Suite helpers that touch the database (`assignmentRows`, `auditRows`, `expireUploadSession`, `expireActionMode`) execute inside the running container via `docker exec`, because host-side access to the bind-mounted database is blocked by file ownership on Linux runners and cannot see the app's WAL commits through macOS VM file sharing.
 
