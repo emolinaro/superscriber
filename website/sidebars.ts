@@ -28,6 +28,7 @@ const sidebars: SidebarsConfig = {
         'operators/break-glass',
         'operators/admin-recovery',
         'operators/ingest-watch',
+        'operators/diarization',
       ],
     },
     'CHANGELOG',

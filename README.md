@@ -63,7 +63,11 @@ The bootstrap is idempotent and safe to re-run. It:
    failing loudly with an install hint when anything is missing
 2. Runs `npm ci` and creates the transcription worker's Python virtual
    environment from `worker/requirements.txt` inside the immutable deployment
-   generation, so rollback restores the matching worker dependencies
+   generation, so rollback restores the matching worker dependencies. The
+   self-classifying picker `scripts/install-worker-torch-wheels.sh` then adds
+   the pinned torch pair and diarization stack where the host has a usable
+   wheel (Intel macOS skips it with a notice; see
+   [docs/operators/diarization.md](./docs/operators/diarization.md))
 3. Initializes the database through the repo migration chain
    (`scripts/ensure-db.ts`) into the instance's durable data directory -
    never `/tmp`
@@ -73,7 +77,11 @@ The bootstrap is idempotent and safe to re-run. It:
    `scripts/provision-model-tier.ts`). Interactive runs offer the full tier
    menu (default: the catalog default `small`); `--skip-model-download`
    preserves an explicit or previously configured tier and verifies its cache,
-   so re-runs work offline without silently changing models
+   so re-runs work offline without silently changing models. With
+   `SUPERSCRIBER_HUGGINGFACE_TOKEN` (or `HF_TOKEN`) exported for the run it
+   also vendors the gated diarization bundle; without a token it verifies the
+   cache and carries on - a missing bundle never fails bootstrap, jobs just
+   run `degraded` until it is provisioned
 5. Builds and atomically publishes an immutable standalone production bundle
    under the instance root, then launches app + worker from that bundle under
    a SIGTERM-stoppable crash-restart supervisor with per-role logs and bounded
