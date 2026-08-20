@@ -63,10 +63,14 @@ upgrade the driver and the next install self-classifies onto the CUDA wheel
 directly in the `Dockerfile` and stays CUDA-free.
 
 The picker is orthogonal to checkpoint loading: torch 2.8 defaults
-`weights_only=True` in every variant, and the worker allowlists the pinned
-checkpoints' `torch.torch_version.TorchVersion` global in-process before
-instantiating the pipeline (the 2026-08-20 fix for "Weights only load
-failed ... add_safe_globals"). That holds equally for CPU and CUDA wheels.
+`weights_only=True` in every variant, and the worker allowlists in-process,
+before instantiating the pipeline, exactly the four globals the vendored
+checkpoints carry beyond torch's built-in allowlist (enumerated from the
+pickle streams with pickletools, no execution):
+`torch.torch_version.TorchVersion` and the pyannote value classes
+`Specifications` / `Problem` / `Resolution` (the 2026-08-20 fix for
+"Weights only load failed ... add_safe_globals"). That holds equally for
+CPU and CUDA wheels.
 
 ## What gets vendored
 
