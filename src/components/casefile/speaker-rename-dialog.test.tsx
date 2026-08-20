@@ -25,10 +25,11 @@ function renderDialog(
   const appRoot = document.createElement("div");
   appRoot.id = "app-root";
   document.body.append(appRoot);
+  const onCancel = vi.fn();
 
-  render(
+  const view = render(
     <SpeakerRenameDialog
-      onCancel={vi.fn()}
+      onCancel={onCancel}
       onConfirm={onConfirm}
       open
       segments={dialogSegments}
@@ -36,7 +37,18 @@ function renderDialog(
     { container: appRoot },
   );
 
-  return { onConfirm };
+  function rerenderDialog(open: boolean) {
+    view.rerender(
+      <SpeakerRenameDialog
+        onCancel={onCancel}
+        onConfirm={onConfirm}
+        open={open}
+        segments={dialogSegments}
+      />,
+    );
+  }
+
+  return { onCancel, onConfirm, rerenderDialog };
 }
 
 afterEach(() => {
@@ -124,6 +136,29 @@ describe("SpeakerRenameDialog", () => {
     await waitFor(() =>
       expect(onConfirm).toHaveBeenCalledWith({ fromSpeaker: "", toSpeaker: "Dana" }),
     );
+  });
+
+  it("cancel is safe: no mutation fires and a reopen starts blank", async () => {
+    const user = userEvent.setup();
+    const { onCancel, onConfirm, rerenderDialog } = renderDialog();
+
+    await user.type(screen.getByLabelText("New speaker name"), "Dana");
+    expect(screen.getByRole("button", { name: "Rename speaker" })).toBeEnabled();
+
+    await user.click(screen.getByRole("button", { name: "Cancel" }));
+
+    expect(onCancel).toHaveBeenCalledTimes(1);
+    expect(onConfirm).not.toHaveBeenCalled();
+
+    // Reopening after the cancel must not carry the abandoned draft entry
+    // or a stale pre-commit summary into the next attempt.
+    rerenderDialog(false);
+    rerenderDialog(true);
+
+    expect(screen.getByLabelText("New speaker name")).toHaveValue("");
+    expect(screen.getByLabelText("Current speaker")).toHaveValue("Speaker A");
+    expect(screen.queryByTestId("speaker-rename-summary")).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Rename speaker" })).toBeDisabled();
   });
 
   it("renders a failed confirm as an inline error", async () => {

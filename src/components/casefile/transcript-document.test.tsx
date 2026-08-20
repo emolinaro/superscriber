@@ -735,6 +735,76 @@ describe("TranscriptDocument", () => {
     expect(focusSpy).toHaveBeenLastCalledWith({ preventScroll: true });
   });
 
+  it("offers the governed bulk speaker rename entry point with per-speaker counts", async () => {
+    const user = userEvent.setup();
+    const onOpenSpeakerRename = vi.fn();
+    render(
+      <TranscriptDocument
+        activeSegmentId={null}
+        editable
+        onOpenSpeakerRename={onOpenSpeakerRename}
+        onSeek={vi.fn()}
+        onUpdateSpeaker={vi.fn()}
+        onUpdateText={vi.fn()}
+        phoneSafetyMode={false}
+        segments={baseSegments}
+        summary="Ready for review."
+        onSummaryChange={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByTestId("speaker-toolbar-list")).toHaveTextContent(
+      "Speakers: Speaker 1 (1 segment), Speaker 2 (1 segment)",
+    );
+
+    await user.click(screen.getByRole("button", { name: "Rename speaker..." }));
+
+    expect(onOpenSpeakerRename).toHaveBeenCalledTimes(1);
+  });
+
+  it("withholds the bulk rename entry point while unsaved changes are pending", () => {
+    render(
+      <TranscriptDocument
+        activeSegmentId={null}
+        editable
+        onOpenSpeakerRename={vi.fn()}
+        onSeek={vi.fn()}
+        onUpdateSpeaker={vi.fn()}
+        onUpdateText={vi.fn()}
+        phoneSafetyMode={false}
+        segments={baseSegments}
+        speakerRenameNote="Save or discard unsaved changes before renaming speakers."
+        summary="Ready for review."
+        onSummaryChange={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByRole("button", { name: "Rename speaker..." })).toBeDisabled();
+    expect(
+      screen.getByText("Save or discard unsaved changes before renaming speakers."),
+    ).toBeVisible();
+  });
+
+  it("omits the bulk rename entry point when the transcript is read-only", () => {
+    render(
+      <TranscriptDocument
+        activeSegmentId={null}
+        editable={false}
+        onOpenSpeakerRename={vi.fn()}
+        onSeek={vi.fn()}
+        onUpdateSpeaker={vi.fn()}
+        onUpdateText={vi.fn()}
+        phoneSafetyMode={false}
+        segments={baseSegments}
+        summary="Pending approval summary"
+        onSummaryChange={vi.fn()}
+      />,
+    );
+
+    expect(screen.queryByRole("button", { name: "Rename speaker..." })).not.toBeInTheDocument();
+    expect(screen.queryByTestId("speaker-toolbar-list")).not.toBeInTheDocument();
+  });
+
   it("flags segments edited versus the parent revision (demo-governance-bringback)", () => {
     render(
       <TranscriptDocument
