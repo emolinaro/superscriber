@@ -3,7 +3,9 @@
    the case header, the media box, the transport controls, and the
    horizontal segment rail - is pinned: no browser-window scroll can move
    those blocks. Below the pinned zone the transcript segments list is the
-   ONLY vertical scrollport; the follow-scroll centers the active segment
+   ONLY vertical scrollport (sole exception: the changes-requested banner's
+   compact internal note scrollport, which lives in the pinned zone - see
+   changes-requested-banner below); the follow-scroll centers the active segment
    inside it with the first and final segments anchored at its block edges
    (natural scrollTo clamping, no artificial runways). The viewport keeps
    default overscroll behavior so wheel/touch chains outward at its edges
@@ -572,6 +574,65 @@
   margin: 0;
 }
 
+/* changes-note-rendering: governance decision rows carry the full
+   changes-requested note; no clamping, no truncation, preserved line breaks. */
+.governance-decision__meta {
+  color: var(--color-muted);
+  font-size: var(--type-14);
+}
+
+.governance-decision__note {
+  margin: 0;
+  white-space: pre-wrap;
+  overflow-wrap: break-word;
+}
+
+.governance-panel__empty {
+  margin: 0;
+  color: var(--color-muted);
+}
+
+/* changes-note-rendering: the changes-requested note pins to the top of the
+   casefile so the reviewer reads it before the transcript. Inside the
+   bounded pinned zone the banner stays compact: it is a shrinkable flex
+   block whose note is its own internal scrollport, so it yields height to
+   the transcript floor instead of pushing the column past the bounded page.
+   The governance decision rows keep the full unclamped note - only this
+   top-of-casefile banner is compact. */
+.changes-requested-banner {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding: var(--space-3) var(--space-4);
+  border: 1px solid var(--color-line);
+  border-radius: var(--radius-control);
+  flex: 0 1 auto;
+}
+
+.changes-requested-banner[data-tone="warning"] {
+  color: var(--color-warning-fg);
+  background: var(--color-warning-bg);
+}
+
+.changes-requested-banner__title {
+  margin: 0;
+  font-weight: 700;
+}
+
+.changes-requested-banner__meta {
+  margin: 0;
+  font-size: var(--type-12);
+}
+
+.changes-requested-banner__note {
+  margin: 0;
+  white-space: pre-wrap;
+  overflow-wrap: break-word;
+  overflow-y: auto;
+  min-height: 0;
+  max-height: 6rem;
+}
+
 .governance-tablet-drawer__backdrop {
   justify-items: end;
 }
@@ -1138,5 +1199,52 @@
      contract; video scoped so the audio layout never shifts. */
   .casefile-page[data-media-kind="video"] .casefile-main[data-revision="true"] .transcript-document__segments {
     min-height: var(--transcript-viewport-min, 144px);
+  }
+
+  /* changes-note-rendering banner budget (captain ruling): when the
+     changes-requested banner pins to the top of the bounded casefile, the
+     pinned zone reclaims vertical room it does not depend on - the same
+     pattern as the video budget block - so the banner's compact form
+     never pushes the transcript viewport below its floor and the column
+     never overflows the fixed page into silent clipping. The banner note
+     is its own internal scrollport, so long notes yield height inside the
+     banner instead of borrowing it from the transcript. */
+  .app-shell__main:has(> .casefile-page > .casefile-layout > .casefile-main[data-revision="true"] > .changes-requested-banner) {
+    padding-block: var(--space-4) var(--space-1);
+  }
+
+  .casefile-page:has(> .casefile-layout > .casefile-main[data-revision="true"] > .changes-requested-banner) {
+    margin-top: var(--space-2);
+    height: calc(
+      100vh - 65px - var(--space-4) - var(--space-2) - var(--space-1) -
+        env(safe-area-inset-bottom)
+    );
+  }
+
+  .casefile-page:has(> .casefile-layout > .casefile-main[data-revision="true"] > .changes-requested-banner) .case-header__body {
+    padding: var(--space-1) var(--space-3);
+    gap: var(--space-1);
+  }
+
+  .casefile-main[data-revision="true"] > .changes-requested-banner {
+    padding: var(--space-1) var(--space-3);
+    gap: var(--space-1);
+  }
+
+  .casefile-main[data-revision="true"] > .changes-requested-banner .changes-requested-banner__title {
+    font-size: var(--type-16);
+  }
+
+  .casefile-page:has(> .casefile-layout > .casefile-main[data-revision="true"] > .changes-requested-banner) .media-transport {
+    padding: var(--space-1);
+    gap: var(--space-1);
+  }
+
+  .casefile-page:has(> .casefile-layout > .casefile-main[data-revision="true"] > .changes-requested-banner) .media-transport__wave {
+    --wave-height: 28px;
+  }
+
+  .casefile-page:has(> .casefile-layout > .casefile-main[data-revision="true"] > .changes-requested-banner) .transcript-document__summary-copy {
+    padding: 2px var(--space-2);
   }
 }

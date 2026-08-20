@@ -26,6 +26,7 @@ import { InlineNotice } from "@/components/ui/inline-notice";
 import { appendQueryMessages } from "@/lib/navigation-path";
 import { usePhoneSafetyMode } from "@/components/ui/phone-safety";
 import { AdminActionModeBanner } from "./admin-action-mode-banner";
+import { ChangesRequestedNotice } from "./changes-requested-notice";
 import {
   type AdminActionModeEntryOption,
   type AdminActionModeResult,
@@ -891,6 +892,11 @@ export function CasefileWorkspace({
           data-revision={casefile.revision ? "true" : undefined}
           id="transcript-main"
         >
+          {/* changes-note-rendering: when the live revision state is
+              changes_requested, the approver's note surfaces at the top of
+              the casefile so the reviewer reads it before the transcript. */}
+          <ChangesRequestedNotice casefile={casefile} />
+
           {unresolvedNotice ? (
             <InlineNotice tone={unresolvedNotice.tone}>{unresolvedNotice.message}</InlineNotice>
           ) : null}

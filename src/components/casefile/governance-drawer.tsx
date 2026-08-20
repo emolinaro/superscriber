@@ -32,6 +32,50 @@ function readViewportMode(): ViewportMode {
   return "desktop";
 }
 
+function revisionVersionLookup(casefile: CasefileViewModel) {
+  const versions = new Map(casefile.revisions.map((revision) => [revision.id, revision.version]));
+  // The viewed snapshot may be an archived revision that is not in the
+  // ledger list; decisions recorded against it still name a version.
+  if (casefile.revision && !versions.has(casefile.revision.id)) {
+    versions.set(casefile.revision.id, casefile.revision.version);
+  }
+  return versions;
+}
+
+function DecisionList({ casefile }: { casefile: CasefileViewModel }) {
+  const versions = revisionVersionLookup(casefile);
+
+  if (casefile.decisions.length === 0) {
+    return <p className="governance-panel__empty">No recorded decisions yet.</p>;
+  }
+
+  // changes-note-rendering: one incident per row. Each row carries the full
+  // decision facts - the revision version it applies to, the actor, the
+  // timestamp, and the complete note text with no clamping or truncation.
+  return (
+    <ul className="governance-panel__items governance-decisions">
+      {casefile.decisions.map((decision) => {
+        const version = versions.get(decision.revisionId);
+        return (
+          <li className="governance-decision" data-state={decision.state} key={decision.id}>
+            <strong>{decision.label}</strong>
+            <span className="governance-decision__meta">
+              {version !== undefined ? `v${version}` : "-"}
+              {" · "}
+              {decision.actorDisplay}
+              {" · "}
+              {decision.createdAtLabel}
+            </span>
+            {decision.note ? (
+              <p className="governance-decision__note">{decision.note}</p>
+            ) : null}
+          </li>
+        );
+      })}
+    </ul>
+  );
+}
+
 function tabPanel(casefile: CasefileViewModel, tab: GovernanceTab) {
   switch (tab) {
     case "Policy":
@@ -71,16 +115,7 @@ function tabPanel(casefile: CasefileViewModel, tab: GovernanceTab) {
       // Recover-to-draft action.
       return <RevisionHistory casefile={casefile} />;
     case "Decisions":
-      return (
-        <ul className="governance-panel__items">
-          {casefile.decisions.map((decision) => (
-            <li key={decision.id}>
-              <strong>{decision.label}</strong>
-              <span>{decision.actorDisplay}</span>
-            </li>
-          ))}
-        </ul>
-      );
+      return <DecisionList casefile={casefile} />;
     case "Audit":
       return (
         <ul className="governance-panel__items">

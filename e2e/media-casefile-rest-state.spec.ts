@@ -210,6 +210,110 @@ test("video casefile rest state: full player leads, compact chip strip below, tr
   expect(scrollerShape.viewportScrollTop).toBe(0);
 });
 
+// Near-max changes-requested note (validateApprovalNote caps notes at 500
+// characters) with explicit line breaks, so the banner note always spans
+// more lines than its compact internal scrollport shows.
+const LONG_CHANGES_NOTE = Array.from(
+  { length: 6 },
+  (_, index) =>
+    `Line ${index + 1}: please restore the missing governed detail in this block before approval.`,
+).join("\n");
+
+test("changes-requested banner keeps the pinned-zone budget at 1280x800 with a long note", async ({
+  page,
+}) => {
+  test.setTimeout(180_000);
+  await page.setViewportSize({ width: 1280, height: 800 });
+  await bootstrapAndLogin(page, adminUser);
+  const recordingId = await uploadFixture(page, {
+    title: "Changes-note pin-budget record",
+    durationMs: 40_000,
+  });
+  await waitForRestStateTranscript(page);
+
+  // Mint a changes-requested decision with a near-max note on the latest
+  // revision, the same row the request-changes command writes.
+  execRuntimeSql(
+    `insert into approvals
+       (id, recording_id, revision_id, state, actor_role, actor_display_name, created_at, note)
+     values (
+       ?,
+       ?,
+       (select id from revisions where recording_id = ? order by version desc limit 1),
+       'changes_requested',
+       'approver',
+       'E2E Approver',
+       ?,
+       ?
+     )`,
+    [
+      `e2e-changes-note-${recordingId}`,
+      recordingId,
+      recordingId,
+      new Date().toISOString(),
+      LONG_CHANGES_NOTE,
+    ],
+  );
+  await openCasefile(page, recordingId);
+
+  const readBannerGeometry = () =>
+    page.evaluate(() => {
+      const pageEl = document.querySelector<HTMLElement>(".casefile-page");
+      const banner = document.querySelector<HTMLElement>(".changes-requested-banner");
+      const note = banner?.querySelector<HTMLElement>(".changes-requested-banner__note");
+      const viewport = document.querySelector<HTMLElement>(".transcript-document__segments");
+      if (!pageEl || !banner || !note || !viewport) {
+        return null;
+      }
+
+      return {
+        scrollRange: document.documentElement.scrollHeight - window.innerHeight,
+        pageOverflow: pageEl.scrollHeight - pageEl.clientHeight,
+        viewportHeight: viewport.clientHeight,
+        bannerBottom: banner.getBoundingClientRect().bottom,
+        viewportTop: viewport.getBoundingClientRect().top,
+        noteScrolls: note.scrollHeight > note.clientHeight + 1,
+        noteClientHeight: note.clientHeight,
+      };
+    });
+
+  const banner = page.locator(".changes-requested-banner");
+  await expect(banner).toBeVisible();
+  await expect(banner).toContainText("Changes requested");
+  await expect(banner).toContainText(LONG_CHANGES_NOTE.split("\n")[0]);
+
+  const audio = await readBannerGeometry();
+  expect(audio).not.toBeNull();
+  // Pin contract: the window carries no scroll range and the bounded page
+  // never silently clips its content even with the maximal banner present.
+  expect(audio?.scrollRange).toBeLessThanOrEqual(1);
+  expect(audio?.pageOverflow).toBeLessThanOrEqual(1);
+  // ...while the transcript viewport keeps the short-tier audio floor.
+  expect(audio?.viewportHeight).toBeGreaterThanOrEqual(224);
+  // The banner pins above the transcript...
+  expect(audio?.bannerBottom).toBeLessThanOrEqual((audio?.viewportTop ?? 0) + 1);
+  // ...in its compact treatment: the full long note stays readable inside
+  // the note's own internal scrollport rather than consuming the budget.
+  expect(audio?.noteScrolls).toBe(true);
+  expect(audio?.noteClientHeight).toBeLessThanOrEqual(96);
+
+  // The same budget holds on a video casefile: the video floor is lower.
+  execRuntimeSql(
+    "update recordings set media_kind = 'video', mime_type = 'video/mp4' where id = ?",
+    [recordingId],
+  );
+  await openCasefile(page, recordingId);
+  await expect(page.locator(".changes-requested-banner")).toBeVisible();
+
+  const video = await readBannerGeometry();
+  expect(video).not.toBeNull();
+  expect(video?.scrollRange).toBeLessThanOrEqual(1);
+  expect(video?.pageOverflow).toBeLessThanOrEqual(1);
+  expect(video?.viewportHeight).toBeGreaterThanOrEqual(144);
+  expect(video?.bannerBottom).toBeLessThanOrEqual((video?.viewportTop ?? 0) + 1);
+  expect(video?.noteScrolls).toBe(true);
+});
+
 test("pinned transcript zone: centered follow with honest edge anchoring", async ({
   page,
 }) => {
