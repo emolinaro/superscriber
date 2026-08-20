@@ -250,7 +250,9 @@ export function claimAvailableTranscriptJob(params: {
             transcribed_until_ms = NULL,
             audio_duration_ms = NULL,
             segments_seen = NULL,
-            last_error = NULL
+            last_error = NULL,
+            last_error_kind = NULL,
+            last_error_technical = NULL
           WHERE id = @jobId
             AND (
               state = 'queued'
@@ -462,6 +464,12 @@ export function failTranscriptJob(params: {
   workerId: string;
   detail: string;
   retryable?: boolean;
+  /** Stable, reviewer-quotable failure class from the worker
+     (e.g. "mel-shape-mismatch"); null for legacy/unclassified failures. */
+  errorClass?: string | null;
+  /** Ops-only diagnostic (model name, mel counts, engine stack text) -
+     never rendered on reviewer surfaces. */
+  technicalDetail?: string | null;
   bundle?: AppDatabaseBundle;
 }) {
   const bundle = activeBundle(params.bundle);
@@ -488,6 +496,8 @@ export function failTranscriptJob(params: {
       refs.job.segmentsSeen = null;
     }
     refs.job.lastError = params.detail;
+    refs.job.lastErrorKind = params.errorClass ?? null;
+    refs.job.lastErrorTechnical = params.technicalDetail ?? null;
     refs.job.diarizationStatus = exhausted ? refs.job.diarizationStatus : "pending";
 
     refs.recording.transcriptJobState = nextState;

@@ -150,6 +150,8 @@ function bootstrapTranscriptJob(recording: Recording): TranscriptJob {
       recording.transcriptJobState === "failed"
         ? "Legacy state imported with transcription failure."
         : null,
+    lastErrorKind: null,
+    lastErrorTechnical: null,
     diarizationStatus:
       recording.transcriptJobState === "completed" ? "available" : "pending",
   };

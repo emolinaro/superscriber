@@ -84,6 +84,7 @@ export function createCasefile(overrides: Record<string, unknown> = {}) {
       segmentsSeen: null,
       verificationSummary: "Ready for review.",
       recoveryHint: null,
+      failure: null,
     },
     provenance: {
       languageHint: "en",

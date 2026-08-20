@@ -107,6 +107,7 @@ describe("migrations", () => {
       { version: 10 },
       { version: 11 },
       { version: 12 },
+      { version: 13 },
     ]);
   });
 
@@ -429,6 +430,49 @@ describe("migrations", () => {
         .prepare("select transcript_model from recordings where id = 'post-v12'")
         .get(),
     ).toEqual({ transcript_model: "tiny" });
+  });
+
+  it("upgrades v12 with transcript job failure classification columns", () => {
+    const sqlite = new Database(":memory:");
+    sqlite.pragma("foreign_keys = ON");
+    runMigrations(sqlite, 12);
+    sqlite.exec(`
+      INSERT INTO recordings (
+        id, workspace_id, title, source, media_kind, mime_type,
+        language_hint, uploaded_by_role, integrity_state, transcript_job_state,
+        created_at, updated_at
+      ) VALUES (
+        'pre-v13', 'workspace-1', 'Pre-upgrade recording', 'upload', 'audio',
+        'audio/wav', 'english', 'uploader', 'verified', 'failed',
+        '2026-08-01T00:00:00.000Z', '2026-08-01T00:00:00.000Z'
+      );
+      INSERT INTO transcript_jobs (
+        id, recording_id, state, adapter, created_at, updated_at,
+        diarization_status, last_error
+      ) VALUES (
+        'job-pre-v13', 'pre-v13', 'failed', 'internal-python-worker',
+        '2026-08-01T00:00:00.000Z', '2026-08-01T00:00:00.000Z',
+        'pending', 'legacy unclassified failure'
+      );
+    `);
+
+    runMigrations(sqlite, 13);
+
+    const columns = sqlite
+      .prepare(`PRAGMA table_info(transcript_jobs)`)
+      .all() as Array<{ name: string }>;
+    expect(columns.map((column) => column.name)).toContain("last_error_kind");
+    expect(columns.map((column) => column.name)).toContain("last_error_technical");
+
+    // Legacy failures stay unclassified - the reviewer UI keeps its free-form
+    // hint path only for rows the worker never classified.
+    expect(
+      sqlite
+        .prepare(
+          "select last_error_kind as kind, last_error_technical as technical from transcript_jobs where id = 'job-pre-v13'",
+        )
+        .get(),
+    ).toEqual({ kind: null, technical: null });
   });
 
   it("upgrades v9 with the password_reset_tokens table", () => {

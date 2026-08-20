@@ -151,6 +151,8 @@ function createTranscriptJob(recording: Recording, adapterId: string): Transcrip
     segmentsSeen: null,
     outputRevisionId: null,
     lastError: null,
+    lastErrorKind: null,
+    lastErrorTechnical: null,
     diarizationStatus: "pending",
   };
 }

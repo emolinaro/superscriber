@@ -27,6 +27,10 @@ import {
   type CasefileCapabilities,
 } from "@/server/casefile/capabilities";
 import { CasefileCommandError } from "@/server/casefile/errors";
+import {
+  transcriptFailureCard,
+  type TranscriptFailureCard,
+} from "@/server/casefile/failure-guidance";
 import { getAppDb, type AppDatabase } from "@/server/db/client";
 import {
   toApprovalRecord,
@@ -201,6 +205,7 @@ export type CasefileViewModel = {
     segmentsSeen: number | null;
     verificationSummary: string | null;
     recoveryHint: string | null;
+    failure: TranscriptFailureCard | null;
   };
   provenance: {
     languageHint: string;
@@ -765,6 +770,12 @@ function processingRecoveryHint(
     recording.transcriptJobState === "failed" ||
     recording.transcriptJobState === "cancelled"
   ) {
+    // Classified failures render as the structured failure card (plain
+    // cause label, action hint, operator phrase); the free-form hint is
+    // reserved for legacy/unclassified failures.
+    if (transcriptJob?.lastErrorKind) {
+      return null;
+    }
     return transcriptJob?.lastError ?? "Transcript preparation stopped before the draft was ready.";
   }
 
@@ -775,7 +786,11 @@ function processingView(
   recording: Recording,
   ingestionSession: IngestionSession | null,
   transcriptJob: TranscriptJob | null,
+  principal: Principal,
 ) {
+  const failed =
+    recording.transcriptJobState === "failed" ||
+    recording.transcriptJobState === "cancelled";
   return {
     active:
       recording.integrityState === "verifying" ||
@@ -792,6 +807,16 @@ function processingView(
     verificationSummary:
       ingestionSession?.verificationSummary ?? recording.verificationSummary ?? null,
     recoveryHint: processingRecoveryHint(recording, ingestionSession, transcriptJob),
+    // Guided failure card: classifier-safe cause/action/slug for everyone
+    // who can open the casefile; technical detail for admins only. Raw
+    // engine stack text never crosses into claimable/auditable UI copy.
+    failure: failed
+      ? transcriptFailureCard({
+          errorClass: transcriptJob?.lastErrorKind ?? null,
+          technicalDetail: transcriptJob?.lastErrorTechnical ?? null,
+          isAdmin: principal.role === "admin",
+        })
+      : null,
   };
 }
 
@@ -930,7 +955,7 @@ export function getCasefile(
     }),
     capabilities,
     media: mediaView(recording, capabilities),
-    processing: processingView(recording, ingestionSession, transcriptJob),
+    processing: processingView(recording, ingestionSession, transcriptJob, principal),
     provenance: {
       languageHint: recording.languageHint,
       originalFileName: recording.originalFileName,

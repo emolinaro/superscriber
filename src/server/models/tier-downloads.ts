@@ -15,11 +15,35 @@ export type TierDownloadSource = {
   revision: string;
   files: string[];
   fileSizeBytes: Record<string, number>;
+  // mel-bins-mismatch: the 128-mel v3 family ships preprocessor_config.json
+  // in the pinned repos, but older provisioned bundles never fetched it - and
+  // faster-whisper then silently builds its audio frontend at the 80-mel
+  // default. These artifacts download best-effort when the pinned repo
+  // carries them. They stay OUT of the availability gate and out of sizeBytes
+  // so older provisioned installs keep working (the worker now derives the
+  // mel-bin count from the loaded model itself regardless).
+  optionalFiles: string[];
+  optionalFileSizeBytes: Record<string, number>;
   sizeBytes: number;
 };
 
 const SYSTRAN_V1_FILES = ["config.json", "model.bin", "tokenizer.json", "vocabulary.txt"];
 const SYSTRAN_V3_FILES = ["config.json", "model.bin", "tokenizer.json", "vocabulary.json"];
+
+const NO_OPTIONAL_FILES: string[] = [];
+const V3_PREPROCESSOR_FILE = ["preprocessor_config.json"];
+const V3_PREPROCESSOR_SIZE = { "preprocessor_config.json": 340 };
+
+function noOptionalArtifacts() {
+  return { optionalFiles: NO_OPTIONAL_FILES, optionalFileSizeBytes: {} };
+}
+
+function v3OptionalArtifacts() {
+  return {
+    optionalFiles: V3_PREPROCESSOR_FILE,
+    optionalFileSizeBytes: { ...V3_PREPROCESSOR_SIZE },
+  };
+}
 
 export const TIER_DOWNLOADS: Record<string, TierDownloadSource> = {
   "large-v3": {
@@ -32,6 +56,7 @@ export const TIER_DOWNLOADS: Record<string, TierDownloadSource> = {
       "tokenizer.json": 2_480_617,
       "vocabulary.json": 1_068_114,
     },
+    ...v3OptionalArtifacts(),
     sizeBytes: 3_090_835_362,
   },
   "large-v3-turbo": {
@@ -44,6 +69,7 @@ export const TIER_DOWNLOADS: Record<string, TierDownloadSource> = {
       "tokenizer.json": 2_710_337,
       "vocabulary.json": 1_068_114,
     },
+    ...v3OptionalArtifacts(),
     sizeBytes: 1_621_665_643,
   },
   "distil-large-v3": {
@@ -56,6 +82,7 @@ export const TIER_DOWNLOADS: Record<string, TierDownloadSource> = {
       "tokenizer.json": 2_480_617,
       "vocabulary.json": 1_068_114,
     },
+    ...v3OptionalArtifacts(),
     sizeBytes: 1_516_479_288,
   },
   "large-v2": {
@@ -68,6 +95,7 @@ export const TIER_DOWNLOADS: Record<string, TierDownloadSource> = {
       "tokenizer.json": 2_203_239,
       "vocabulary.txt": 459_861,
     },
+    ...noOptionalArtifacts(),
     sizeBytes: 3_089_578_858,
   },
   "large-v1": {
@@ -80,6 +108,7 @@ export const TIER_DOWNLOADS: Record<string, TierDownloadSource> = {
       "tokenizer.json": 2_203_239,
       "vocabulary.txt": 459_861,
     },
+    ...noOptionalArtifacts(),
     sizeBytes: 3_089_578_414,
   },
   medium: {
@@ -92,6 +121,7 @@ export const TIER_DOWNLOADS: Record<string, TierDownloadSource> = {
       "tokenizer.json": 2_203_239,
       "vocabulary.txt": 459_861,
     },
+    ...noOptionalArtifacts(),
     sizeBytes: 1_530_571_735,
   },
   small: {
@@ -104,6 +134,7 @@ export const TIER_DOWNLOADS: Record<string, TierDownloadSource> = {
       "tokenizer.json": 2_203_239,
       "vocabulary.txt": 459_861,
     },
+    ...noOptionalArtifacts(),
     sizeBytes: 486_212_372,
   },
   base: {
@@ -116,6 +147,7 @@ export const TIER_DOWNLOADS: Record<string, TierDownloadSource> = {
       "tokenizer.json": 2_203_239,
       "vocabulary.txt": 459_861,
     },
+    ...noOptionalArtifacts(),
     sizeBytes: 147_882_941,
   },
   tiny: {
@@ -128,6 +160,7 @@ export const TIER_DOWNLOADS: Record<string, TierDownloadSource> = {
       "tokenizer.json": 2_203_239,
       "vocabulary.txt": 459_861,
     },
+    ...noOptionalArtifacts(),
     sizeBytes: 78_203_619,
   },
 };
@@ -147,6 +180,14 @@ export function tierDownloadSource(tierId: string): TierDownloadSource {
 export function modelTierDownloadUrls(tierId: string): string[] {
   const source = tierDownloadSource(tierId);
   return source.files.map(
+    (file) =>
+      `${HUGGINGFACE_DOWNLOAD_BASE_URL}/${source.repository}/resolve/${source.revision}/${file}`,
+  );
+}
+
+export function modelTierOptionalDownloadUrls(tierId: string): string[] {
+  const source = tierDownloadSource(tierId);
+  return source.optionalFiles.map(
     (file) =>
       `${HUGGINGFACE_DOWNLOAD_BASE_URL}/${source.repository}/resolve/${source.revision}/${file}`,
   );

@@ -418,4 +418,48 @@ describe("internal transcript queue", () => {
       bundle.sqlite.close();
     }
   });
+
+  it("persists the classified failure kind and ops-only technical detail", () => {
+    const bundle = openAppDatabase(":memory:");
+
+    try {
+      const state = createBaseState();
+      const { job } = queueVerifiedRecording(state, "Mel mismatch recording");
+      writeState(state, bundle.db);
+
+      claimAvailableTranscriptJob({ workerId: "worker-mel", bundle });
+      const snapshot = failTranscriptJob({
+        jobId: job.id,
+        workerId: "worker-mel",
+        detail:
+          "Transcription failed - the speech model loaded for this job does not match its audio configuration (model/config mismatch). Delete this recording and upload it again; if the failure repeats, contact your operator with these words: mel-shape-mismatch.",
+        errorClass: "mel-shape-mismatch",
+        technicalDetail:
+          "model=large-v3 n_mels_expected=128 n_mels_prepared=80 ValueError: Invalid input features shape: expected an input with shape (1, 128, 3000), but got an input with shape (1, 80, 3000) instead",
+        retryable: false,
+        bundle,
+      });
+      expect(snapshot.state).toBe("failed");
+      expect(snapshot.lastError).toContain("contact your operator with these words");
+
+      const refreshed = readState(bundle.db);
+      const refreshedJob = refreshed.transcriptJobs.find((entry) => entry.id === job.id);
+      expect(refreshedJob?.lastErrorKind).toBe("mel-shape-mismatch");
+      expect(refreshedJob?.lastErrorTechnical).toContain("n_mels_expected=128");
+
+      // The shared audit line stays reviewer-safe: classified failures put
+      // their engine stack in lastErrorTechnical, not in the audit detail.
+      const failureEvents = refreshed.auditEvents.filter(
+        (event) => event.type === "transcription.failed",
+      );
+      expect(failureEvents).toHaveLength(1);
+      expect(failureEvents[0]?.detail).not.toContain("Invalid input features shape");
+
+      // A re-claim (retry) clears the failure classification.
+      const reclaim = claimAvailableTranscriptJob({ workerId: "worker-b", bundle });
+      expect(reclaim).toBeNull(); // attempt exhausted, stays failed
+    } finally {
+      bundle.sqlite.close();
+    }
+  });
 });

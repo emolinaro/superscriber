@@ -326,6 +326,8 @@ function seedState(): AppState {
       segmentsSeen: null,
       outputRevisionId: draftRevision.id,
       lastError: null,
+      lastErrorKind: null,
+      lastErrorTechnical: null,
       diarizationStatus: "available",
     },
     {
@@ -347,6 +349,8 @@ function seedState(): AppState {
       segmentsSeen: null,
       outputRevisionId: pendingRevision.id,
       lastError: null,
+      lastErrorKind: null,
+      lastErrorTechnical: null,
       diarizationStatus: "available",
     },
     {
@@ -368,6 +372,8 @@ function seedState(): AppState {
       segmentsSeen: null,
       outputRevisionId: null,
       lastError: null,
+      lastErrorKind: null,
+      lastErrorTechnical: null,
       diarizationStatus: "pending",
     },
   ];

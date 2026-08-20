@@ -36,7 +36,7 @@ This is a behavioral contract, not a visual reskin. The interface never offers a
 Progress is never collapsed into one uncontrolled status string. The UI derives a display stage from five authoritative dimensions:
 
 1. **Integrity state:** capturing, uploading, verifying, verified, verification failed, or interrupted.
-2. **Transcript job state:** queued, running, partial result, completed, failed, or cancelled.
+2. **Transcript job state:** queued, running, partial result, completed, failed, or cancelled. Failed worker jobs carry a stable, reviewer-quotable error class (e.g. `mel-shape-mismatch`) plus an ops-only technical diagnostic (`last_error_kind` / `last_error_technical`); the casefile failure card renders the plain-language cause, the delete-and-re-upload action, and the operator phrase for everyone, while the raw engine detail appears only for admins. The worker derives its audio frontend (mel-bin count) from the loaded model's own configuration and never from a global default, so a model bundle missing its preprocessor metadata cannot wedge transcription.
 3. **Current revision state:** draft, pending approval, or none.
 4. **Active approved pointer:** the currently approved revision (and default export target), or none.
 5. **Assignment state:** active, completed, or removed, per reviewer/approver activation.

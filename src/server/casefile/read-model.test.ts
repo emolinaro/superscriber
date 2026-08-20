@@ -920,3 +920,138 @@ describe("getCasefile", () => {
     }
   });
 });
+
+describe("getCasefile guided failure surface", () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date(FIXED_NOW));
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  const melTechnicalDetail =
+    "model=large-v3 n_mels_expected=128 n_mels_prepared=80 ValueError: Invalid input features shape: expected an input with shape (1, 128, 3000), but got an input with shape (1, 80, 3000) instead";
+
+  async function setupFailedJobFixture(params?: { classified?: boolean }) {
+    const bundle = openAppDatabase(":memory:");
+    insertWorkspace(bundle);
+
+    const uploader = await createPrincipal(bundle.db, {
+      displayName: "Uploader",
+      email: "fail-uploader@example.com",
+      role: "uploader",
+    });
+    const admin = await createPrincipal(bundle.db, {
+      displayName: "Failure Admin",
+      email: "fail-admin@example.com",
+      role: "admin",
+    });
+
+    bundle.db.insert(recordings).values({
+      id: "rec-failed",
+      workspaceId: "workspace-1",
+      title: "Dialogue testing",
+      source: "upload",
+      mediaKind: "audio",
+      mimeType: "audio/m4a",
+      mediaPath: "/media/rec-failed.m4a",
+      originalFileName: "DIALOGUE.m4a",
+      languageHint: "en",
+      transcriptModel: "large-v3",
+      uploadedByRole: "uploader",
+      uploadedByUserId: uploader.userId,
+      ingestionSessionId: null,
+      transcriptJobId: "job-failed",
+      integrityState: "verified",
+      transcriptJobState: "failed",
+      currentRevisionId: null,
+      approvedRevisionId: null,
+      pendingRevisionId: null,
+      verificationSummary: "Verified",
+      createdAt: FIXED_NOW,
+      updatedAt: FIXED_NOW,
+      automationCursor: null,
+    }).run();
+
+    const classified = params?.classified ?? true;
+    bundle.db.insert(transcriptJobs).values({
+      id: "job-failed",
+      recordingId: "rec-failed",
+      state: "failed",
+      adapter: "internal-python-worker",
+      claimedByWorkerId: null,
+      attemptCount: 3,
+      createdAt: FIXED_NOW,
+      updatedAt: FIXED_NOW,
+      startedAt: FIXED_NOW,
+      completedAt: FIXED_NOW,
+      lastHeartbeatAt: FIXED_NOW,
+      etaSeconds: null,
+      progressPercent: null,
+      transcribedUntilMs: null,
+      audioDurationMs: null,
+      segmentsSeen: null,
+      outputRevisionId: null,
+      lastError: classified
+        ? "Transcription failed - the speech model loaded for this job does not match its audio configuration (model/config mismatch). Delete this recording and upload it again; if the failure repeats, contact your operator with these words: mel-shape-mismatch."
+        : "Internal worker failed: Invalid input features shape: expected an input with shape (1, 128, 3000), but got an input with shape (1, 80, 3000) instead",
+      lastErrorKind: classified ? "mel-shape-mismatch" : null,
+      lastErrorTechnical: classified ? melTechnicalDetail : null,
+      diarizationStatus: "pending",
+    }).run();
+
+    return { bundle, uploader, admin };
+  }
+
+  it("shows the uploader a plain-language failure card without engine stack text", async () => {
+    const { bundle, uploader } = await setupFailedJobFixture();
+
+    try {
+      const casefile = getCasefile(uploader, "rec-failed", {}, bundle.db);
+      expect(casefile?.processing.failure).toEqual({
+        errorClass: "mel-shape-mismatch",
+        causeLabel: expect.stringContaining("model/config mismatch"),
+        actionHint: "Delete this recording and upload it again.",
+        technicalDetail: null,
+      });
+      // The structured card replaces the free-form hint for classified failures.
+      expect(casefile?.processing.recoveryHint).toBeNull();
+      // Belt-and-braces: no raw engine stack text anywhere a reviewer can read.
+      const serialized = JSON.stringify(casefile);
+      expect(serialized).not.toContain("Invalid input features shape");
+      expect(serialized).not.toContain("n_mels");
+    } finally {
+      bundle.sqlite.close();
+    }
+  });
+
+  it("shows admins the technical detail lines on the same failure card", async () => {
+    const { bundle, admin } = await setupFailedJobFixture();
+
+    try {
+      const casefile = getCasefile(admin, "rec-failed", {}, bundle.db);
+      expect(casefile?.processing.failure).toEqual(
+        expect.objectContaining({
+          errorClass: "mel-shape-mismatch",
+          technicalDetail: melTechnicalDetail,
+        }),
+      );
+    } finally {
+      bundle.sqlite.close();
+    }
+  });
+
+  it("keeps the legacy free-form hint for unclassified failures", async () => {
+    const { bundle, uploader } = await setupFailedJobFixture({ classified: false });
+
+    try {
+      const casefile = getCasefile(uploader, "rec-failed", {}, bundle.db);
+      expect(casefile?.processing.failure).toBeNull();
+      expect(casefile?.processing.recoveryHint).toContain("Internal worker failed");
+    } finally {
+      bundle.sqlite.close();
+    }
+  });
+});

@@ -9,6 +9,19 @@ function parseString(value: unknown) {
   return typeof value === "string" ? value.trim() : "";
 }
 
+// Stable failure classes are short lowercase slugs (e.g. "mel-shape-mismatch")
+// the user can quote back to an operator; anything else is ignored so a
+// worker cannot smuggle prose or markup into reviewer surfaces.
+function parseErrorClass(value: unknown) {
+  const slug = parseString(value);
+  return /^[a-z0-9][a-z0-9-]{0,63}$/.test(slug) ? slug : null;
+}
+
+function parseTechnicalDetail(value: unknown) {
+  const detail = parseString(value);
+  return detail ? detail.slice(0, 4_000) : null;
+}
+
 export async function POST(
   request: Request,
   context: { params: Promise<{ jobId: string }> },
@@ -38,6 +51,8 @@ export async function POST(
       workerId,
       detail,
       retryable,
+      errorClass: parseErrorClass(body.errorClass),
+      technicalDetail: parseTechnicalDetail(body.technicalDetail),
     });
 
     return NextResponse.json({ ok: true, snapshot });

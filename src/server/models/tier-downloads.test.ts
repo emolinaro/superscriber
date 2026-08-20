@@ -1,7 +1,12 @@
 import { describe, expect, it } from "vitest";
 
 import { MODEL_TIER_IDS } from "./catalog";
-import { modelTierDownloadUrls, TIER_DOWNLOADS } from "./tier-downloads";
+import {
+  HUGGINGFACE_DOWNLOAD_BASE_URL,
+  modelTierDownloadUrls,
+  modelTierOptionalDownloadUrls,
+  TIER_DOWNLOADS,
+} from "./tier-downloads";
 
 // model-tier-provisioning: download sources are PINNED to huggingface.co
 // repository + commit SHA pairs (the same repos faster-whisper's own _MODELS
@@ -32,6 +37,32 @@ describe("tier download sources (model-tier-provisioning)", () => {
         ),
       ).toBe(source.sizeBytes);
       expect(source.sizeBytes).toBeGreaterThan(0);
+      // Optional artifacts stay orthogonal to the required set and its size
+      // accounting: older provisioned bundles never had them and must keep
+      // reporting as available.
+      expect(Object.keys(source.optionalFileSizeBytes).sort()).toEqual(
+        [...source.optionalFiles].sort(),
+      );
+      for (const file of source.optionalFiles) {
+        expect(source.files).not.toContain(file);
+      }
+    }
+  });
+
+  it("offers preprocessor_config.json as an optional artifact on the 128-mel v3 family", () => {
+    // The v3 family needs a 128-mel frontend; when a bundle carries no
+    // preprocessor_config.json, faster-whisper silently falls back to 80.
+    for (const tierId of ["large-v3", "large-v3-turbo", "distil-large-v3"] as const) {
+      expect(TIER_DOWNLOADS[tierId].optionalFiles).toEqual(["preprocessor_config.json"]);
+      expect(modelTierOptionalDownloadUrls(tierId)[0]).toBe(
+        `${HUGGINGFACE_DOWNLOAD_BASE_URL}/${TIER_DOWNLOADS[tierId].repository}/resolve/${TIER_DOWNLOADS[tierId].revision}/preprocessor_config.json`,
+      );
+      expect(TIER_DOWNLOADS[tierId].optionalFileSizeBytes["preprocessor_config.json"]).toBe(340);
+    }
+    for (const tierId of MODEL_TIER_IDS) {
+      if (["large-v3", "large-v3-turbo", "distil-large-v3"].includes(tierId)) continue;
+      expect(TIER_DOWNLOADS[tierId].optionalFiles).toEqual([]);
+      expect(modelTierOptionalDownloadUrls(tierId)).toEqual([]);
     }
   });
 

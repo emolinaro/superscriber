@@ -157,6 +157,8 @@ export function toTranscriptJob(row: TranscriptJobRow): TranscriptJob {
     segmentsSeen: row.segmentsSeen,
     outputRevisionId: row.outputRevisionId,
     lastError: row.lastError,
+    lastErrorKind: row.lastErrorKind,
+    lastErrorTechnical: row.lastErrorTechnical,
     diarizationStatus: row.diarizationStatus,
   };
 }
