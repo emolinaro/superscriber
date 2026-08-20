@@ -254,6 +254,7 @@ Optional configuration:
 - `npm run break-glass:transfer` - atomically transfer the break-glass designation
 - `npm run bootstrap:local` - bootstrap or update a durable local instance
 - `npm run worker:check` — syntax-check the Python worker
+- `npm run worker:test` - run the Python worker unit tests (transcription, diarization, runtime support)
 - `npm run worker:prefetch` — download the configured speech model into the local worker cache
 - `npm run worker:python` — run the Python worker against a live app
 
