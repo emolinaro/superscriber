@@ -21,9 +21,13 @@
 # worker/requirements-diarization.txt (pyannote.audio, matplotlib), or
 # skips that whole stack with a printed notice when no suitable torch
 # wheel exists (Intel macOS - the job contract keeps transcription working
-# with diarizationStatus=degraded). The Dockerfile pins the CPU variant
-# directly (the appliance image intentionally stays CUDA-free); this
-# script governs host installs.
+# with diarizationStatus=degraded). Any install or verification failure
+# (unreachable wheel index, pip resolution conflict, disk pressure) also
+# degrades the same way: a printed operator notice and exit 0, so
+# bootstrap never dies over the optional diarization stack
+# (never-break-an-install precedent, same as the Intel-macOS skip). The
+# Dockerfile pins the CPU variant directly (the appliance image
+# intentionally stays CUDA-free); this script governs host installs.
 #
 # Usage:  scripts/install-worker-torch-wheels.sh <worker-venv-dir>
 #
@@ -51,6 +55,10 @@ DIARIZATION_REQUIREMENTS="${REPO_ROOT}/worker/requirements-diarization.txt"
 
 log() { printf '[worker-torch] %s\n' "$*" >&2; }
 fail() { log "ERROR: $*"; return 1; }
+degrade() {
+  log "notice: diarization stack install failed ($*) - bootstrap keeps going; transcription still works and jobs report diarizationStatus=degraded. Re-run scripts/bootstrap-local.sh to retry. See docs/operators/diarization.md."
+  return 0
+}
 
 driver_cuda_version() {
   # Prints the host driver's maximum CUDA runtime (e.g. "12.8"), or nothing.
@@ -209,9 +217,9 @@ main() {
     return 0
   fi
   print_plan_line "${variant}"
-  install_wheels "${variant}"
-  verify_wheels "${variant}"
-  install_diarization_requirements
+  install_wheels "${variant}" || { degrade "torch/torchaudio wheel install"; return 0; }
+  verify_wheels "${variant}" || { degrade "post-install verification"; return 0; }
+  install_diarization_requirements || { degrade "worker/requirements-diarization.txt install"; return 0; }
 }
 
 if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then

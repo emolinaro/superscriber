@@ -350,9 +350,11 @@ prepare_worker_venv() {
     # platform/CUDA-aware picker (CPU lanes stay CPU, NVIDIA residences get
     # their CUDA wheel; see docs/operators/diarization.md). Hosts with no
     # usable torch wheel (Intel macOS) print a notice and skip the
-    # diarization stack - transcription keeps working and jobs report
-    # diarizationStatus=degraded. The container image pins the CPU variant
-    # directly in the Dockerfile.
+    # diarization stack, and any install/verification failure inside the
+    # picker degrades the same way (notice + exit 0) so bootstrap never
+    # dies over the optional stack - transcription keeps working and jobs
+    # report diarizationStatus=degraded. The container image pins the CPU
+    # variant directly in the Dockerfile.
     "${REPO_ROOT}/scripts/install-worker-torch-wheels.sh" "${WORKER_VENV}"
   fi
   validate_worker_venv "${WORKER_VENV}"

@@ -66,8 +66,9 @@ The bootstrap is idempotent and safe to re-run. It:
    generation, so rollback restores the matching worker dependencies. The
    self-classifying picker `scripts/install-worker-torch-wheels.sh` then adds
    the pinned torch pair and diarization stack where the host has a usable
-   wheel (Intel macOS skips it with a notice; see
-   [docs/operators/diarization.md](./docs/operators/diarization.md))
+   wheel (Intel macOS skips it with a notice, and any wheel-install failure
+   degrades the same way so bootstrap never dies over the optional stack;
+   see [docs/operators/diarization.md](./docs/operators/diarization.md))
 3. Initializes the database through the repo migration chain
    (`scripts/ensure-db.ts`) into the instance's durable data directory -
    never `/tmp`

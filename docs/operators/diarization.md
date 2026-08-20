@@ -35,6 +35,13 @@ installs `worker/requirements-diarization.txt` (pyannote.audio +
 matplotlib) - or, where no usable wheel exists, prints a notice and skips
 the entire diarization stack with exit 0.
 
+A failed wheel install never fails bootstrap: any install or verification
+error inside the picker (unreachable wheel index, pip resolution conflict,
+disk pressure) prints an operator notice and exits 0, leaving the
+diarization stack unavailable exactly as on Intel macOS - transcription
+works and jobs report `diarizationStatus=degraded`, and re-running
+`scripts/bootstrap-local.sh` retries the install.
+
 | OS | Arch | CUDA residence (NVIDIA) | Variant | Wheel index |
 |---|---|---|---|---|
 | macOS | arm64 | n/a | `pypi` | default PyPI (the only published macOS 2.8.0 wheels; CPU/MPS builds, arm64 only) |
@@ -133,3 +140,21 @@ prefetching, and prefer short-lived, read-scoped tokens.
   fails a job.
 - Set `SUPERSCRIBER_DIARIZATION_ENABLED=0` in the worker environment to
   disable attribution entirely even with the bundle present.
+
+## Memory envelope
+
+Diarization decodes the full recording to a 16 kHz float32 waveform held
+in worker RAM before the pipeline slides its windows over it - about
+**230 MB per hour of audio** on top of the transcription engine's own
+footprint. To keep a long-recording decode from ever OOM-killing the
+worker mid-job (which would break the "never fail a job" contract the
+degrade path alone cannot honor), recordings that decode longer than
+`SUPERSCRIBER_DIARIZATION_MAX_MINUTES` (default **120**) skip speaker
+separation by design: the worker prints a `speaker separation skipped`
+notice, the job completes single-speaker with
+`diarizationStatus=degraded` and an explanatory note, and only the
+decode itself has already happened - the torch tensor and pipeline run
+never start. Raise the variable in the worker environment to opt into
+longer recordings when the host has the memory headroom. Chunked
+overlap diarization with label stitching for very long recordings is a
+backlog item, not part of this release.

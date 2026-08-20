@@ -32,6 +32,8 @@ interface Host {
   cuda?: string;
   /** torch version string the fixture python3 reports after "install". */
   reportedTorch: string;
+  /** When true, the fixture pip exits 1 (transient network/resolution error). */
+  pipFails?: boolean;
 }
 
 async function fixtureHost(host: Host) {
@@ -60,7 +62,7 @@ async function fixtureHost(host: Host) {
   const recordPath = join(dir, "pip-args.txt");
   await writeFile(
     join(venv, "bin", "pip"),
-    `#!/bin/sh\nprintf '%s\\n' "$*" >> "${recordPath}"\n`,
+    `#!/bin/sh\nprintf '%s\\n' "$*" >> "${recordPath}"\n${host.pipFails ? "exit 1\n" : ""}`,
   );
   await chmod(join(venv, "bin", "pip"), 0o755);
 
@@ -232,6 +234,25 @@ describe("install-worker-torch-wheels.sh self-classification", () => {
     expect(stderr).toContain("no macOS x86_64 wheel exists for torch 2.8.0");
     expect(stderr).toContain("diarizationStatus=degraded");
     expect(pipCalls).toHaveLength(0);
+  });
+
+  it("degrades to a notice + exit 0 when pip fails transiently instead of aborting bootstrap", async () => {
+    const { stdout, stderr, pipCalls } = await runPicker({
+      os: "Linux",
+      arch: "x86_64",
+      reportedTorch: "2.8.0+cpu",
+      pipFails: true,
+    });
+
+    // The wheel-install failure is announced as a degradation notice and the
+    // script still exits 0 (runPicker would have thrown on nonzero), so
+    // bootstrap-local.sh keeps going with diarizationStatus=degraded - the
+    // same precedent as the Intel-macOS skip.
+    expect(stdout).toContain("(variant=cpu; os=Linux arch=x86_64 cuda=none)");
+    expect(stderr).toContain("notice: diarization stack install failed (torch/torchaudio wheel install)");
+    expect(stderr).toContain("bootstrap keeps going");
+    expect(stderr).toContain("diarizationStatus=degraded");
+    expect(pipCalls).toHaveLength(1);
   });
 
   it("never exposes an operator device toggle", async () => {

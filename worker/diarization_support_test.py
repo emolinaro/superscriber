@@ -274,6 +274,113 @@ class ApplyDiarizationFallbackTest(unittest.TestCase):
         self.assertIn("2 speakers", note)
 
 
+class DiarizationEnvelopeGuardTest(unittest.TestCase):
+    """(d) Memory envelope guard: a recording longer than
+    SUPERSCRIBER_DIARIZATION_MAX_MINUTES degrades by design (notice + note,
+    single-speaker, job alive) instead of building a torch tensor over the
+    whole decoded waveform and risking a worker OOM; shorter recordings
+    still attribute normally."""
+
+    class FakeTurn:
+        def __init__(self, start, end):
+            self.start = start
+            self.end = end
+
+    class FakeDiarization:
+        def __init__(self, runs):
+            self._runs = runs
+
+        def itertracks(self, yield_label=False):
+            for start, end, speaker in self._runs:
+                yield (DiarizationEnvelopeGuardTest.FakeTurn(start, end), 0, speaker)
+
+    class FakeTensor:
+        def unsqueeze(self, dim):
+            return self
+
+    class FakeWaveform:
+        def __init__(self, samples):
+            self.samples = list(samples)
+            self.size = len(self.samples)
+
+    def run_guard(self, sample_count, env_value):
+        """Drive diarize_media through apply_diarization with a fake decode
+        returning `sample_count` samples at 16 kHz; returns (status, note,
+        labeled, captured)."""
+        captured = {"pipeline_called": False}
+
+        guard = self
+
+        class FakePipeline:
+            def __call__(self, batch):
+                captured["pipeline_called"] = True
+                return guard.FakeDiarization([(0.0, 1.0, "SPEAKER_00")])
+
+        def fake_decode_audio(path, sampling_rate=16000):
+            return self.FakeWaveform([0.5] * sample_count)
+
+        fake_torch = SimpleNamespace(from_numpy=lambda array: self.FakeTensor())
+        fake_numpy = SimpleNamespace(
+            float32="float32",
+            ascontiguousarray=lambda array, dtype=None: array,
+        )
+
+        with tempfile.TemporaryDirectory() as tmp:
+            config = SimpleNamespace(
+                model_root=Path(tmp),
+                device="cpu",
+                diarization_enabled=True,
+            )
+            with (
+                patch.object(diarization, "cached_pipeline", return_value=FakePipeline()),
+                patch.dict(
+                    sys.modules,
+                    {
+                        "torch": fake_torch,
+                        "numpy": fake_numpy,
+                        "faster_whisper": SimpleNamespace(),
+                        "faster_whisper.audio": SimpleNamespace(
+                            decode_audio=fake_decode_audio
+                        ),
+                    },
+                ),
+                patch.dict(os.environ, {"SUPERSCRIBER_DIARIZATION_MAX_MINUTES": env_value}),
+            ):
+                labeled, status, note = diarization.apply_diarization(
+                    config, "/media/long.wav", [segment(0, 1000)]
+                )
+        return status, note, labeled, captured
+
+    def test_over_threshold_degrades_with_note_and_never_runs_the_pipeline(self):
+        # 32000 samples = 2 s at 16 kHz; the 0.001-minute limit is under that.
+        status, note, labeled, captured = self.run_guard(32000, "0.001")
+
+        self.assertEqual(status, "degraded")
+        self.assertEqual(labeled[0]["speakerLabel"], "Speaker 1")
+        self.assertIn("Speaker separation skipped", note)
+        self.assertIn("minute diarization envelope", note)
+        self.assertIn("SUPERSCRIBER_DIARIZATION_MAX_MINUTES", note)
+        self.assertFalse(captured["pipeline_called"])
+
+    def test_under_threshold_still_attributes(self):
+        status, note, labeled, captured = self.run_guard(32000, "120")
+
+        self.assertEqual(status, "available")
+        self.assertTrue(captured["pipeline_called"])
+        self.assertIn("single speaker", note)
+
+    def test_invalid_env_value_falls_back_to_the_default_envelope(self):
+        with patch.dict(os.environ, {}, clear=False):
+            os.environ.pop("SUPERSCRIBER_DIARIZATION_MAX_MINUTES", None)
+            self.assertEqual(diarization.diarization_max_minutes(), 120.0)
+        with patch.dict(os.environ, {"SUPERSCRIBER_DIARIZATION_MAX_MINUTES": "bogus"}):
+            self.assertEqual(diarization.diarization_max_minutes(), 120.0)
+        with patch.dict(os.environ, {"SUPERSCRIBER_DIARIZATION_MAX_MINUTES": "-3"}):
+            self.assertEqual(diarization.diarization_max_minutes(), 120.0)
+        with patch.dict(os.environ, {"SUPERSCRIBER_DIARIZATION_MAX_MINUTES": "45"}):
+            self.assertEqual(diarization.diarization_max_minutes(), 45.0)
+
+
 class OfflineBundleLoadTest(unittest.TestCase):
     """(c) Offline operation: with HF_HUB_OFFLINE=1 the pinned local
     checkpoints instantiate the pipeline without touching the hub. A fake

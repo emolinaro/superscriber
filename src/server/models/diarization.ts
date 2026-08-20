@@ -151,10 +151,17 @@ async function fetchPinnedFile(
   }
   const controller = new AbortController();
   let stalled = false;
-  const stallTimer = setTimeout(() => {
-    stalled = true;
-    controller.abort();
-  }, FILE_DOWNLOAD_STALL_TIMEOUT_MS);
+  let stallTimer: ReturnType<typeof setTimeout> | undefined;
+  const resetStallTimer = () => {
+    if (stallTimer) {
+      clearTimeout(stallTimer);
+    }
+    stallTimer = setTimeout(() => {
+      stalled = true;
+      controller.abort();
+    }, FILE_DOWNLOAD_STALL_TIMEOUT_MS);
+  };
+  resetStallTimer();
   try {
     // The gated repos answer 401 without a token; the token travels on this
     // one request and is never written to disk, logs, or the registry.
@@ -175,6 +182,7 @@ async function fetchPinnedFile(
       while (true) {
         const { done, value } = await reader.read();
         if (done) break;
+        resetStallTimer();
         const chunk = Buffer.from(value);
         if (!write.write(chunk)) {
           await once(write, "drain");
@@ -199,7 +207,9 @@ async function fetchPinnedFile(
     }
     throw error;
   } finally {
-    clearTimeout(stallTimer);
+    if (stallTimer) {
+      clearTimeout(stallTimer);
+    }
   }
 }
 

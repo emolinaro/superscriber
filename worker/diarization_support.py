@@ -21,6 +21,7 @@ carries the guarantee.
 """
 
 import json
+import os
 from pathlib import Path
 from typing import Any
 
@@ -29,6 +30,22 @@ PINS_PATH = Path(__file__).resolve().parent / "diarization-bundle.json"
 PIPELINE_CONFIG_NAME = "config.yaml"
 SEGMENTATION_CHECKPOINT = "segmentation/pytorch_model.bin"
 EMBEDDING_CHECKPOINT = "embedding/pytorch_model.bin"
+
+DIARIZATION_SAMPLE_RATE = 16000
+MAX_MINUTES_ENV = "SUPERSCRIBER_DIARIZATION_MAX_MINUTES"
+DEFAULT_MAX_MINUTES = 120.0
+
+
+def diarization_max_minutes() -> float:
+    raw = os.environ.get(MAX_MINUTES_ENV, "").strip()
+    if raw:
+        try:
+            value = float(raw)
+            if value > 0:
+                return value
+        except ValueError:
+            pass
+    return DEFAULT_MAX_MINUTES
 
 _pipeline_cache: dict[tuple[str, str], Any] = {}
 
@@ -39,6 +56,10 @@ class DiarizationUnavailable(RuntimeError):
 
 class DiarizationBundleMissing(DiarizationUnavailable):
     """The vendored bundle is absent or byte-incomplete."""
+
+
+class DiarizationEnvelopeExceeded(DiarizationUnavailable):
+    """Recording longer than the diarization memory envelope; skipped by design."""
 
 
 def load_pins() -> dict[str, Any]:
@@ -157,12 +178,23 @@ def diarize_media(pipeline: Any, media_path: str) -> list[tuple[float, float, st
     import torch
     from faster_whisper.audio import decode_audio  # type: ignore
 
-    waveform = decode_audio(media_path, sampling_rate=16000)
+    waveform = decode_audio(media_path, sampling_rate=DIARIZATION_SAMPLE_RATE)
     if waveform.size == 0:
         raise DiarizationUnavailable("Media decoded to an empty waveform.")
 
+    limit_minutes = diarization_max_minutes()
+    duration_minutes = waveform.size / DIARIZATION_SAMPLE_RATE / 60
+    if duration_minutes > limit_minutes:
+        raise DiarizationEnvelopeExceeded(
+            f"recording exceeds the {limit_minutes:g} minute diarization envelope "
+            f"(decoded duration {duration_minutes:.1f} minutes; raise {MAX_MINUTES_ENV} "
+            "to opt in - about 230 MB of worker RAM per decoded hour)"
+        )
+
     tensor = torch.from_numpy(np.ascontiguousarray(waveform, dtype=np.float32))
-    diarization = pipeline({"waveform": tensor.unsqueeze(0), "sample_rate": 16000})
+    diarization = pipeline(
+        {"waveform": tensor.unsqueeze(0), "sample_rate": DIARIZATION_SAMPLE_RATE}
+    )
 
     tracks: list[tuple[float, float, str]] = []
     for turn, _track, speaker in diarization.itertracks(yield_label=True):
@@ -254,6 +286,13 @@ def apply_diarization(
 
     try:
         tracks = diarize_media(pipeline, media_path)
+    except DiarizationEnvelopeExceeded as exc:
+        print(f"[diarization] speaker separation skipped: {exc}", flush=True)
+        return (
+            segments,
+            "degraded",
+            f"Speaker separation skipped ({exc}); all segments stay under Speaker 1.",
+        )
     except Exception as exc:
         return (
             segments,
