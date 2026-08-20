@@ -16,6 +16,7 @@ For a full local deployment to develop against, run `scripts/bootstrap-local.sh`
    npm test              # unit/integration suite (vitest run)
    npm run build         # production build (next build)
    npm run worker:check  # syntax-check the Python worker
+   npm run worker:test   # Python worker unit tests (transcription, diarization, runtime support)
    ```
 
    `worker:check` uses `$SUPERSCRIBER_WORKER_PYTHON` when it is non-empty, then `.venv/bin/python3` when it is executable, and finally `python3`; the README's local worker setup (`uv venv`, `uv pip install -r worker/requirements.txt`) gives you that environment. For browser-level verification of the change, see the full testing gate in the README (`npm run e2e`, `npm run e2e:container`).

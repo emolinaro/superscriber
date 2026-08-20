@@ -7,7 +7,7 @@
 - Unmanageable-instance recovery (accounts exist, no active admin): operator-claim ceremony on the sign-up door gated by an on-host single-use token (`src/server/auth/recovery-claim.ts`, runbook `docs/operators/admin-recovery.md`).
 - One-shot local deployment: `scripts/bootstrap-local.sh` (idempotent; supervisor `scripts/instance-run.sh`, model provisioning CLI `scripts/provision-model-tier.ts` over `src/server/models/provisioning.ts`). Docs: README "Local deployment".
 - Speaker diarization: vendored pyannote speaker-diarization-3.1 bundle pinned in `worker/diarization-bundle.json` (single pins source read by BOTH the TS installer `src/server/models/diarization.ts` and the image-build prefetcher `worker/prefetch_diarization.py`); gated HF download happens once per home via `scripts/provision-model-tier.ts --diarization` with a run-scoped `SUPERSCRIBER_HUGGINGFACE_TOKEN`, then runs fully offline; worker attribution lives in `worker/diarization_support.py` (majority-overlap vote onto whisper segments, first-appearance Speaker N naming, always degrades to single-speaker instead of failing a job). Runbook: `docs/operators/diarization.md`.
-- Full validation gate: `npm run typecheck`, `npm test`, `npm run build`, `npm run worker:check`, `npm run e2e`, `npm run e2e:container`.
+- Full validation gate: `npm run typecheck`, `npm test`, `npm run build`, `npm run worker:check`, `npm run worker:test`, `npm run e2e`, `npm run e2e:container`.
 - Internal spec/plan tree (formerly `docs/superpowers/`) is gitignored at `.fm-internal/docs-superpowers/`, local-only; DESIGN.md and other refs intentionally point there. Do not recreate `docs/superpowers/`.
 
 ## GBrain Configuration (configured by /setup-gbrain)
