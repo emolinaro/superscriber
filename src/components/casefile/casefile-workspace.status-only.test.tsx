@@ -211,3 +211,78 @@ describe("CasefileWorkspace status-only polling", () => {
     expect(bar).toHaveAttribute("data-live", "warming");
   });
 });
+
+describe("CasefileWorkspace guided failure card", () => {
+  let fetchMock: ReturnType<typeof vi.fn>;
+
+  beforeEach(() => {
+    vi.useFakeTimers();
+    mockRefresh.mockReset();
+    fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+  });
+
+  afterEach(() => {
+    cleanup();
+    vi.unstubAllGlobals();
+    vi.useRealTimers();
+    vi.restoreAllMocks();
+  });
+
+  function renderFailureCard(failure: Record<string, unknown>) {
+    return renderStatusOnlyWorkspace({
+      stage: "needs_ingest_attention",
+      stageLabel: "Needs ingest attention",
+      processing: {
+        active: false,
+        integrityState: "verified",
+        transcriptJobState: "failed",
+        progressPercent: null,
+        transcribedUntilMs: null,
+        audioDurationMs: null,
+        segmentsSeen: null,
+        etaSeconds: null,
+        verificationSummary: "Verified",
+        recoveryHint: null,
+        failure,
+      },
+    });
+  }
+
+  it("shows cause, action, and operator phrase - never the engine stack", () => {
+    renderFailureCard({
+      errorClass: "mel-shape-mismatch",
+      causeLabel:
+        "Transcription failed - the speech model involved does not match its audio configuration (model/config mismatch).",
+      actionHint: "Delete this recording and upload it again.",
+      technicalDetail: null,
+    });
+
+    expect(screen.getByRole("alert")).toHaveTextContent("model/config mismatch");
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      "Delete this recording and upload it again.",
+    );
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      "contact your operator with these words: mel-shape-mismatch",
+    );
+    expect(
+      screen.queryByText(/Invalid input features shape/),
+    ).not.toBeInTheDocument();
+    expect(screen.queryByText(/Technical details/)).not.toBeInTheDocument();
+  });
+
+  it("exposes the technical detail lines only when the server grants them", () => {
+    renderFailureCard({
+      errorClass: "mel-shape-mismatch",
+      causeLabel: "Transcription failed - model/config mismatch.",
+      actionHint: "Delete this recording and upload it again.",
+      technicalDetail:
+        "model=large-v3 n_mels_expected=128 n_mels_prepared=80 ValueError: Invalid input features shape ...",
+    });
+
+    expect(screen.getByText("Technical details (admin only)")).toBeInTheDocument();
+    expect(
+      screen.getByText(/n_mels_expected=128/),
+    ).toBeInTheDocument();
+  });
+});

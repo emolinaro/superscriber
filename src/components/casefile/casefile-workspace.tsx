@@ -261,8 +261,27 @@ function CasefileStatusCards({ casefile }: { casefile: CasefileViewModel }) {
             </p>
           )}
           <p className="field-note">{casefile.processing.verificationSummary ?? "Status available."}</p>
+          {casefile.processing.failure ? (
+            <div className="inline-notice" data-tone="danger" role="alert">
+              <span aria-hidden="true" className="inline-notice__icon">
+                ×
+              </span>
+              <span>
+                <strong>{casefile.processing.failure.causeLabel}</strong>{" "}
+                {casefile.processing.failure.actionHint} If it repeats, contact your
+                operator with these words:{" "}
+                <code>{casefile.processing.failure.errorClass}</code>.
+              </span>
+            </div>
+          ) : null}
           {casefile.processing.recoveryHint ? (
             <p className="field-note">{casefile.processing.recoveryHint}</p>
+          ) : null}
+          {casefile.processing.failure?.technicalDetail ? (
+            <details className="field-note">
+              <summary>Technical details (admin only)</summary>
+              <pre>{casefile.processing.failure.technicalDetail}</pre>
+            </details>
           ) : null}
         </div>
       </article>

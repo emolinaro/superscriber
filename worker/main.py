@@ -1,8 +1,10 @@
 #!/usr/bin/env python3
 import json
+import re
 import sys
 import threading
 import time
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 from urllib import error, request
@@ -14,6 +16,125 @@ from runtime_support import (
     configure_model_environment,
     ensure_local_model,
 )
+
+
+# mel-bins-mismatch: faster-whisper picks the audio frontend's mel count from
+# the model bundle's preprocessor_config.json and silently falls back to the
+# 80-mel default when the bundle ships without one. large-v3 family model
+# binaries expect 128 mel bins, so such a bundle fails every job with the
+# ctranslate2 "Invalid input features shape" error below. The worker now
+# realigns the frontend against the loaded model's own n_mels at load time,
+# and classified failures surface a stable, operator-greppable error class
+# while the technical stack stays out of reviewer-facing prose.
+MEL_SHAPE_ERROR_CLASS = "mel-shape-mismatch"
+GENERIC_ERROR_CLASS = "worker-internal-error"
+
+_MEL_SHAPE_PATTERN = re.compile(
+    r"Invalid input features shape: expected an input with shape \(1, (\d+), (\d+)\), "
+    r"but got an input with shape \(1, (\d+), \2\) instead"
+)
+
+
+@dataclass(frozen=True)
+class ClassifiedFailure:
+    """error_class: stable slug the user quotes to operators; user_detail:
+    reviewer-safe message (never raw engine stack text); technical_detail:
+    ops-only diagnostic (model name, mel counts, engine error)."""
+
+    error_class: str
+    user_detail: str
+    technical_detail: str
+
+
+def align_feature_extractor_with_model(
+    model: Any,
+    extractor_factory: Any | None = None,
+) -> bool:
+    """Derive the audio frontend's mel-bin count from the loaded model, never
+    from the faster-whisper default.
+
+    faster-whisper only raises the frontend's feature_size above 80 when the
+    local bundle carries preprocessor_config.json; bundles assembled without
+    it (older conversions, pruned caches) silently prepare 80-mel features
+    for a 128-mel model and fail at the encoder. The ctranslate2 model object
+    always knows its true n_mels, so we rebuild the extractor from it.
+    Returns True when a realignment happened.
+    """
+
+    spec = getattr(model, "model", None)
+    extractor = getattr(model, "feature_extractor", None)
+    expected = getattr(spec, "n_mels", None)
+    current_filters = getattr(extractor, "mel_filters", None)
+    if expected is None or current_filters is None:
+        # Not a real faster-whisper model (test doubles, degraded stubs):
+        # nothing to reconcile.
+        return False
+
+    expected = int(expected)
+    current = int(current_filters.shape[0])
+    if expected == current:
+        return False
+
+    if extractor_factory is None:
+        from faster_whisper.feature_extractor import FeatureExtractor  # type: ignore
+
+        extractor_factory = FeatureExtractor
+
+    kwargs = dict(getattr(model, "feat_kwargs", None) or {})
+    kwargs["feature_size"] = expected
+    model.feature_extractor = extractor_factory(**kwargs)
+    print(
+        f"[worker] realigned mel frontend to {expected} bins "
+        f"(bundle frontend was {current}; model requires {expected})",
+        file=sys.stderr,
+    )
+    return True
+
+
+def classify_failure(exc: BaseException, model_name: str | None = None) -> ClassifiedFailure:
+    """Map a transcriber exception to a stable error class plus a
+    reviewer-safe message. Technical detail (model, mel counts, engine text)
+    is kept separate so the app can show it in admin/ops views only."""
+
+    raw = f"{type(exc).__name__}: {exc}"
+    context = f"model={model_name or 'unknown'}"
+
+    match = _MEL_SHAPE_PATTERN.search(str(exc))
+    if match:
+        expected_mels, _, got_mels = match.group(1), match.group(2), match.group(3)
+        return ClassifiedFailure(
+            error_class=MEL_SHAPE_ERROR_CLASS,
+            user_detail=(
+                "Transcription failed - the speech model loaded for this job does not "
+                "match its audio configuration (model/config mismatch). Delete this "
+                "recording and upload it again; if the failure repeats, contact your "
+                f"operator with these words: {MEL_SHAPE_ERROR_CLASS}."
+            ),
+            technical_detail=(
+                f"{context} n_mels_expected={expected_mels} n_mels_prepared={got_mels} {raw}"
+            ),
+        )
+
+    if isinstance(exc, FileNotFoundError):
+        return ClassifiedFailure(
+            error_class="media-missing",
+            user_detail=(
+                "Transcription failed because the stored media file could not be found. "
+                "Delete this recording and upload it again; if the failure repeats, "
+                f"contact your operator with these words: media-missing."
+            ),
+            technical_detail=f"{context} {raw}",
+        )
+
+    return ClassifiedFailure(
+        error_class=GENERIC_ERROR_CLASS,
+        user_detail=(
+            "Transcription failed in the transcription engine. Delete this recording "
+            "and upload it again; if the failure repeats, contact your operator with "
+            f"these words: {GENERIC_ERROR_CLASS}."
+        ),
+        technical_detail=f"{context} {raw}",
+    )
 
 
 LANGUAGE_HINT_ALIASES = {
@@ -145,6 +266,7 @@ class Transcriber:
                 download_root=str(config.model_root),
                 local_files_only=True,
             )
+            align_feature_extractor_with_model(model)
         except Exception:
             if name == self.config.model_name:
                 raise
@@ -371,15 +493,23 @@ def fail_job(
     detail: str,
     *,
     retryable: bool,
+    error_class: str | None = None,
+    technical_detail: str | None = None,
 ) -> None:
+    payload: dict[str, Any] = {
+        "workerId": config.worker_id,
+        "detail": detail,
+        "retryable": retryable,
+    }
+    if error_class:
+        payload["errorClass"] = error_class
+    if technical_detail:
+        payload["technicalDetail"] = technical_detail
+
     post_json(
         config,
         f"/api/internal/transcript-jobs/{job_id}/fail",
-        {
-            "workerId": config.worker_id,
-            "detail": detail,
-            "retryable": retryable,
-        },
+        payload,
     )
 
 
@@ -423,15 +553,25 @@ def process_job(config: WorkerConfig, transcriber: Transcriber, job: dict[str, A
         )
     except Exception as exc:
         retryable = not isinstance(exc, FileNotFoundError)
-        detail = f"Internal worker failed: {exc}"
+        failure = classify_failure(exc, model_name=transcriber._model_name)
         try:
-            fail_job(config, job_id, detail, retryable=retryable)
+            fail_job(
+                config,
+                job_id,
+                failure.user_detail,
+                retryable=retryable,
+                error_class=failure.error_class,
+                technical_detail=failure.technical_detail,
+            )
         except Exception as fail_exc:
             print(
                 f"[worker] failed to report job failure for {job_id}: {fail_exc}",
                 file=sys.stderr,
             )
-        print(f"[worker] failed {job_id}: {detail}", file=sys.stderr)
+        print(
+            f"[worker] failed {job_id} ({failure.error_class}): {failure.technical_detail}",
+            file=sys.stderr,
+        )
     finally:
         heartbeat.stop()
 

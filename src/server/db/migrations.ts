@@ -13,7 +13,7 @@ type Migration = {
   rebuildsTables?: boolean;
 };
 
-export const LATEST_SCHEMA_VERSION = 12;
+export const LATEST_SCHEMA_VERSION = 13;
 
 const migrations: Migration[] = [
   { version: 1, name: "baseline-appliance", up: createBaselineSchema },
@@ -28,6 +28,11 @@ const migrations: Migration[] = [
   { version: 10, name: "password-reset-tokens", up: addPasswordResetTokensSchema },
   { version: 11, name: "transcript-job-engine-progress", up: addTranscriptJobEngineProgressSchema },
   { version: 12, name: "transcript-model", up: addTranscriptModelSchema },
+  {
+    version: 13,
+    name: "transcript-job-failure-classification",
+    up: addTranscriptJobFailureClassificationSchema,
+  },
 ];
 
 const LEGACY_AUDIT_METADATA_JSON = serializeAuditMetadata(LEGACY_AUDIT_METADATA);
@@ -949,6 +954,20 @@ function addUserThemePreferenceSchema(sqlite: Database.Database) {
   // setting decide. localStorage stays the no-flash first-paint copy; this
   // row is the durable source of truth synced on session resume.
   ensureColumn(sqlite, "users", "theme_preference", "theme_preference TEXT");
+}
+
+function addTranscriptJobFailureClassificationSchema(sqlite: Database.Database) {
+  // mel-bins-mismatch / guided error surface: the worker classifies failures
+  // into a stable, operator-greppable slug (last_error_kind) and keeps the raw
+  // engine diagnostic (last_error_technical) separate so reviewer surfaces can
+  // stay stack-free while admins keep the technical detail.
+  ensureColumn(sqlite, "transcript_jobs", "last_error_kind", "last_error_kind TEXT");
+  ensureColumn(
+    sqlite,
+    "transcript_jobs",
+    "last_error_technical",
+    "last_error_technical TEXT",
+  );
 }
 
 function addTranscriptModelSchema(sqlite: Database.Database) {

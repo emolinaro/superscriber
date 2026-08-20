@@ -24,6 +24,7 @@ import { isModelProvisioned, MODEL_TIER_IDS } from "./catalog";
 import {
   HUGGINGFACE_DOWNLOAD_BASE_URL,
   modelTierDownloadUrls,
+  modelTierOptionalDownloadUrls,
   TIER_DOWNLOADS,
 } from "./tier-downloads";
 
@@ -808,6 +809,26 @@ async function runDownload(
         bytesReceived: completedBytes,
         bytesTotal: TIER_DOWNLOADS[tierId].sizeBytes,
       });
+    }
+
+    // Best-effort extras the availability gate never requires (today: the
+    // v3 family's preprocessor_config.json). They must follow the pinned
+    // shape when present; any transport or size mismatch just skips them -
+    // the worker derives its audio frontend from the loaded model itself, so
+    // an incomplete extra can never wedge the tier again (see the
+    // mel-bins-mismatch note in tier-downloads.ts).
+    const optionalSizes = TIER_DOWNLOADS[tierId].optionalFileSizeBytes;
+    for (const url of modelTierOptionalDownloadUrls(tierId)) {
+      const file = url.split("/").pop() as string;
+      const destination = join(stagingDir, file);
+      try {
+        await transport(url, destination, () => {});
+        if ((await stat(destination)).size !== optionalSizes[file]) {
+          rmSync(destination, { force: true });
+        }
+      } catch {
+        rmSync(destination, { force: true });
+      }
     }
 
     if (isModelProvisioned(tierId)) {

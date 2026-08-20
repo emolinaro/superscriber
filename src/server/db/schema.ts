@@ -412,6 +412,8 @@ export const transcriptJobs = sqliteTable(
     segmentsSeen: integer("segments_seen"),
     outputRevisionId: text("output_revision_id"),
     lastError: text("last_error"),
+    lastErrorKind: text("last_error_kind"),
+    lastErrorTechnical: text("last_error_technical"),
     diarizationStatus: text("diarization_status").$type<DiarizationStatus>().notNull(),
   },
   (table) => ({

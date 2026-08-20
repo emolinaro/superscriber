@@ -249,6 +249,59 @@ describe("model provisioning service (model-tier-provisioning)", () => {
     expect(existsSync(join(modelRoot, ".provisioning"))).toBe(false);
   });
 
+  it("lands the v3 family's optional preprocessor config when the pinned repo has it", async () => {
+    // mel-bins-mismatch: 128-mel models need their preprocessor_config.json
+    // in the bundle; without it faster-whisper builds an 80-mel frontend.
+    const transport: DownloadTransport = async (url, destination, onProgress) => {
+      const file = url.split("/").pop();
+      if (!file) throw new Error(`missing artifact name in ${url}`);
+      const isOptional = TIER_DOWNLOADS["large-v3"].optionalFiles.includes(file);
+      const bytes = isOptional
+        ? (TIER_DOWNLOADS["large-v3"].optionalFileSizeBytes[file] ?? 0)
+        : TIER_DOWNLOADS["large-v3"].fileSizeBytes[file];
+      if (bytes === 0) throw new Error(`unexpected download call for ${file}`);
+      writeFileSync(destination, "artifact");
+      truncateSync(destination, bytes);
+      onProgress({ bytesReceived: bytes, bytesTotal: bytes });
+    };
+
+    startTierDownload("large-v3", {
+      transportFor: () => transport,
+      probeDiskSpace: unlimitedDisk,
+    });
+    await waitForTierDownload("large-v3");
+
+    const tierDir = join(modelRoot, "large-v3");
+    expect(existsSync(join(tierDir, "preprocessor_config.json"))).toBe(true);
+    expect(readFileSync(join(tierDir, "preprocessor_config.json")).length).toBe(340);
+  });
+
+  it("completes the tier even when the optional preprocessor fetch fails", async () => {
+    const transport: DownloadTransport = async (url, destination, onProgress) => {
+      const file = url.split("/").pop();
+      if (!file) throw new Error(`missing artifact name in ${url}`);
+      if (TIER_DOWNLOADS["large-v3"].optionalFiles.includes(file)) {
+        throw new Error("simulated 404 for the optional artifact");
+      }
+      const bytes = TIER_DOWNLOADS["large-v3"].fileSizeBytes[file];
+      writeFileSync(destination, "artifact");
+      truncateSync(destination, bytes);
+      onProgress({ bytesReceived: bytes, bytesTotal: bytes });
+    };
+
+    startTierDownload("large-v3", {
+      transportFor: () => transport,
+      probeDiskSpace: unlimitedDisk,
+    });
+    await waitForTierDownload("large-v3");
+
+    const finished = listProvisioningStatus();
+    const tier = finished.tiers.find((entry) => entry.tierId === "large-v3");
+    expect(tier?.download.state).toBe("completed");
+    expect(tier?.available).toBe(true);
+    expect(existsSync(join(modelRoot, "large-v3", "preprocessor_config.json"))).toBe(false);
+  });
+
   it("reveals a completed tier with one atomic directory rename", async () => {
     const staleTarget = join(modelRoot, "tiny");
     mkdirSync(staleTarget, { recursive: true });

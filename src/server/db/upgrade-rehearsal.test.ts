@@ -123,7 +123,7 @@ function invariants(sqlite: Database.Database) {
 }
 
 describe("migration rehearsal on production-shaped copies", () => {
-  it("stages v2 through v12 preserving every id and reference count; backup stays restorable", () => {
+  it("stages v2 through v13 preserving every id and reference count; backup stays restorable", () => {
     const production = new Database(":memory:");
     production.pragma("foreign_keys = ON");
     runMigrations(production, 2);
@@ -134,7 +134,7 @@ describe("migration rehearsal on production-shaped copies", () => {
     const backup = Buffer.from(production.serialize());
 
     // Staged migration, one version at a time, as runbooks describe.
-    for (const stage of [3, 4, 5, 6, 7, 8, 9, 10, 11, 12]) {
+    for (const stage of [3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13]) {
       runMigrations(production, stage);
       expect(invariants(production)).toEqual(before);
       expect(production.prepare(`PRAGMA foreign_key_check`).all()).toEqual([]);
@@ -145,7 +145,13 @@ describe("migration rehearsal on production-shaped copies", () => {
     expect(
       production.prepare(`PRAGMA table_info(transcript_jobs)`).all().map((c) => (c as { name: string }).name),
     ).toEqual(
-      expect.arrayContaining(["transcribed_until_ms", "audio_duration_ms", "segments_seen"]),
+      expect.arrayContaining([
+        "transcribed_until_ms",
+        "audio_duration_ms",
+        "segments_seen",
+        "last_error_kind",
+        "last_error_technical",
+      ]),
     );
     expect(
       production.prepare(`PRAGMA table_info(recordings)`).all().map((c) => (c as { name: string }).name),
@@ -194,7 +200,7 @@ describe("migration rehearsal on production-shaped copies", () => {
         .prepare(`SELECT version FROM schema_migrations ORDER BY version`)
         .all()
         .map((row) => (row as { version: number }).version),
-    ).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]);
+    ).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13]);
 
     production.close();
     restored.close();

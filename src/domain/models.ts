@@ -176,6 +176,13 @@ export type TranscriptJob = {
   segmentsSeen: number | null;
   outputRevisionId: string | null;
   lastError: string | null;
+  /** Stable, operator-greppable failure class (e.g. "mel-shape-mismatch"),
+     set by the worker for classified failures; null for legacy/unclassified
+     or app-authored failures. */
+  lastErrorKind: string | null;
+  /** Ops-only diagnostic (model name, mel counts, engine stack text). Rendered
+     exclusively in admin views; never safe for reviewer surfaces. */
+  lastErrorTechnical: string | null;
   diarizationStatus: DiarizationStatus;
 };
 
