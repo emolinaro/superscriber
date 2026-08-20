@@ -4,6 +4,20 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-08-20
+
+### Added
+- Added governed bulk speaker rename: the reviewer can relabel one speaker and apply the same rename across every segment in one motion with a count confirmation, including merge-into-an-existing-name (PR #62).
+- Added surfacing of changes-requested notes: the governance Decisions rows render the note plus the revision it applies to and its timestamp, and a changes-requested revision surfaces the note at the top of the casefile before the transcript (PR #63).
+- Added local speaker diarization driven by a vendored pyannote speaker-diarization 3.1 bundle: real S1/S2 labels land in every governed revision, install happens once with a gated token fetch and everything after is cache-only, the wheel dependency picker self-classifies the host hardware at install time (CPU on lanes like Macs, NVIDIA CUDA on CUDA-capable runtimes) with a printed plan line, a safe CPU fallback, and no operator device toggles (PR #65).
+
+### Fixed
+- Fixed the transcription worker's mel-shape mismatch by deriving n_mels from the loaded model's configuration instead of assuming a single model tier, so the per-recording model override and the default tier no longer produce "Invalid input features shape" failures (PR #64).
+- The casefile now announces back onto the page once a transcription completes even if a viewer had the page open through the 99%-to-100% window: the in-flight OrchestrationStatusPoller keeps listening past the first completed frame so the fresh read model propagates to the open view (rolled up from the same live-lane stuck-transcript diagnosis evidence at 2026-08-20, queued with this ship).
+
+### Changed
+- The installer's torch-wheel selection no longer takes any operator input; it always picks the right wheel variant for the detected host, and install-time failures of the gated diarization fetch degrade with a printed notice instead of hard-failing the whole bootstrap (PR #65).
+
 ## [0.5.1] - 2026-08-19
 
 ### Fixed
