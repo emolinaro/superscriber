@@ -148,6 +148,100 @@ class TranscriberProgressTest(unittest.TestCase):
         self.assertEqual(samples, [(2000, None, 1)])
 
 
+class TranscriberDiarizationTest(unittest.TestCase):
+    """diarization-bundle (a/b through the worker seam): the real
+    diarization_support.apply_diarization runs behind Transcriber.transcribe;
+    only the model boundary (pipeline object and its media decode) is
+    stubbed. Distinct diarized labels must land on completed segments, and
+    every bundle/engine failure must degradate quietly."""
+
+    def _transcriber(self, worker_main, model_root):
+        fake_model = FakeModel(
+            segments=[FakeSegment(0.0, 2.0), FakeSegment(2.0, 4.0)],
+            duration=4.0,
+        )
+        transcriber = worker_main.Transcriber(
+            SimpleNamespace(
+                device="cpu",
+                model_name="tiny",
+                model_root=model_root,
+                diarization_enabled=True,
+            )
+        )
+        transcriber._model = fake_model
+        transcriber._model_path = Path("/tmp/tiny")
+        transcriber._model_name = "tiny"
+        return transcriber
+
+    def _diarization_module(self):
+        import diarization_support
+
+        return diarization_support
+
+    def test_distinct_speaker_labels_land_on_completed_segments(self):
+        worker_main = load_worker_main()
+        diar = self._diarization_module()
+        with tempfile.TemporaryDirectory() as tmp:
+            transcriber = self._transcriber(worker_main, Path(tmp))
+            tracks = [(0.0, 2.0, "SPEAKER_00"), (2.0, 4.0, "SPEAKER_01")]
+            with (
+                patch.object(diar, "cached_pipeline", return_value=object()),
+                patch.object(diar, "diarize_media", return_value=tracks),
+                tempfile.NamedTemporaryFile() as media_file,
+            ):
+                summary, segments, diarization_status = transcriber.transcribe(
+                    {"mediaPath": media_file.name, "languageHint": "english"}
+                )
+
+        self.assertEqual(diarization_status, "available")
+        self.assertEqual(
+            [segment["speakerLabel"] for segment in segments],
+            ["Speaker 1", "Speaker 2"],
+        )
+        self.assertIn("attributed 2 speakers", summary)
+
+    def test_engine_error_keeps_degraded_single_speaker_path(self):
+        worker_main = load_worker_main()
+        diar = self._diarization_module()
+        with tempfile.TemporaryDirectory() as tmp:
+            transcriber = self._transcriber(worker_main, Path(tmp))
+            with (
+                patch.object(diar, "cached_pipeline", return_value=object()),
+                patch.object(
+                    diar,
+                    "diarize_media",
+                    side_effect=RuntimeError("engine exploded"),
+                ),
+                tempfile.NamedTemporaryFile() as media_file,
+            ):
+                summary, segments, diarization_status = transcriber.transcribe(
+                    {"mediaPath": media_file.name, "languageHint": "english"}
+                )
+
+        self.assertEqual(diarization_status, "degraded")
+        self.assertEqual(
+            [segment["speakerLabel"] for segment in segments],
+            ["Speaker 1", "Speaker 1"],
+        )
+        self.assertIn("Speaker separation failed", summary)
+
+    def test_missing_bundle_mentions_degraded_separation_in_summary(self):
+        worker_main = load_worker_main()
+        with tempfile.TemporaryDirectory() as tmp:
+            transcriber = self._transcriber(worker_main, Path(tmp))
+            with tempfile.NamedTemporaryFile() as media_file:
+                summary, segments, diarization_status = transcriber.transcribe(
+                    {"mediaPath": media_file.name, "languageHint": "english"}
+                )
+
+        self.assertEqual(diarization_status, "degraded")
+        self.assertEqual(
+            [segment["speakerLabel"] for segment in segments],
+            ["Speaker 1", "Speaker 1"],
+        )
+        self.assertIn("Speaker separation unavailable", summary)
+
+
 class HeartbeatLoopSimulationTest(unittest.TestCase):
     """Simulated worker run: engine samples land on the loop, the next
     heartbeat post carries them to the app API verbatim."""

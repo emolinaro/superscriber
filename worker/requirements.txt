@@ -1,2 +1,11 @@
 # Install this to enable real local transcription in the Python worker.
 faster-whisper>=1.1.0
+
+# diarization-bundle (captain engine ruling 2026-08-20, option A): the
+# pyannote speaker-diarization-3.1 stack lives in
+# worker/requirements-diarization.txt and is installed by
+# scripts/install-worker-torch-wheels.sh (host lanes, self-classifying) or
+# the Dockerfile (container lanes). It is intentionally separate so hosts
+# without a usable torch 2.8.0 wheel (Intel macOS) skip the diarization
+# stack cleanly instead of failing the whole worker install; transcription
+# keeps working there and jobs report diarizationStatus=degraded.

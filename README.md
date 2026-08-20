@@ -63,7 +63,12 @@ The bootstrap is idempotent and safe to re-run. It:
    failing loudly with an install hint when anything is missing
 2. Runs `npm ci` and creates the transcription worker's Python virtual
    environment from `worker/requirements.txt` inside the immutable deployment
-   generation, so rollback restores the matching worker dependencies
+   generation, so rollback restores the matching worker dependencies. The
+   self-classifying picker `scripts/install-worker-torch-wheels.sh` then adds
+   the pinned torch pair and diarization stack where the host has a usable
+   wheel (Intel macOS skips it with a notice, and any wheel-install failure
+   degrades the same way so bootstrap never dies over the optional stack;
+   see [docs/operators/diarization.md](./docs/operators/diarization.md))
 3. Initializes the database through the repo migration chain
    (`scripts/ensure-db.ts`) into the instance's durable data directory -
    never `/tmp`
@@ -73,7 +78,11 @@ The bootstrap is idempotent and safe to re-run. It:
    `scripts/provision-model-tier.ts`). Interactive runs offer the full tier
    menu (default: the catalog default `small`); `--skip-model-download`
    preserves an explicit or previously configured tier and verifies its cache,
-   so re-runs work offline without silently changing models
+   so re-runs work offline without silently changing models. With
+   `SUPERSCRIBER_HUGGINGFACE_TOKEN` (or `HF_TOKEN`) exported for the run it
+   also vendors the gated diarization bundle; without a token it verifies the
+   cache and carries on - a missing bundle never fails bootstrap, jobs just
+   run `degraded` until it is provisioned
 5. Builds and atomically publishes an immutable standalone production bundle
    under the instance root, then launches app + worker from that bundle under
    a SIGTERM-stoppable crash-restart supervisor with per-role logs and bounded
@@ -192,6 +201,7 @@ Local worker notes:
 - The worker defaults to `SUPERSCRIBER_ENGINE_MODE=internal`, `SUPERSCRIBER_APP_BASE_URL=http://127.0.0.1:3000`, and model storage under `./models`.
 - A local, non-container worker permits a missing configured model to download at runtime by default. For a strictly offline worker, prefetch first, then set `SUPERSCRIBER_TRANSCRIBE_OFFLINE=1` and `SUPERSCRIBER_TRANSCRIBE_ALLOW_RUNTIME_DOWNLOAD=0`.
 - If you only want the browser workflow without the real speech stack, use `SUPERSCRIBER_ENGINE_MODE=mock` for the app instead of running the Python worker.
+- Speaker separation additionally needs the pinned torch/diarization stack in the same venv (`scripts/install-worker-torch-wheels.sh .venv` - the script self-classifies the host and skips platforms with no usable wheel) plus the one-time gated bundle install; see the [diarization runbook](./docs/operators/diarization.md). Without them the worker still transcribes, with jobs reporting `diarizationStatus=degraded`.
 
 ## Container Runtime
 
@@ -254,6 +264,7 @@ Optional configuration:
 - `npm run break-glass:transfer` - atomically transfer the break-glass designation
 - `npm run bootstrap:local` - bootstrap or update a durable local instance
 - `npm run worker:check` — syntax-check the Python worker
+- `npm run worker:test` - run the Python worker unit tests (transcription, diarization, runtime support)
 - `npm run worker:prefetch` — download the configured speech model into the local worker cache
 - `npm run worker:python` — run the Python worker against a live app
 
@@ -274,7 +285,7 @@ Optional configuration:
 - [`DESIGN.md`](./DESIGN.md) — design record and behavioral contract for the governed casefile workspace
 - [`TODOS.md`](./TODOS.md) - deferred follow-on work
 - [`docs/USER-GUIDE.md`](./docs/USER-GUIDE.md) - end-to-end user guide: sign-in, ingest, casefile review, governed workflow, export, and administration
-- [`docs/operators/`](./docs/operators/) - operator runbooks for authentication and account recovery, including [governed folder-watch ingest](./docs/operators/ingest-watch.md)
+- [`docs/operators/`](./docs/operators/) - operator runbooks for authentication and account recovery, [governed folder-watch ingest](./docs/operators/ingest-watch.md), and [speaker diarization](./docs/operators/diarization.md)
 
 ## Orchestration Modes
 
@@ -305,6 +316,8 @@ SUPERSCRIBER_TRANSCRIBE_MODEL=tiny npm run worker:prefetch
 
 The selected tier is stored with the recording, included as `transcriptModel` in internal-worker claims, and exposed as `recording.transcriptModel` in webhook dispatches. If a stored override can no longer be provisioned or cannot be loaded, the internal worker falls back to its configured default and says so in the revision summary; the configured default itself remains load-or-fail. Explicit stub mode also identifies its fallback in the summary.
 
+Speaker diarization rides the same vendored-bytes contract: the pinned pyannote speaker-diarization-3.1 bundle (`worker/diarization-bundle.json`, about 31 MiB) installs once per home with `npx tsx scripts/provision-model-tier.ts --diarization` after the operator accepts the Hugging Face click-gate, and every completed job then attributes segments to real speakers (`diarizationStatus=available`) that the casefile's batch speaker rename merges like any other label. Without the bundle, jobs complete single-speaker with `degraded` exactly as before - attribution never fails a job. Full operator runbook: [`docs/operators/diarization.md`](./docs/operators/diarization.md).
+
 For webhook mode, configure:
 
 - `SUPERSCRIBER_ENGINE_DISPATCH_URL`
@@ -315,7 +328,7 @@ For webhook mode, configure:
 ## Current Limitations
 
 - GPU acceleration depends on compatible host/runtime support being available to the worker process
-- Diarization is still degraded; the worker currently produces a transcript-first result without full speaker separation
+- Speaker separation ships as an opt-in one-time gated install: the vendored pyannote bundle attributes segments once provisioned (see [`docs/operators/diarization.md`](./docs/operators/diarization.md)); before that, transcripts carry a single `Speaker 1` and report `degraded`
 - This is still a single-institution appliance, not a shared multi-tenant SaaS deployment
 
 ## Testing
@@ -338,7 +351,7 @@ npm run e2e:container
 
 The container-backed E2E runner deliberately builds a lightweight test image with model prefetch disabled, then starts the worker in explicit stub-fallback mode. That keeps the browser suite deterministic while still exercising the real Docker entrypoint, Next.js server, SQLite volume, upload pipeline, internal queue, and Python worker contract in one image.
 
-The model-provisioning browser specs use the test-only `SUPERSCRIBER_MODEL_DOWNLOAD_FIXTURE_DIR` seam. When `<dir>/<tier>/` contains a tier's complete pinned file set, that request copies the fixture from disk; removing the fixture restores the real pinned huggingface.co transport on the next request. Set the variable on both the app and Playwright processes for a host-local lane. The container runner configures it automatically. Never set it in production.
+The model-provisioning browser specs use the test-only `SUPERSCRIBER_MODEL_DOWNLOAD_FIXTURE_DIR` seam. When `<dir>/<tier>/` contains a tier's complete pinned file set, that request copies the fixture from disk; removing the fixture restores the real pinned huggingface.co transport on the next request. The diarization-bundle installer honors the same seam at `<dir>/diarization/`. Set the variable on both the app and Playwright processes for a host-local lane. The container runner configures it automatically. Never set it in production.
 
 Before starting, the runner probes `/api/health` on the app port (`SUPERSCRIBER_E2E_PORT`, default 3105) and refuses to proceed if anything already answers: a foreign server on that port - for example a leftover `npm run dev` - silently vacates the whole suite, because the health probe, browser, and DB helpers would all talk to it instead of the container. Stop the other server or set `SUPERSCRIBER_E2E_PORT` to a free port. The runner also refuses to start when the fake-OIDC sidecar port (`SUPERSCRIBER_E2E_OIDC_PORT`, default 4105) is already occupied; the container suite runs in `dual` auth mode against that sidecar. With `SUPERSCRIBER_E2E_RESET_MAIL=smtp`, the runner likewise refuses to start when the fake-SMTP control port (`SUPERSCRIBER_E2E_SMTP_CONTROL_PORT`, default 4206) is already occupied. Each run gets a fresh data dir under `.tmp/e2e-data.XXXXXX` that the runner removes on exit (a caller-supplied `SUPERSCRIBER_E2E_DATA_DIR` is preserved). Suite helpers that touch the database (`assignmentRows`, `auditRows`, `expireUploadSession`, `expireActionMode`) execute inside the running container via `docker exec`, because host-side access to the bind-mounted database is blocked by file ownership on Linux runners and cannot see the app's WAL commits through macOS VM file sharing.
 

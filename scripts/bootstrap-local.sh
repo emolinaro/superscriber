@@ -345,6 +345,17 @@ prepare_worker_venv() {
     validate_worker_python_version "${WORKER_VENV}"
     log "installing worker dependencies from worker/requirements.txt"
     "${WORKER_VENV}/bin/pip" install --quiet --disable-pip-version-check -r "${REPO_ROOT}/worker/requirements.txt"
+    # diarization-bundle: the pinned torch pair and the diarization stack
+    # (worker/requirements-diarization.txt) install through the
+    # platform/CUDA-aware picker (CPU lanes stay CPU, NVIDIA residences get
+    # their CUDA wheel; see docs/operators/diarization.md). Hosts with no
+    # usable torch wheel (Intel macOS) print a notice and skip the
+    # diarization stack, and any install/verification failure inside the
+    # picker degrades the same way (notice + exit 0) so bootstrap never
+    # dies over the optional stack - transcription keeps working and jobs
+    # report diarizationStatus=degraded. The container image pins the CPU
+    # variant directly in the Dockerfile.
+    "${REPO_ROOT}/scripts/install-worker-torch-wheels.sh" "${WORKER_VENV}"
   fi
   validate_worker_venv "${WORKER_VENV}"
 }
@@ -953,6 +964,28 @@ provision_model() {
     npx tsx scripts/provision-model-tier.ts --tier "${RESOLVED_MODEL_TIER}")
 }
 
+# diarization-bundle (captain ruling 2026-08-20): vendored once per home via
+# the HF click-gate token; never fatal - an absent bundle just keeps speaker
+# separation on the historical degraded path, so bootstrap never wedges on it.
+provision_diarization() {
+  local args=(--verify-diarization)
+  if [[ "${SKIP_MODEL_DOWNLOAD}" -ne 1 && -n "${SUPERSCRIBER_HUGGINGFACE_TOKEN:-}${HF_TOKEN:-}" ]]; then
+    args=(--diarization)
+  fi
+  if (cd "${REPO_ROOT}" && SUPERSCRIBER_TRANSCRIBE_MODEL_DIR="${INSTANCE_ROOT}/model-cache" \
+    npx tsx scripts/provision-model-tier.ts "${args[@]}"); then
+    log "diarization bundle ready (offline)"
+    return 0
+  fi
+  log "diarization bundle not provisioned - speaker separation will run degraded."
+  if [[ "${SKIP_MODEL_DOWNLOAD}" -eq 1 ]]; then
+    log "(--skip-model-download skips the diarization fetch too)"
+  else
+    log "to enable it once: accept the pyannote click-gate, export SUPERSCRIBER_HUGGINGFACE_TOKEN, re-run bootstrap. See docs/operators/diarization.md."
+  fi
+  return 0
+}
+
 quiesce_instance() {
   local active_id
   if bash "${SCRIPT_DIR}/instance-run.sh" "${INSTANCE_ROOT}" --status >/dev/null 2>&1; then
@@ -1110,6 +1143,7 @@ main() {
   install_node_deps
   choose_model_tier
   provision_model
+  provision_diarization
   init_database
   build_app
   release_repository_lock
