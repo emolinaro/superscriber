@@ -424,6 +424,114 @@ describe("CasefileWorkspace", () => {
     expect(screen.queryByDisplayValue("")) .not.toBeInTheDocument();
   });
 
+  it("surfaces the changes-requested note at the top of the casefile, before the transcript", () => {
+    const base = createCasefile();
+    const note =
+      "Segment 2 misattributes the witness.\nRealign speakers 1 and 2 from 00:10 onward before resubmitting. " +
+      "detail ".repeat(60);
+    renderWorkspace({
+      stage: "changes_requested",
+      stageLabel: "Changes requested",
+      revision: {
+        ...base.revision,
+        id: "rev-2",
+        version: 2,
+        state: "draft",
+        stateLabel: "Draft",
+        basedOnRevisionId: "rev-1",
+      },
+      activeRevisionId: "rev-2",
+      revisions: [
+        { ...base.revisions[0], id: "rev-2", version: 2, state: "draft", stateLabel: "Draft" },
+        {
+          ...base.revisions[0],
+          id: "rev-1",
+          version: 1,
+          state: "changes_requested",
+          stateLabel: "Changes requested",
+        },
+      ],
+      decisions: [
+        {
+          id: "decision-1",
+          revisionId: "rev-1",
+          state: "changes_requested",
+          label: "Changes requested",
+          actorRole: "approver",
+          effectiveRole: "approver",
+          actorDisplay: "Approver Example",
+          note,
+          createdAt: "2026-08-02T09:30:00.000Z",
+          createdAtLabel: "02 Aug 2026, 09:30 UTC",
+          createdAtIso: "2026-08-02T09:30:00.000Z",
+        },
+      ],
+    });
+
+    const banner = screen.getByRole("complementary", { name: "Changes requested" });
+    expect(banner).toBeVisible();
+    // Full note, unclamped, with revision version and timestamp context.
+    expect(banner.textContent).toContain(note);
+    expect(banner.textContent).toContain("v1");
+    expect(banner.textContent).toContain("Approver Example");
+    expect(banner.textContent).toContain("02 Aug 2026, 09:30 UTC");
+
+    // The banner precedes the transcript document in reading order.
+    const transcript = screen.getByRole("article", { name: /Transcript segment 1/i });
+    expect(
+      banner.compareDocumentPosition(transcript) & Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+  });
+
+  it("omits the changes-requested banner when the live revision is a plain draft", () => {
+    renderWorkspace();
+
+    expect(screen.queryByRole("complementary", { name: "Changes requested" })).not.toBeInTheDocument();
+  });
+
+  it("omits the changes-requested banner on archived snapshot deep links", () => {
+    const base = createCasefile();
+    renderWorkspace({
+      stage: "changes_requested",
+      stageLabel: "Changes requested",
+      revision: {
+        ...base.revision,
+        id: "rev-1",
+        version: 1,
+        state: "changes_requested",
+        stateLabel: "Changes requested",
+      },
+      activeRevisionId: "rev-2",
+      revisions: [
+        { ...base.revisions[0], id: "rev-2", version: 2, state: "draft", stateLabel: "Draft" },
+        {
+          ...base.revisions[0],
+          id: "rev-1",
+          version: 1,
+          state: "changes_requested",
+          stateLabel: "Changes requested",
+        },
+      ],
+      decisions: [
+        {
+          id: "decision-1",
+          revisionId: "rev-1",
+          state: "changes_requested",
+          label: "Changes requested",
+          actorRole: "approver",
+          effectiveRole: "approver",
+          actorDisplay: "Approver Example",
+          note: "Historical incident note.",
+          createdAt: "2026-08-02T09:30:00.000Z",
+          createdAtLabel: "02 Aug 2026, 09:30 UTC",
+          createdAtIso: "2026-08-02T09:30:00.000Z",
+        },
+      ],
+    });
+
+    expect(screen.queryByRole("complementary", { name: "Changes requested" })).not.toBeInTheDocument();
+  });
+
   it("keeps follow dormant when unavailable media rejects a timestamp seek", async () => {
     // casefile-pin-transcript-zone: a rejected seek (media unavailable) must
     // never activate follow or center a stale row.

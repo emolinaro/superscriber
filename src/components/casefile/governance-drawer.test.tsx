@@ -36,8 +36,10 @@ describe("GovernanceDrawer", () => {
   // component's controlled open prop through a tiny state host.
   function harness({
     actionModeEntryOptions = [],
+    casefile = createCasefile(),
   }: {
     actionModeEntryOptions?: Array<{ effectiveRole: "reviewer" | "approver" }>;
+    casefile?: ReturnType<typeof createCasefile>;
   } = {}) {
     let state: { open: boolean; setOpen: (value: boolean) => void } | null = null;
     function Host() {
@@ -47,7 +49,7 @@ describe("GovernanceDrawer", () => {
         <GovernanceDrawer
           actionModeEntryOptions={actionModeEntryOptions}
           actionModeSessionId={null}
-          casefile={createCasefile()}
+          casefile={casefile}
           onEnterActionMode={vi.fn()}
           open={open}
           onToggle={() => setOpen((current) => !current)}
@@ -71,6 +73,124 @@ describe("GovernanceDrawer", () => {
       expect(screen.getByRole("tab", { name })).toBeVisible();
     }
     expect(screen.getByRole("complementary", { name: "Governance" })).toBeVisible();
+  });
+
+  it("renders a changes-requested decision row with the full note, revision version, and timestamp", async () => {
+    const user = userEvent.setup();
+    // Deliberately long, multi-line note: the sacred partition rule demands
+    // legible rendering with no clamping or truncation.
+    const longNote =
+      "Segment 12 names the wrong defendant.\nVerify every speaker label against the docket before resubmitting. " +
+      "follow-up ".repeat(80);
+    const base = createCasefile();
+    const { Host, getState } = harness({
+      casefile: createCasefile({
+        revisions: [
+          { ...base.revisions[0], id: "rev-1", version: 1, state: "draft", stateLabel: "Draft" },
+          {
+            ...base.revisions[0],
+            id: "rev-2",
+            version: 2,
+            state: "changes_requested",
+            stateLabel: "Changes requested",
+          },
+        ],
+        decisions: [
+          {
+            id: "decision-1",
+            revisionId: "rev-2",
+            state: "changes_requested",
+            label: "Changes requested",
+            actorRole: "approver",
+            effectiveRole: "approver",
+            actorDisplay: "Approver Example",
+            note: longNote,
+            createdAt: "2026-08-02T09:30:00.000Z",
+            createdAtLabel: "02 Aug 2026, 09:30 UTC",
+            createdAtIso: "2026-08-02T09:30:00.000Z",
+          },
+        ],
+      }),
+    });
+    render(<Host />);
+
+    act(() => getState().setOpen(true));
+    await user.click(screen.getByRole("tab", { name: "Decisions" }));
+
+    const rows = document.querySelectorAll(".governance-decision");
+    expect(rows).toHaveLength(1);
+    const rowText = rows[0].textContent ?? "";
+    expect(rowText).toContain("Changes requested");
+    expect(rowText).toContain(longNote);
+    expect(rowText).toContain("v2");
+    expect(rowText).toContain("Approver Example");
+    expect(rowText).toContain("02 Aug 2026, 09:30 UTC");
+  });
+
+  it("renders one governance decision row per changes-requested incident", async () => {
+    const user = userEvent.setup();
+    const base = createCasefile();
+    const { Host, getState } = harness({
+      casefile: createCasefile({
+        revisions: [
+          {
+            ...base.revisions[0],
+            id: "rev-1",
+            version: 1,
+            state: "changes_requested",
+            stateLabel: "Changes requested",
+          },
+          {
+            ...base.revisions[0],
+            id: "rev-2",
+            version: 2,
+            state: "changes_requested",
+            stateLabel: "Changes requested",
+          },
+        ],
+        decisions: [
+          {
+            id: "decision-2",
+            revisionId: "rev-2",
+            state: "changes_requested",
+            label: "Changes requested",
+            actorRole: "approver",
+            effectiveRole: "approver",
+            actorDisplay: "Approver Two",
+            note: "Second incident note.",
+            createdAt: "2026-08-03T10:00:00.000Z",
+            createdAtLabel: "03 Aug 2026, 10:00 UTC",
+            createdAtIso: "2026-08-03T10:00:00.000Z",
+          },
+          {
+            id: "decision-1",
+            revisionId: "rev-1",
+            state: "changes_requested",
+            label: "Changes requested",
+            actorRole: "approver",
+            effectiveRole: "approver",
+            actorDisplay: "Approver One",
+            note: "First incident note.",
+            createdAt: "2026-08-01T08:00:00.000Z",
+            createdAtLabel: "01 Aug 2026, 08:00 UTC",
+            createdAtIso: "2026-08-01T08:00:00.000Z",
+          },
+        ],
+      }),
+    });
+    render(<Host />);
+
+    act(() => getState().setOpen(true));
+    await user.click(screen.getByRole("tab", { name: "Decisions" }));
+
+    const rows = document.querySelectorAll(".governance-decision");
+    expect(rows).toHaveLength(2);
+    expect(rows[0].textContent).toContain("Second incident note.");
+    expect(rows[0].textContent).toContain("v2");
+    expect(rows[0].textContent).toContain("03 Aug 2026, 10:00 UTC");
+    expect(rows[1].textContent).toContain("First incident note.");
+    expect(rows[1].textContent).toContain("v1");
+    expect(rows[1].textContent).toContain("01 Aug 2026, 08:00 UTC");
   });
 
   it("wires governance tabs and the active panel with accessible ids and roving tabIndex", async () => {
