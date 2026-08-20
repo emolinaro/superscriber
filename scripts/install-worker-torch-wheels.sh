@@ -11,23 +11,32 @@
 # operator never picks a variant. A plan line is printed before any
 # download. Wheels come from the pinned PyTorch index
 # (https://download.pytorch.org/whl/<variant>); the cuXXX indexes
-# self-mirror the nvidia-* runtime dependencies. See worker/requirements.txt
-# for why torch/torchaudio stay pinned at 2.8.0 (pyannote.audio 3.3.2 calls
-# a torchaudio API removed in 2.9).
+# self-mirror the nvidia-* runtime dependencies. See
+# worker/requirements-diarization.txt for why torch/torchaudio stay pinned
+# at 2.8.0 (pyannote.audio 3.3.2 calls a torchaudio API removed in 2.9).
 #
-# Callpath: scripts/bootstrap-local.sh -> this script. The Dockerfile pins
-# the CPU variant directly (the appliance image intentionally stays
-# CUDA-free); this script governs host installs.
+# Callpath: scripts/bootstrap-local.sh -> this script. bootstrap-local.sh
+# installs worker/requirements.txt (faster-whisper) on every host first;
+# this script then installs the pinned torch pair AND
+# worker/requirements-diarization.txt (pyannote.audio, matplotlib), or
+# skips that whole stack with a printed notice when no suitable torch
+# wheel exists (Intel macOS - the job contract keeps transcription working
+# with diarizationStatus=degraded). The Dockerfile pins the CPU variant
+# directly (the appliance image intentionally stays CUDA-free); this
+# script governs host installs.
 #
 # Usage:  scripts/install-worker-torch-wheels.sh <worker-venv-dir>
 #
 # Variants the classifier may pick:
-#   - pypi  default PyPI index (macOS and Linux aarch64; the only published
-#           macOS torch 2.8.0 wheels are arm64 CPU/MPS builds, and PyPI
-#           linux aarch64 wheels are CPU builds)
+#   - pypi  default PyPI index (macOS arm64 and Linux aarch64; the only
+#           published macOS torch 2.8.0 wheels are arm64 CPU/MPS builds,
+#           and PyPI linux aarch64 wheels are CPU builds)
 #   - cpu   https://download.pytorch.org/whl/cpu
 #   - cuXXX https://download.pytorch.org/whl/cuXXX (NVIDIA CUDA residence;
 #           chosen to not exceed the driver's reported CUDA capability)
+#   - skip  no usable torch wheel for this host (Intel macOS); the
+#           diarization stack is not installed, exit 0 with a printed
+#           notice
 
 set -euo pipefail
 
@@ -35,6 +44,10 @@ TORCH_VERSION="2.8.0"
 TORCHAUDIO_VERSION="2.8.0"
 PYTORCH_WHEEL_BASE="https://download.pytorch.org/whl"
 CUDA_VARIANTS="cu129 cu128 cu126" # newest supported first; cu126 is the floor
+
+SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" >/dev/null 2>&1 && pwd)"
+REPO_ROOT="$(cd -- "${SCRIPT_DIR}/.." >/dev/null 2>&1 && pwd)"
+DIARIZATION_REQUIREMENTS="${REPO_ROOT}/worker/requirements-diarization.txt"
 
 log() { printf '[worker-torch] %s\n' "$*" >&2; }
 fail() { log "ERROR: $*"; return 1; }
@@ -66,9 +79,11 @@ cuda_variant_for_driver() {
 }
 
 # Self-classify the host (no operator toggle): returns one of
-# pypi | cpu | cu126 | cu128 | cu129. Anything unrecognised falls back to
-# the CPU wheels (or PyPI's CPU builds) with a printed notice - safe default
-# per captain directive corr=0688a345e73914a8.
+# pypi | cpu | cu126 | cu128 | cu129 | skip. Anything unrecognised falls
+# back to the CPU wheels (or PyPI's CPU builds) with a printed notice -
+# safe default per captain directive corr=0688a345e73914a8. `skip` means
+# no torch wheel exists for the host at all (Intel macOS): the diarization
+# stack is skipped so transcription keeps working (degraded).
 pick_variant() {
   local os arch variant cuda
   os="$(uname -s)"
@@ -76,8 +91,15 @@ pick_variant() {
   case "${os}" in
     Darwin)
       # torch 2.8.0 publishes macOS arm64 wheels only; they are CPU/MPS
-      # builds, and PyPI is their home. (Intel Macs: no 2.8 wheel exists.)
-      printf 'pypi'
+      # builds, and PyPI is their home. Intel Macs have no 2.8.0 wheel at
+      # all: never-break-a-job takes priority, so skip the diarization
+      # stack with a notice instead of failing the whole worker install.
+      if [[ "${arch}" == "x86_64" ]]; then
+        log "notice: no macOS x86_64 wheel exists for torch ${TORCH_VERSION} (macOS 2.8.0 wheels are arm64-only); skipping the diarization stack (torch/torchaudio/pyannote.audio/matplotlib) - transcription still works and jobs report diarizationStatus=degraded"
+        printf 'skip'
+      else
+        printf 'pypi'
+      fi
       ;;
     Linux)
       case "${arch}" in
@@ -149,6 +171,12 @@ install_wheels() {
   "${PIP}" "${args[@]}"
 }
 
+install_diarization_requirements() {
+  [[ -f "${DIARIZATION_REQUIREMENTS}" ]] || fail "missing ${DIARIZATION_REQUIREMENTS}"
+  log "installing diarization stack from worker/requirements-diarization.txt"
+  "${PIP}" install --quiet --disable-pip-version-check -r "${DIARIZATION_REQUIREMENTS}"
+}
+
 verify_wheels() {
   local variant="$1" installed expected_suffix
   installed="$("${VENV_DIR}/bin/python3" -c 'import torch; print(torch.__version__)')" \
@@ -174,9 +202,16 @@ main() {
 
   local variant
   variant="$(pick_variant)" || return 1
+  if [[ "${variant}" == "skip" ]]; then
+    printf '[worker-torch] plan: skipping the diarization stack (torch==%s + torchaudio==%s + worker/requirements-diarization.txt); no usable wheel for this host (variant=skip; os=%s arch=%s cuda=%s)\n' \
+      "${TORCH_VERSION}" "${TORCHAUDIO_VERSION}" \
+      "$(uname -s)" "$(uname -m)" "$(driver_cuda_version 2>/dev/null || printf none)"
+    return 0
+  fi
   print_plan_line "${variant}"
   install_wheels "${variant}"
   verify_wheels "${variant}"
+  install_diarization_requirements
 }
 
 if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then

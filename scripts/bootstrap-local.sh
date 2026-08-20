@@ -344,12 +344,16 @@ prepare_worker_venv() {
     python3 -m venv "${WORKER_VENV}"
     validate_worker_python_version "${WORKER_VENV}"
     log "installing worker dependencies from worker/requirements.txt"
-    # diarization-bundle: the pinned torch pair is installed first by the
-    # platform/CUDA-aware picker (CPU lanes stay CPU, NVIDIA residences get
-    # their CUDA wheel; see docs/operators/diarization.md). The container
-    # image pins the CPU variant directly in the Dockerfile.
-    "${REPO_ROOT}/scripts/install-worker-torch-wheels.sh" "${WORKER_VENV}"
     "${WORKER_VENV}/bin/pip" install --quiet --disable-pip-version-check -r "${REPO_ROOT}/worker/requirements.txt"
+    # diarization-bundle: the pinned torch pair and the diarization stack
+    # (worker/requirements-diarization.txt) install through the
+    # platform/CUDA-aware picker (CPU lanes stay CPU, NVIDIA residences get
+    # their CUDA wheel; see docs/operators/diarization.md). Hosts with no
+    # usable torch wheel (Intel macOS) print a notice and skip the
+    # diarization stack - transcription keeps working and jobs report
+    # diarizationStatus=degraded. The container image pins the CPU variant
+    # directly in the Dockerfile.
+    "${REPO_ROOT}/scripts/install-worker-torch-wheels.sh" "${WORKER_VENV}"
   fi
   validate_worker_venv "${WORKER_VENV}"
 }

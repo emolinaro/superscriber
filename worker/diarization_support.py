@@ -11,9 +11,13 @@ scripts/provision-model-tier.ts --diarization):
 
 The pipeline config is read from disk, its two model references are rewritten
 to the local checkpoints, and the tuned `params` block (thresholds from the
-pinned pipeline revision) is passed to instantiate. The worker's own offline
-mode (HF_HUB_OFFLINE=1, runtime downloads off) already guarantees zero
-runtime network; the local checkpoint paths make that a load-time fact too.
+pinned pipeline revision) is passed to instantiate. The local checkpoint
+substitution is what guarantees zero runtime network on every lane:
+pyannote's local-path `Model.from_pretrained` bypasses the Hub entirely.
+The worker additionally exports HF_HUB_OFFLINE=1/TRANSFORMERS_OFFLINE=1
+when SUPERSCRIBER_TRANSCRIBE_OFFLINE resolves true (containers by default);
+on host lanes that flag is normally unset and the substitution alone
+carries the guarantee.
 """
 
 import json

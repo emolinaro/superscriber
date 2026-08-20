@@ -9,7 +9,10 @@
  * `pip` records its arguments (proving which wheel index would be invoked)
  * and whose `python3` answers the post-install verification; `uname` and
  * `nvidia-smi` are PATH-stubbed so the OS/arch/residence matrix is
- * simulated without touching the network.
+ * simulated without touching the network. The matrix covers the
+ * no-CUDA->CPU lane, NVIDIA->CUDA by driver (cu126/cu128/cu129), the
+ * unknown->CPU fallback, macOS arm64, and the Intel-macOS diarization
+ * skip.
  */
 
 import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
@@ -80,11 +83,15 @@ async function runPicker(host: Host) {
       // nvidia-smi stub, matching `command -v nvidia-smi` failing for real.
       { env: { ...process.env, PATH: `${fixture.stubBin}:/usr/bin:/bin:/usr/sbin:/sbin` } },
     );
-    const pipArgs = (await readFile(fixture.recordPath, "utf8")).trim();
+    const pipRaw = await readFile(fixture.recordPath, "utf8").catch(() => "");
+    // One recorded line per pip invocation: the pinned-pair install first,
+    // the diarization requirements install second. An Intel-macOS skip
+    // installs nothing, so the record file is absent entirely.
+    const pipCalls = pipRaw.trim() ? pipRaw.trim().split("\n") : [];
     return {
       stdout: result.stdout.trim(),
       stderr: result.stderr.trim(),
-      pipArgs,
+      pipCalls,
     };
   } finally {
     await rm(fixture.dir, { recursive: true, force: true });
@@ -95,7 +102,7 @@ const PLAN = /\[worker-torch\] plan: torch==2\.8\.0 \+ torchaudio==2\.8\.0 from 
 
 describe("install-worker-torch-wheels.sh self-classification", () => {
   it("(a) self-selects CPU wheels on a host with no CUDA and prints the plan line", async () => {
-    const { stdout, stderr, pipArgs } = await runPicker({
+    const { stdout, stderr, pipCalls } = await runPicker({
       os: "Linux",
       arch: "x86_64",
       reportedTorch: "2.8.0+cpu",
@@ -108,14 +115,17 @@ describe("install-worker-torch-wheels.sh self-classification", () => {
     // The plan line is stdout-visible; install progress + verification follow.
     expect(stderr).toContain("installing torch==2.8.0 torchaudio==2.8.0 (variant=cpu)");
     expect(stderr).toContain("verified torch 2.8.0+cpu");
-    // pip was driven against the CPU index with the pinned pair.
-    expect(pipArgs).toBe(
+    // pip was driven against the CPU index with the pinned pair, then the
+    // diarization stack (pyannote.audio + matplotlib) from its requirements file.
+    expect(pipCalls).toHaveLength(2);
+    expect(pipCalls[0]).toBe(
       "install --quiet --disable-pip-version-check --index-url https://download.pytorch.org/whl/cpu torch==2.8.0 torchaudio==2.8.0",
     );
+    expect(pipCalls[1]).toContain("worker/requirements-diarization.txt");
   });
 
   it("(b) self-selects the NVIDIA CUDA wheel on a CUDA-capable host and prints the plan line", async () => {
-    const { stdout, stderr, pipArgs } = await runPicker({
+    const { stdout, stderr, pipCalls } = await runPicker({
       os: "Linux",
       arch: "x86_64",
       cuda: "12.8",
@@ -127,8 +137,26 @@ describe("install-worker-torch-wheels.sh self-classification", () => {
     expect(plan?.[1]).toBe("https://download.pytorch.org/whl/cu128");
     expect(stdout).toContain("(variant=cu128; os=Linux arch=x86_64 cuda=12.8)");
     expect(stderr).toContain("verified torch 2.8.0+cu128");
-    expect(pipArgs).toBe(
+    expect(pipCalls[0]).toBe(
       "install --quiet --disable-pip-version-check --index-url https://download.pytorch.org/whl/cu128 torch==2.8.0 torchaudio==2.8.0",
+    );
+  });
+
+  it("(b-cu129) a driver at or above CUDA 12.9 picks the newest cu129 wheel", async () => {
+    const { stdout, stderr, pipCalls } = await runPicker({
+      os: "Linux",
+      arch: "x86_64",
+      cuda: "13.0",
+      reportedTorch: "2.8.0+cu129",
+    });
+
+    const plan = stdout.match(PLAN);
+    expect(plan, `plan line missing from stdout: ${stdout}`).toBeTruthy();
+    expect(plan?.[1]).toBe("https://download.pytorch.org/whl/cu129");
+    expect(stdout).toContain("(variant=cu129; os=Linux arch=x86_64 cuda=13.0)");
+    expect(stderr).toContain("verified torch 2.8.0+cu129");
+    expect(pipCalls[0]).toBe(
+      "install --quiet --disable-pip-version-check --index-url https://download.pytorch.org/whl/cu129 torch==2.8.0 torchaudio==2.8.0",
     );
   });
 
@@ -143,7 +171,7 @@ describe("install-worker-torch-wheels.sh self-classification", () => {
   });
 
   it("(c) falls back to safe CPU wheels on an unknown OS, with a printed notice", async () => {
-    const { stdout, stderr, pipArgs } = await runPicker({
+    const { stdout, stderr, pipCalls } = await runPicker({
       os: "FreeBSD",
       arch: "x86_64",
       reportedTorch: "2.8.0+cpu",
@@ -156,7 +184,7 @@ describe("install-worker-torch-wheels.sh self-classification", () => {
     expect(stderr).toContain(
       "notice: unrecognised OS 'FreeBSD'; falling back to CPU wheels",
     );
-    expect(pipArgs).toContain("--index-url https://download.pytorch.org/whl/cpu");
+    expect(pipCalls[0]).toContain("--index-url https://download.pytorch.org/whl/cpu");
   });
 
   it("(c-sub) an NVIDIA driver below the wheel floor falls back to CPU with a notice", async () => {
@@ -173,7 +201,7 @@ describe("install-worker-torch-wheels.sh self-classification", () => {
   });
 
   it("self-selects the macOS CPU/MPS pair from the default PyPI index", async () => {
-    const { stdout, stderr, pipArgs } = await runPicker({
+    const { stdout, stderr, pipCalls } = await runPicker({
       os: "Darwin",
       arch: "arm64",
       reportedTorch: "2.8.0",
@@ -183,9 +211,27 @@ describe("install-worker-torch-wheels.sh self-classification", () => {
     expect(plan?.[1]).toBe("PyPI"); // "PyPI (default index)"
     expect(stdout).toContain("(variant=pypi; os=Darwin arch=arm64 cuda=none)");
     expect(stderr).toContain("verified torch 2.8.0");
-    expect(pipArgs).toBe(
+    expect(pipCalls[0]).toBe(
       "install --quiet --disable-pip-version-check torch==2.8.0 torchaudio==2.8.0",
     );
+    expect(pipCalls[1]).toContain("worker/requirements-diarization.txt");
+  });
+
+  it("skips the diarization stack on Intel macOS with a notice and exits 0 without installing", async () => {
+    const { stdout, stderr, pipCalls } = await runPicker({
+      os: "Darwin",
+      arch: "x86_64",
+      reportedTorch: "2.8.0",
+    });
+
+    // Plan + notice are printed, the run succeeds, and pip never runs:
+    // transcription keeps working via faster-whisper and jobs report
+    // diarizationStatus=degraded (the never-break-a-job contract).
+    expect(stdout).toContain("plan: skipping the diarization stack");
+    expect(stdout).toContain("(variant=skip; os=Darwin arch=x86_64 cuda=none)");
+    expect(stderr).toContain("no macOS x86_64 wheel exists for torch 2.8.0");
+    expect(stderr).toContain("diarizationStatus=degraded");
+    expect(pipCalls).toHaveLength(0);
   });
 
   it("never exposes an operator device toggle", async () => {

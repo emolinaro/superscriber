@@ -2,9 +2,15 @@
 
 Superscriber attributes transcript segments to speakers locally with the
 pinned pyannote **speaker-diarization-3.1** bundle (captain engine ruling,
-2026-08-20, option A). The runtime never talks to the network for this: the
-model bytes live in the same model cache as the faster-whisper tiers and
-load from local files only (the worker runs with `HF_HUB_OFFLINE=1`).
+2026-08-20, option A). The runtime never talks to the network for this on
+any lane: the model bytes live in the same model cache as the
+faster-whisper tiers, and the worker rewrites the pipeline config's model
+references to those local checkpoints before instantiation, so pyannote's
+local-path `Model.from_pretrained` bypasses the Hub entirely. Inside the
+container (where `SUPERSCRIBER_TRANSCRIBE_OFFLINE=1` is the default) the
+worker additionally exports `HF_HUB_OFFLINE=1`/`TRANSFORMERS_OFFLINE=1`;
+on host lanes that flag is normally unset and the checkpoint substitution
+alone is what guarantees the zero-network behavior.
 
 ## Torch wheel selection (platform- and residence-aware)
 
@@ -21,18 +27,27 @@ download. Wheels come from the pinned PyTorch index
 (`https://download.pytorch.org/whl/<variant>`); the `cuXXX` indexes
 self-mirror the `nvidia-*` runtime dependencies.
 
-Callpath: `scripts/bootstrap-local.sh` ->
-`scripts/install-worker-torch-wheels.sh <venv-dir>` -> pinned PyTorch index
-or default PyPI. The script detects the host, prints the plan line, then
-installs and verifies the pair before `worker/requirements.txt` fills the
-rest.
+Callpath: `scripts/bootstrap-local.sh` installs
+`worker/requirements.txt` (the always-on faster-whisper base) and then
+`scripts/install-worker-torch-wheels.sh <venv-dir>`. The picker detects
+the host, prints the plan line, installs and verifies the pinned pair, and
+installs `worker/requirements-diarization.txt` (pyannote.audio +
+matplotlib) - or, where no usable wheel exists, prints a notice and skips
+the entire diarization stack with exit 0.
 
 | OS | Arch | CUDA residence (NVIDIA) | Variant | Wheel index |
 |---|---|---|---|---|
 | macOS | arm64 | n/a | `pypi` | default PyPI (the only published macOS 2.8.0 wheels; CPU/MPS builds, arm64 only) |
+| macOS | x86_64 | n/a | `skip` | none - no macOS x86_64 2.8.0 wheel exists, so the diarization stack is not installed (notice printed, exit 0) |
 | Linux | x86_64 | none or driver CUDA < 12.6 | `cpu` | `download.pytorch.org/whl/cpu` |
 | Linux | x86_64 | driver CUDA >= 12.6 / 12.8 / 12.9 | `cu126` / `cu128` / `cu129` | `download.pytorch.org/whl/<variant>` |
 | Linux | aarch64 | JetPack wheels out of scope | `pypi` | default PyPI (CPU builds) |
+
+On Intel macOS the picker prints a notice naming the skipped stack
+(`torch`/`torchaudio`/`pyannote.audio`/`matplotlib`) and the bootstrap
+succeeds with the faster-whisper CPU path only: transcription is
+unaffected, and every job reports `diarizationStatus=degraded` -
+diarization never breaks a job or an install.
 
 An NVIDIA driver reporting CUDA below 12.6 (the torch 2.8 wheel floor)
 prints a notice and falls back to CPU wheels so the box keeps diarizing;

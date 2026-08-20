@@ -55,6 +55,7 @@ RUN --mount=type=secret,id=hf_token,required=false \
   && python3 -m pip install --no-cache-dir torch==2.8.0 torchaudio==2.8.0 \
        --index-url https://download.pytorch.org/whl/cpu \
   && python3 -m pip install --no-cache-dir -r /app/worker/requirements.txt \
+       -r /app/worker/requirements-diarization.txt \
   && if [ "${SUPERSCRIBER_PRELOAD_MODEL}" = "1" ]; then \
        SUPERSCRIBER_TRANSCRIBE_OFFLINE=0 \
        SUPERSCRIBER_TRANSCRIBE_ALLOW_RUNTIME_DOWNLOAD=1 \

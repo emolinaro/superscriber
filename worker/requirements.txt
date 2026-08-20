@@ -1,23 +1,11 @@
 # Install this to enable real local transcription in the Python worker.
 faster-whisper>=1.1.0
 
-# diarization-bundle (captain engine ruling 2026-08-20, option A):
-# pyannote speaker-diarization-3.1, vendored once per home and run fully
-# offline from the local byte cache.
-#
-# Pins explained:
-# - pyannote.audio 3.3.2 is the final 3.x release; it supports numpy 2 and
-#   current torch (earlier 3.x releases crash on numpy>=2 and python 3.13).
-# - torchaudio 2.9 removed set_audio_backend(), which pyannote 3.3.2 still
-#   calls at import time, so torch/torchaudio stay on 2.8.0.
-# - matplotlib is an undeclared import in pyannote.audio 3.3.mixtures task
-#   code (declared only starting 4.x); pinned here explicitly.
-# Host installs run the pinned torch pair through the platform/CUDA-aware
-# picker scripts/install-worker-torch-wheels.sh (callpath: bootstrap-local.sh
-# -> picker -> download.pytorch.org/whl/<variant> or PyPI; policy matrix in
-# docs/operators/diarization.md). Container builds pin the CPU variant in the
-# Dockerfile so no CUDA runtime lands in the image.
-torch==2.8.0
-torchaudio==2.8.0
-pyannote.audio==3.3.2
-matplotlib>=3.8
+# diarization-bundle (captain engine ruling 2026-08-20, option A): the
+# pyannote speaker-diarization-3.1 stack lives in
+# worker/requirements-diarization.txt and is installed by
+# scripts/install-worker-torch-wheels.sh (host lanes, self-classifying) or
+# the Dockerfile (container lanes). It is intentionally separate so hosts
+# without a usable torch 2.8.0 wheel (Intel macOS) skip the diarization
+# stack cleanly instead of failing the whole worker install; transcription
+# keeps working there and jobs report diarizationStatus=degraded.
