@@ -12,9 +12,11 @@ faster-whisper>=1.1.0
 #   calls at import time, so torch/torchaudio stay on 2.8.0.
 # - matplotlib is an undeclared import in pyannote.audio 3.3.mixtures task
 #   code (declared only starting 4.x); pinned here explicitly.
-# Container builds install the torch pair from the PyTorch CPU-wheel index
-# first (see the Dockerfile) so no CUDA runtime lands in the image; on macOS
-# the only published wheels are CPU builds, so the plain index is equivalent.
+# Host installs run the pinned torch pair through the platform/CUDA-aware
+# picker scripts/install-worker-torch-wheels.sh (callpath: bootstrap-local.sh
+# -> picker -> download.pytorch.org/whl/<variant> or PyPI; policy matrix in
+# docs/operators/diarization.md). Container builds pin the CPU variant in the
+# Dockerfile so no CUDA runtime lands in the image.
 torch==2.8.0
 torchaudio==2.8.0
 pyannote.audio==3.3.2

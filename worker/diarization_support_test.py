@@ -319,7 +319,17 @@ class OfflineBundleLoadTest(unittest.TestCase):
                 def __call__(self, name):
                     return f"device:{name}"
 
-            fake_torch = SimpleNamespace(device=FakeDeviceFactory())
+            class FakeTorchVersion:
+                pass
+
+            def record_safe_globals(globals_list):
+                captured["safe_globals"] = globals_list
+
+            fake_torch = SimpleNamespace(
+                device=FakeDeviceFactory(),
+                serialization=SimpleNamespace(add_safe_globals=record_safe_globals),
+                torch_version=SimpleNamespace(TorchVersion=FakeTorchVersion),
+            )
             parsed_config = {
                 "pipeline": {
                     "params": {
@@ -365,6 +375,220 @@ class OfflineBundleLoadTest(unittest.TestCase):
                 captured["instantiated"], {"segmentation": {"threshold": 0.444}}
             )
             self.assertEqual(captured["device"], "device:cpu")
+
+    def test_load_pipeline_allowlists_torch_version_global(self):
+        """Regression for the 2026-08-20 live-verification defect: torch 2.8's
+        weights_only=True default rejected the pinned checkpoints' TorchVersion
+        global (\"Weights only load failed ... add_safe_globals\") and every job
+        degraded to a single speaker. load_pipeline must allowlist that class
+        in-process before instantiating the pipeline."""
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            pinned = pins_dict()
+            pinned["parts"]["pipeline"]["files"][0]["sizeBytes"] = len(
+                b"version: 3.1.0\n"
+            )
+            bundle_dir = write_bundle(root, pinned)
+            (bundle_dir / "config.yaml").write_text("version: 3.1.0\n", encoding="utf8")
+
+            captured = {}
+
+            class FakePipeline:
+                def __init__(self, **kwargs):
+                    captured["kwargs"] = kwargs
+
+                def instantiate(self, params):
+                    pass
+
+                def to(self, device):
+                    pass
+
+            class FakeTorchVersion:
+                pass
+
+            fake_torch = SimpleNamespace(
+                device=lambda name: f"device:{name}",
+                serialization=SimpleNamespace(
+                    add_safe_globals=lambda g: captured.setdefault("safe_globals", g)
+                ),
+                torch_version=SimpleNamespace(TorchVersion=FakeTorchVersion),
+            )
+
+            with (
+                patch.object(diarization, "load_pins", return_value=pinned),
+                patch.dict(
+                    sys.modules,
+                    {
+                        "torch": fake_torch,
+                        "pyannote": SimpleNamespace(),
+                        "pyannote.audio": SimpleNamespace(),
+                        "pyannote.audio.pipelines": SimpleNamespace(
+                            SpeakerDiarization=FakePipeline
+                        ),
+                        "yaml": SimpleNamespace(safe_load=lambda text: {}),
+                    },
+                ),
+            ):
+                diarization.load_pipeline(root, "cpu")
+
+            self.assertEqual(captured["safe_globals"], [FakeTorchVersion])
+
+
+class VendoredLoadAndAttributionTest(unittest.TestCase):
+    """load_pipeline succeeds on the fixture bundle shape, then
+    apply_diarization over a synthetic two-cluster waveform emits distinct
+    speaker labels - the full vendored attribution path without pyannote."""
+
+    def test_vendored_load_plus_two_cluster_waveform_emits_distinct_labels(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            config_text = (
+                "version: 3.1.0\n"
+                "pipeline:\n"
+                "  name: pyannote.audio.pipelines.SpeakerDiarization\n"
+                "  params:\n"
+                "    segmentation: pyannote/segmentation-3.0\n"
+                "    embedding: pyannote/wespeaker-voxceleb-resnet34-LM\n"
+                "params:\n"
+                "  segmentation:\n"
+                "    threshold: 0.444\n"
+            )
+            pinned = pins_dict()
+            pinned["parts"]["pipeline"]["files"][0]["sizeBytes"] = len(
+                config_text.encode("utf8")
+            )
+            bundle_dir = write_bundle(root, pinned)
+            (bundle_dir / "config.yaml").write_text(config_text, encoding="utf8")
+
+            captured = {}
+
+            class FakeTorchVersion:
+                pass
+
+            class FakeTurn:
+                def __init__(self, start, end):
+                    self.start = start
+                    self.end = end
+
+            class FakeDiarization:
+                def __init__(self, runs):
+                    self._runs = runs
+
+                def itertracks(self, yield_label=False):
+                    for start, end, speaker in self._runs:
+                        yield (FakeTurn(start, end), 0, speaker)
+
+            class FakeTensor:
+                def __init__(self, values):
+                    self.values = list(values)
+
+                def unsqueeze(self, dim):
+                    return self
+
+            class FakeWaveform:
+                def __init__(self, samples):
+                    self.samples = list(samples)
+                    self.size = len(self.samples)
+
+            class FakePipeline:
+                """Toy two-cluster model: samples at/above 0.75 amplitude are
+                cluster B, below is cluster A, merged into contiguous turns."""
+
+                def __init__(self, **kwargs):
+                    captured["kwargs"] = kwargs
+
+                def instantiate(self, params):
+                    captured["instantiated"] = params
+
+                def to(self, device):
+                    captured["device"] = device
+
+                def __call__(self, batch):
+                    samples = batch["waveform"].values
+                    sample_rate = batch["sample_rate"]
+                    runs = []
+                    current = None
+                    run_start = 0
+                    for index, value in enumerate(samples):
+                        speaker = "SPEAKER_01" if abs(value) >= 0.75 else "SPEAKER_00"
+                        if speaker != current:
+                            if current is not None:
+                                runs.append((run_start / sample_rate, index / sample_rate, current))
+                            current, run_start = speaker, index
+                    runs.append((run_start / sample_rate, len(samples) / sample_rate, current))
+                    return FakeDiarization(runs)
+
+            # Synthetic two-cluster waveform: one second at amplitude 0.5
+            # (cluster A), then one second at amplitude 1.0 (cluster B).
+            samples = [0.5] * 16000 + [1.0] * 16000
+
+            def fake_decode_audio(path, sampling_rate=16000):
+                captured["decoded"] = path
+                return FakeWaveform(samples)
+
+            def fake_from_numpy(array):
+                return FakeTensor(array.samples)
+
+            fake_torch = SimpleNamespace(
+                device=lambda name: f"device:{name}",
+                serialization=SimpleNamespace(
+                    add_safe_globals=lambda g: captured.setdefault("safe_globals", g)
+                ),
+                torch_version=SimpleNamespace(TorchVersion=FakeTorchVersion),
+                from_numpy=fake_from_numpy,
+            )
+            fake_numpy = SimpleNamespace(
+                float32="float32",
+                ascontiguousarray=lambda array, dtype=None: array,
+            )
+
+            with (
+                patch.object(diarization, "load_pins", return_value=pinned),
+                patch.dict(
+                    sys.modules,
+                    {
+                        "yaml": SimpleNamespace(
+                            safe_load=lambda text: {
+                                "pipeline": {"params": {}},
+                                "params": {"segmentation": {"threshold": 0.444}},
+                            }
+                        ),
+                        "torch": fake_torch,
+                        "numpy": fake_numpy,
+                        "faster_whisper": SimpleNamespace(),
+                        "faster_whisper.audio": SimpleNamespace(
+                            decode_audio=fake_decode_audio
+                        ),
+                        "pyannote": SimpleNamespace(),
+                        "pyannote.audio": SimpleNamespace(),
+                        "pyannote.audio.pipelines": SimpleNamespace(
+                            SpeakerDiarization=FakePipeline
+                        ),
+                    },
+                ),
+            ):
+                config = SimpleNamespace(
+                    model_root=root,
+                    device="cpu",
+                    diarization_enabled=True,
+                )
+                labeled, status, note = diarization.apply_diarization(
+                    config,
+                    "/media/two-clusters.wav",
+                    [segment(0, 1000), segment(1000, 2000)],
+                )
+
+            # The vendored bundle validated, the load allowlisted the pinned
+            # checkpoint's TorchVersion global, and the two clusters landed as
+            # two distinct normalized speaker labels.
+            self.assertEqual(captured["safe_globals"], [FakeTorchVersion])
+            self.assertEqual(captured["decoded"], "/media/two-clusters.wav")
+            self.assertEqual(status, "available")
+            self.assertEqual(
+                [item["speakerLabel"] for item in labeled],
+                ["Speaker 1", "Speaker 2"],
+            )
+            self.assertIn("2 speakers", note)
 
 
 if __name__ == "__main__":

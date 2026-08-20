@@ -99,6 +99,14 @@ def load_pipeline(model_root: Path, device: str) -> Any:
     except Exception as exc:
         raise DiarizationUnavailable("pyannote.audio is not installed.") from exc
 
+    # torch >= 2.6 defaults its loader to weights_only=True, and the pinned
+    # pyannote checkpoints carry a torch.torch_version.TorchVersion global.
+    # The in-process allowlist keeps the weights_only safety model while
+    # accepting that class from our vendored, byte-pinned checkpoints; without
+    # it every pipeline load dies with "Weights only load failed ...
+    # add_safe_globals" and the job silently degrades to a single speaker.
+    torch.serialization.add_safe_globals([torch.torch_version.TorchVersion])
+
     root = bundle_root(model_root)
     config = _read_pipeline_config(root)
     pipeline_params = (

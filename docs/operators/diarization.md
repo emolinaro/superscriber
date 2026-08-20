@@ -6,6 +6,46 @@ pinned pyannote **speaker-diarization-3.1** bundle (captain engine ruling,
 model bytes live in the same model cache as the faster-whisper tiers and
 load from local files only (the worker runs with `HF_HUB_OFFLINE=1`).
 
+## Torch wheel selection (platform- and residence-aware)
+
+The pinned `torch==2.8.0`/`torchaudio==2.8.0` pair installs through a
+self-classifying dependency picker, per captain context corr=5b5415f96245d0fe
+and directive corr=0688a345e73914a8: the installer detects host hardware -
+OS + arch AND CUDA residence (NVIDIA) - at install time and picks the right
+wheel variant automatically. CPU lanes stay CPU, CUDA-capable runtimes get
+their CUDA wheel, macOS keeps its CPU/MPS build, and anything unrecognised
+falls back to CPU wheels with a printed notice. The operator never names a
+device: there is no manual `--device`/`--backend`-style toggle. A `plan:`
+line naming the variant, source, and detected hardware prints before any
+download. Wheels come from the pinned PyTorch index
+(`https://download.pytorch.org/whl/<variant>`); the `cuXXX` indexes
+self-mirror the `nvidia-*` runtime dependencies.
+
+Callpath: `scripts/bootstrap-local.sh` ->
+`scripts/install-worker-torch-wheels.sh <venv-dir>` -> pinned PyTorch index
+or default PyPI. The script detects the host, prints the plan line, then
+installs and verifies the pair before `worker/requirements.txt` fills the
+rest.
+
+| OS | Arch | CUDA residence (NVIDIA) | Variant | Wheel index |
+|---|---|---|---|---|
+| macOS | arm64 | n/a | `pypi` | default PyPI (the only published macOS 2.8.0 wheels; CPU/MPS builds, arm64 only) |
+| Linux | x86_64 | none or driver CUDA < 12.6 | `cpu` | `download.pytorch.org/whl/cpu` |
+| Linux | x86_64 | driver CUDA >= 12.6 / 12.8 / 12.9 | `cu126` / `cu128` / `cu129` | `download.pytorch.org/whl/<variant>` |
+| Linux | aarch64 | JetPack wheels out of scope | `pypi` | default PyPI (CPU builds) |
+
+An NVIDIA driver reporting CUDA below 12.6 (the torch 2.8 wheel floor)
+prints a notice and falls back to CPU wheels so the box keeps diarizing;
+upgrade the driver and the next install self-classifies onto the CUDA wheel
+- no flag needed. The appliance container image pins the `cpu` variant
+directly in the `Dockerfile` and stays CUDA-free.
+
+The picker is orthogonal to checkpoint loading: torch 2.8 defaults
+`weights_only=True` in every variant, and the worker allowlists the pinned
+checkpoints' `torch.torch_version.TorchVersion` global in-process before
+instantiating the pipeline (the 2026-08-20 fix for "Weights only load
+failed ... add_safe_globals"). That holds equally for CPU and CUDA wheels.
+
 ## What gets vendored
 
 | Part | Repository | Revision (commit SHA) | Files |

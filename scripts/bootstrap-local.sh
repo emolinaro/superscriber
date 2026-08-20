@@ -344,13 +344,11 @@ prepare_worker_venv() {
     python3 -m venv "${WORKER_VENV}"
     validate_worker_python_version "${WORKER_VENV}"
     log "installing worker dependencies from worker/requirements.txt"
-    # diarization-bundle: on Linux x86_64 the PyPI torch wheels drag CUDA
-    # runtimes into the venv; install the CPU wheels first from the PyTorch
-    # index (mirrors the Dockerfile), then let requirements.txt fill the rest.
-    if [[ "$(uname -s)" == "Linux" && "$(uname -m)" == "x86_64" ]]; then
-      "${WORKER_VENV}/bin/pip" install --quiet --disable-pip-version-check \
-        --index-url https://download.pytorch.org/whl/cpu torch==2.8.0 torchaudio==2.8.0
-    fi
+    # diarization-bundle: the pinned torch pair is installed first by the
+    # platform/CUDA-aware picker (CPU lanes stay CPU, NVIDIA residences get
+    # their CUDA wheel; see docs/operators/diarization.md). The container
+    # image pins the CPU variant directly in the Dockerfile.
+    "${REPO_ROOT}/scripts/install-worker-torch-wheels.sh" "${WORKER_VENV}"
     "${WORKER_VENV}/bin/pip" install --quiet --disable-pip-version-check -r "${REPO_ROOT}/worker/requirements.txt"
   fi
   validate_worker_venv "${WORKER_VENV}"
