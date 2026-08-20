@@ -3,7 +3,9 @@
    the case header, the media box, the transport controls, and the
    horizontal segment rail - is pinned: no browser-window scroll can move
    those blocks. Below the pinned zone the transcript segments list is the
-   ONLY vertical scrollport; the follow-scroll centers the active segment
+   ONLY vertical scrollport (sole exception: the changes-requested banner's
+   compact internal note scrollport, which lives in the pinned zone - see
+   changes-requested-banner below); the follow-scroll centers the active segment
    inside it with the first and final segments anchored at its block edges
    (natural scrollTo clamping, no artificial runways). The viewport keeps
    default overscroll behavior so wheel/touch chains outward at its edges
