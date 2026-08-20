@@ -38,6 +38,42 @@ def write_bundle(root: Path, pins: dict) -> Path:
     return bundle_dir
 
 
+class FakeTorchVersion:
+    pass
+
+
+class FakeProblem:
+    pass
+
+
+class FakeResolution:
+    pass
+
+
+class FakeSpecifications:
+    pass
+
+
+EXPECTED_SAFE_GLOBALS = [FakeTorchVersion, FakeSpecifications, FakeProblem, FakeResolution]
+
+FAKE_TASK_MODULE = SimpleNamespace(
+    Problem=FakeProblem, Resolution=FakeResolution, Specifications=FakeSpecifications
+)
+
+
+def fake_pyannote_modules(pipelines_module) -> dict:
+    """Stub sys.modules entries for the pyannote import surface the loader
+    touches: core.task for the allowlisted value classes, pipelines for the
+    SpeakerDiarization factory."""
+    return {
+        "pyannote": SimpleNamespace(),
+        "pyannote.audio": SimpleNamespace(),
+        "pyannote.audio.core": SimpleNamespace(),
+        "pyannote.audio.core.task": FAKE_TASK_MODULE,
+        "pyannote.audio.pipelines": pipelines_module,
+    }
+
+
 def pins_dict() -> dict:
     return {
         "bundleId": "pyannote-diarization-3.1",
@@ -426,9 +462,6 @@ class OfflineBundleLoadTest(unittest.TestCase):
                 def __call__(self, name):
                     return f"device:{name}"
 
-            class FakeTorchVersion:
-                pass
-
             def record_safe_globals(globals_list):
                 captured["safe_globals"] = globals_list
 
@@ -449,16 +482,15 @@ class OfflineBundleLoadTest(unittest.TestCase):
             }
             fake_yaml = SimpleNamespace(safe_load=lambda text: dict(parsed_config))
 
-            fake_pipelines = SimpleNamespace(SpeakerDiarization=FakePipeline)
             with (
                 patch.object(diarization, "load_pins", return_value=pinned),
                 patch.dict(
                     sys.modules,
                     {
                         "torch": fake_torch,
-                        "pyannote": SimpleNamespace(),
-                        "pyannote.audio": SimpleNamespace(),
-                        "pyannote.audio.pipelines": fake_pipelines,
+                        **fake_pyannote_modules(
+                            SimpleNamespace(SpeakerDiarization=FakePipeline)
+                        ),
                         "yaml": fake_yaml,
                     },
                 ),
@@ -482,13 +514,17 @@ class OfflineBundleLoadTest(unittest.TestCase):
                 captured["instantiated"], {"segmentation": {"threshold": 0.444}}
             )
             self.assertEqual(captured["device"], "device:cpu")
+            self.assertEqual(captured["safe_globals"], EXPECTED_SAFE_GLOBALS)
 
-    def test_load_pipeline_allowlists_torch_version_global(self):
+    def test_load_pipeline_allowlists_checkpoint_globals(self):
         """Regression for the 2026-08-20 live-verification defect: torch 2.8's
-        weights_only=True default rejected the pinned checkpoints' TorchVersion
-        global (\"Weights only load failed ... add_safe_globals\") and every job
-        degraded to a single speaker. load_pipeline must allowlist that class
-        in-process before instantiating the pipeline."""
+        weights_only=True default rejected the globals baked into the pinned
+        checkpoints (\"Weights only load failed ... add_safe_globals\") and
+        every job degraded to a single speaker: first TorchVersion and, as
+        the live retry proved, the pyannote value classes Specifications /
+        Problem / Resolution too. load_pipeline must allowlist exactly the
+        four globals enumerated from the vendored pickle streams before
+        instantiating the pipeline."""
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             pinned = pins_dict()
@@ -510,9 +546,6 @@ class OfflineBundleLoadTest(unittest.TestCase):
                 def to(self, device):
                     pass
 
-            class FakeTorchVersion:
-                pass
-
             fake_torch = SimpleNamespace(
                 device=lambda name: f"device:{name}",
                 serialization=SimpleNamespace(
@@ -527,10 +560,8 @@ class OfflineBundleLoadTest(unittest.TestCase):
                     sys.modules,
                     {
                         "torch": fake_torch,
-                        "pyannote": SimpleNamespace(),
-                        "pyannote.audio": SimpleNamespace(),
-                        "pyannote.audio.pipelines": SimpleNamespace(
-                            SpeakerDiarization=FakePipeline
+                        **fake_pyannote_modules(
+                            SimpleNamespace(SpeakerDiarization=FakePipeline)
                         ),
                         "yaml": SimpleNamespace(safe_load=lambda text: {}),
                     },
@@ -538,7 +569,7 @@ class OfflineBundleLoadTest(unittest.TestCase):
             ):
                 diarization.load_pipeline(root, "cpu")
 
-            self.assertEqual(captured["safe_globals"], [FakeTorchVersion])
+            self.assertEqual(captured["safe_globals"], EXPECTED_SAFE_GLOBALS)
 
 
 class VendoredLoadAndAttributionTest(unittest.TestCase):
@@ -568,9 +599,6 @@ class VendoredLoadAndAttributionTest(unittest.TestCase):
             (bundle_dir / "config.yaml").write_text(config_text, encoding="utf8")
 
             captured = {}
-
-            class FakeTorchVersion:
-                pass
 
             class FakeTurn:
                 def __init__(self, start, end):
@@ -666,10 +694,8 @@ class VendoredLoadAndAttributionTest(unittest.TestCase):
                         "faster_whisper.audio": SimpleNamespace(
                             decode_audio=fake_decode_audio
                         ),
-                        "pyannote": SimpleNamespace(),
-                        "pyannote.audio": SimpleNamespace(),
-                        "pyannote.audio.pipelines": SimpleNamespace(
-                            SpeakerDiarization=FakePipeline
+                        **fake_pyannote_modules(
+                            SimpleNamespace(SpeakerDiarization=FakePipeline)
                         ),
                     },
                 ),
@@ -685,10 +711,10 @@ class VendoredLoadAndAttributionTest(unittest.TestCase):
                     [segment(0, 1000), segment(1000, 2000)],
                 )
 
-            # The vendored bundle validated, the load allowlisted the pinned
-            # checkpoint's TorchVersion global, and the two clusters landed as
-            # two distinct normalized speaker labels.
-            self.assertEqual(captured["safe_globals"], [FakeTorchVersion])
+            # The vendored bundle validated, the load allowlisted every
+            # global the pinned checkpoints carry, and the two clusters
+            # landed as two distinct normalized speaker labels.
+            self.assertEqual(captured["safe_globals"], EXPECTED_SAFE_GLOBALS)
             self.assertEqual(captured["decoded"], "/media/two-clusters.wav")
             self.assertEqual(status, "available")
             self.assertEqual(
