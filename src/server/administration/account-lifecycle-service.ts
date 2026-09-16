@@ -206,6 +206,7 @@ export async function createAccountWithTemporaryPassword(
         role: input.role,
         passwordHash,
         isActive: true,
+        mustChangePassword: true,
         createdAt: now,
         updatedAt: now,
       })

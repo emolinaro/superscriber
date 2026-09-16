@@ -9,6 +9,7 @@ import {
   externalIdentities,
   users,
 } from "@/server/db/schema";
+import { completeMandatoryPasswordChange } from "@/server/auth/account-lifecycle";
 import { verifyLocalCredentials } from "@/server/auth/service";
 import {
   changeAccountLifecycle,
@@ -220,6 +221,7 @@ describe("governed account lifecycle", () => {
       .from(users)
       .where(eq(users.id, result.user.id))
       .get()!;
+    expect(row.mustChangePassword).toBe(true);
     expect(result.temporaryPassword.length).toBeGreaterThanOrEqual(24);
     expect(await compare(result.temporaryPassword, row.passwordHash!)).toBe(
       true,
@@ -252,6 +254,53 @@ describe("governed account lifecycle", () => {
       bundle.db.select().from(users).where(eq(users.id, row.id)).get()
         ?.isActive,
     ).toBe(false);
+  });
+
+  it("expires a temporary password through mandatory first sign-in change", async () => {
+    const result = await createAccountWithTemporaryPassword(
+      {
+        ...actor,
+        input: {
+          displayName: "New Account",
+          email: "temp@example.com",
+          role: "reviewer",
+          reason: "New colleague",
+        },
+      },
+      bundle,
+    );
+    bundle.db.insert(authSessions).values({
+      id: "session-temp",
+      userId: result.user.id,
+      authSource: "local",
+      authVersion: 1,
+      status: "active",
+      createdAt: now,
+      lastSeenAt: now,
+      idleExpiresAt: "2099-01-01T00:00:00.000Z",
+      absoluteExpiresAt: "2099-01-01T00:00:00.000Z",
+    }).run();
+
+    await completeMandatoryPasswordChange(
+      {
+        actorUserId: result.user.id,
+        actorAuthSessionId: "session-temp",
+        password: "new-account-secret",
+        confirmPassword: "new-account-secret",
+      },
+      bundle,
+    );
+
+    const row = bundle.db.select().from(users).where(eq(users.id, result.user.id)).get()!;
+    expect(row.mustChangePassword).toBe(false);
+    expect(await compare(result.temporaryPassword, row.passwordHash!)).toBe(false);
+    expect(await compare("new-account-secret", row.passwordHash!)).toBe(true);
+    expect(
+      await verifyLocalCredentials(
+        { email: "temp@example.com", password: result.temporaryPassword },
+        bundle.db,
+      ),
+    ).toBeNull();
   });
 });
 

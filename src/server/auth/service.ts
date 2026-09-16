@@ -22,6 +22,7 @@ function toAppUser(row: typeof users.$inferSelect): AppUser {
     displayName: row.displayName,
     role: row.role,
     isActive: row.isActive,
+    mustChangePassword: row.mustChangePassword,
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,
   };
@@ -33,6 +34,7 @@ function insertLocalUserRow(
     displayName: string;
     passwordHash: string;
     role: UserRole;
+    mustChangePassword?: boolean;
   },
   db: AppDatabase,
 ) {
@@ -46,6 +48,7 @@ function insertLocalUserRow(
       passwordHash: params.passwordHash,
       role: params.role,
       isActive: true,
+      mustChangePassword: params.mustChangePassword ?? false,
       createdAt: timestamp,
       updatedAt: timestamp,
     })

@@ -42,7 +42,7 @@ async function createGeneratedAccount(page: Page): Promise<LocalUser> {
   const password = dialog.getByLabel("Temporary password");
   await expect(password).toBeVisible();
   account.password = await password.inputValue();
-  await expect(dialog.getByText(/does not expire automatically/)).toBeVisible();
+  await expect(dialog.getByText(/expires at first sign-in/)).toBeVisible();
   await dialog.getByRole("button", { name: "Done" }).click();
   await expect(password).toHaveCount(0);
   return account;
@@ -78,6 +78,15 @@ test("generated account handoff, durable deactivation, explicit reactivation, an
   const userPage = await userContext.newPage();
   try {
     await login(userPage, account);
+    await expect(
+      userPage.getByRole("heading", { name: "Choose your password" }),
+    ).toBeVisible();
+    await userPage.getByLabel("New password").fill("reviewer-changed-secret");
+    await userPage
+      .getByLabel("Confirm password")
+      .fill("reviewer-changed-secret");
+    await userPage.getByRole("button", { name: "Change password" }).click();
+    account.password = "reviewer-changed-secret";
     await userPage.getByRole("button", { name: "Open account menu" }).click();
     await userPage
       .getByRole("link", { name: "Your account", exact: true })

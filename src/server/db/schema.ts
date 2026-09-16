@@ -75,6 +75,9 @@ export const users = sqliteTable(
     passwordHash: text("password_hash"),
     role: text("role", { enum: USER_ROLES }).$type<UserRole>().notNull(),
     isActive: integer("is_active", { mode: "boolean" }).notNull().default(true),
+    mustChangePassword: integer("must_change_password", { mode: "boolean" })
+      .notNull()
+      .default(false),
     // Null for legacy/operator deactivation. Only an exact self-reference permits sign-in revival.
     deactivatedByUserId: text("deactivated_by_user_id").references(
       (): AnySQLiteColumn => users.id,

@@ -267,6 +267,7 @@ export const authOptions: NextAuthOptions = {
           };
           session.authSource = validation.session.authSource;
           session.authSessionId = validation.session.id;
+          session.mustChangePassword = validation.user.mustChangePassword;
           return session;
         }
       }
@@ -275,6 +276,7 @@ export const authOptions: NextAuthOptions = {
       delete session.user;
       delete session.authSource;
       delete session.authSessionId;
+      delete session.mustChangePassword;
       return session;
     },
   },

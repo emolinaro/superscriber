@@ -109,6 +109,22 @@ describe("auth options session registry integration", () => {
     expect(resolved.user?.id).toBeUndefined();
   });
 
+  it("carries mandatory password-change state in the live session", async () => {
+    const user = await seedUser("reviewer");
+    const { sqlite } = getAppDbBundle();
+    const token = await signIn(user.id);
+
+    sqlite.prepare(`UPDATE users SET must_change_password = 1 WHERE id = ?`).run(user.id);
+
+    const refreshed = (await jwtCallback({ token } as never)) as JWT;
+    const resolved = (await sessionCallback({
+      session: { user: {}, expires: "x" } as never,
+      token: refreshed,
+    } as never)) as { mustChangePassword?: boolean };
+
+    expect(resolved.mustChangePassword).toBe(true);
+  });
+
   it("resolves the role live from the database on every session read", async () => {
     const user = await seedUser("reviewer");
     const { sqlite } = getAppDbBundle();

@@ -217,6 +217,13 @@ export async function changeAccountRoleAction(
       message: ACCOUNT_ROLE_CHANGE_COPY.AUTH_EXPIRED,
     };
   }
+  if (activeSession.mustChangePassword) {
+    return {
+      ok: false,
+      code: "AUTH_EXPIRED",
+      message: "Change your temporary password before continuing.",
+    };
+  }
   const principal = activeSession.user;
 
   const parsed = changeAccountRoleInputSchema.safeParse(input);
@@ -548,6 +555,13 @@ export async function adminResetAccountPasswordAction(
       message: "Your session expired. Sign in again.",
     };
   }
+  if (activeSession.mustChangePassword) {
+    return {
+      ok: false,
+      code: "AUTH_EXPIRED",
+      message: "Change your temporary password before continuing.",
+    };
+  }
   const principal = activeSession.user;
   if (input.expectedActorUserId !== principal.userId) {
     return {
@@ -651,6 +665,13 @@ export async function changeAccountLifecycleAction(
 ): Promise<CommandResult<ReturnType<typeof changeAccountLifecycle>>> {
   const session = await getActiveSession();
   if (!session) return authExpiredResult();
+  if (session.mustChangePassword) {
+    return {
+      ok: false,
+      code: "ACCESS_DENIED",
+      message: "Change your temporary password before continuing.",
+    };
+  }
   if (input.expectedActorUserId !== session.user.userId) {
     return {
       ok: false,
@@ -687,6 +708,13 @@ export async function createTemporaryAccountAction(
 > {
   const session = await getActiveSession();
   if (!session) return authExpiredResult();
+  if (session.mustChangePassword) {
+    return {
+      ok: false,
+      code: "ACCESS_DENIED",
+      message: "Change your temporary password before continuing.",
+    };
+  }
   if (input.expectedActorUserId !== session.user.userId) {
     return {
       ok: false,

@@ -113,6 +113,7 @@ describe("migrations", () => {
       { version: 12 },
       { version: 13 },
       { version: 14 },
+      { version: 15 },
     ]);
   });
 
@@ -518,6 +519,27 @@ describe("migrations", () => {
         )
         .get(),
     ).toEqual({ kind: null, technical: null });
+  });
+
+  it("adds the mandatory temporary-password-change flag to existing users", () => {
+    const sqlite = new Database(":memory:");
+    sqlite.pragma("foreign_keys = ON");
+    runMigrations(sqlite, 14);
+
+    sqlite.exec(`
+      INSERT INTO users (id, email, display_name, password_hash, role, is_active, created_at, updated_at)
+        VALUES ('user-temp', 'temp@example.com', 'Temp User', 'hash', 'reviewer', 1, '2026-08-01T00:00:00.000Z', '2026-08-01T00:00:00.000Z');
+    `);
+
+    runMigrations(sqlite, 15);
+
+    expect(
+      sqlite
+        .prepare("select must_change_password as mustChangePassword from users where id = 'user-temp'")
+        .get(),
+    ).toEqual({ mustChangePassword: 0 });
+
+    sqlite.close();
   });
 
   it("upgrades v9 with the password_reset_tokens table", () => {

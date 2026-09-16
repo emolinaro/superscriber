@@ -1,3 +1,4 @@
+import { compare, hash } from "bcryptjs";
 import { and, eq, ne, sql } from "drizzle-orm";
 import { revalidateActiveActor } from "@/server/administration/actor-authority";
 import { ensureAuditWorkspace } from "@/server/administration/account-role-service";
@@ -9,7 +10,7 @@ import {
   type AppDatabase,
   type AppDatabaseBundle,
 } from "@/server/db/client";
-import { appStateMeta, authControl, users } from "@/server/db/schema";
+import { appStateMeta, authControl, authSessions, users } from "@/server/db/schema";
 import { runImmediateGovernedTransaction } from "@/server/db/transaction";
 import { invalidateUserResetTokens } from "./password-reset-tokens";
 import { revokeUserSessions } from "./session-registry";
@@ -48,6 +49,92 @@ export function assertMayDeactivate(target: UserRow, db: AppDatabase) {
       "The last active administrator must remain active.",
     );
   }
+}
+
+export async function completeMandatoryPasswordChange(
+  params: {
+    actorUserId: string;
+    actorAuthSessionId: string;
+    password: string;
+    confirmPassword: string;
+  },
+  bundle: AppDatabaseBundle = getAppDbBundle(),
+) {
+  if (params.password.length < 10) {
+    throw new CasefileCommandError("VALIDATION_ERROR", "Use at least 10 characters.", {
+      password: "Use at least 10 characters.",
+    });
+  }
+  if (params.password.length > 200) {
+    throw new CasefileCommandError("VALIDATION_ERROR", "Passwords must stay under 200 characters.", {
+      password: "Passwords must stay under 200 characters.",
+    });
+  }
+  if (params.password !== params.confirmPassword) {
+    throw new CasefileCommandError("VALIDATION_ERROR", "Passwords must match.", {
+      confirmPassword: "Passwords must match.",
+    });
+  }
+  const current = bundle.db
+    .select({ passwordHash: users.passwordHash })
+    .from(users)
+    .where(eq(users.id, params.actorUserId))
+    .get();
+  if (current?.passwordHash && await compare(params.password, current.passwordHash)) {
+    throw new CasefileCommandError("VALIDATION_ERROR", "Choose a new password.", {
+      password: "Choose a new password.",
+    });
+  }
+  const passwordHash = await hash(params.password, 12);
+  return runImmediateGovernedTransaction((db, now) => {
+    const actor = revalidateActiveActor(db, params, now, () => {
+      throw new CasefileCommandError(
+        "ACCESS_DENIED",
+        "Your session is no longer active. Sign in again.",
+      );
+    });
+    if (!actor.mustChangePassword) {
+      throw new CasefileCommandError(
+        "VALIDATION_ERROR",
+        "This account does not need a temporary password change.",
+      );
+    }
+    db.update(users)
+      .set({ passwordHash, mustChangePassword: false, updatedAt: now })
+      .where(eq(users.id, actor.id))
+      .run();
+    db.update(authSessions)
+      .set({ status: "revoked", revokedAt: now, revokedReason: "password_changed" })
+      .where(
+        and(
+          eq(authSessions.userId, actor.id),
+          eq(authSessions.status, "active"),
+          ne(authSessions.id, params.actorAuthSessionId),
+        ),
+      )
+      .run();
+    invalidateUserResetTokens(
+      { userId: actor.id, reason: "user_reset_completed" },
+      db,
+      now,
+    );
+    insertAuditEvent(db, {
+      workspaceId: ensureAuditWorkspace(db).id,
+      recordingId: null,
+      actor: {
+        actorRole: actor.role,
+        actorUserId: actor.id,
+        actorDisplayName: actor.displayName,
+        effectiveRole: actor.role,
+        adminActionSessionId: null,
+      },
+      type: "account.password_reset",
+      detail: "Temporary password replaced at first sign-in.",
+      metadata: { targetUserId: actor.id, source: "temporary_password" },
+      createdAt: now,
+    });
+    return { userId: actor.id };
+  }, bundle);
 }
 
 export function deactivateOwnAccount(

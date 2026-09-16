@@ -75,7 +75,7 @@ it("discloses a generated password only until the confirmation closes", async ()
   expect(await screen.findByLabelText("Temporary password")).toHaveValue(
     "test-only-generated-secret",
   );
-  expect(screen.getByText(/does not expire automatically/i)).toBeVisible();
+  expect(screen.getByText(/expires at first sign-in/i)).toBeVisible();
   await user.click(screen.getByRole("button", { name: "Done" }));
   expect(onClose).toHaveBeenCalledOnce();
   expect(

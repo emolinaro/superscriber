@@ -16,6 +16,7 @@ export type ActiveSession = {
   user: Principal;
   expiresAt: string;
   authSessionId: string;
+  mustChangePassword: boolean;
   /** Present only for break-glass sessions (plan section 8.4). */
   emergency?: EmergencySessionContext;
 };
@@ -73,6 +74,7 @@ export async function getActiveSession(): Promise<ActiveSession | null> {
     },
     expiresAt: session.expires,
     authSessionId: session.authSessionId,
+    mustChangePassword: session.mustChangePassword === true,
     emergency:
       session.authSource === "break_glass"
         ? (readEmergencyContext(session.authSessionId) ?? undefined)
@@ -81,7 +83,9 @@ export async function getActiveSession(): Promise<ActiveSession | null> {
 }
 
 export async function getActivePrincipal() {
-  return (await getActiveSession())?.user ?? null;
+  const session = await getActiveSession();
+  if (!session || session.mustChangePassword) return null;
+  return session.user;
 }
 
 export async function getActiveRole(): Promise<UserRole | null> {
@@ -95,14 +99,24 @@ export async function getActiveRole(): Promise<UserRole | null> {
  * session-expired response. It never emits protected data or error internals.
  */
 export async function requireAuthorizedPrincipal(returnTo?: string) {
-  const principal = await getActivePrincipal();
-  if (!principal) {
+  const session = await getActiveSession();
+  if (!session) {
     redirect(
       `/?reason=session-expired&returnTo=${encodeURIComponent(sanitizeReturnTo(returnTo))}`,
     );
   }
 
-  return principal;
+  const sanitizedReturnTo = sanitizeReturnTo(returnTo);
+  if (
+    session.mustChangePassword &&
+    sanitizedReturnTo !== "/account/password-change"
+  ) {
+    redirect(
+      `/account/password-change?returnTo=${encodeURIComponent(sanitizedReturnTo)}`,
+    );
+  }
+
+  return session.user;
 }
 
 export async function requireActivePrincipal(returnTo?: string) {

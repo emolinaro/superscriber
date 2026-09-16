@@ -3,6 +3,7 @@ const mocks = vi.hoisted(() => ({
   session: vi.fn(),
   change: vi.fn(),
   create: vi.fn(),
+  completePasswordChange: vi.fn(),
   revalidate: vi.fn(),
 }));
 vi.mock("@/server/session", () => ({
@@ -13,7 +14,11 @@ vi.mock("@/server/administration/account-lifecycle-service", () => ({
   changeAccountLifecycle: mocks.change,
   createAccountWithTemporaryPassword: mocks.create,
 }));
+vi.mock("@/server/auth/account-lifecycle", () => ({
+  completeMandatoryPasswordChange: mocks.completePasswordChange,
+}));
 vi.mock("next/cache", () => ({ revalidatePath: mocks.revalidate }));
+import { completeMandatoryPasswordChangeAction } from "./account-lifecycle-actions";
 import {
   changeAccountLifecycleAction,
   createTemporaryAccountAction,
@@ -62,6 +67,32 @@ it("passes durable actor identity to lifecycle authority checks", async () => {
     input,
   });
 });
+it("changes a mandatory temporary password for the bound actor session", async () => {
+  mocks.completePasswordChange.mockResolvedValue({ userId: "admin" });
+
+  await expect(
+    completeMandatoryPasswordChangeAction({
+      expectedActorUserId: "other",
+      password: "new-account-secret",
+      confirmPassword: "new-account-secret",
+    }),
+  ).resolves.toMatchObject({ ok: false, code: "ACCESS_DENIED" });
+
+  await expect(
+    completeMandatoryPasswordChangeAction({
+      expectedActorUserId: "admin",
+      password: "new-account-secret",
+      confirmPassword: "new-account-secret",
+    }),
+  ).resolves.toMatchObject({ ok: true, data: { userId: "admin" } });
+  expect(mocks.completePasswordChange).toHaveBeenCalledWith({
+    actorUserId: "admin",
+    actorAuthSessionId: "session-admin",
+    password: "new-account-secret",
+    confirmPassword: "new-account-secret",
+  });
+});
+
 it("preserves the one-shot credential result when cache revalidation fails", async () => {
   mocks.create.mockResolvedValue({
     user: { id: "target" },

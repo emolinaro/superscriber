@@ -16,7 +16,7 @@ type Migration = {
   rebuildsTables?: boolean;
 };
 
-export const LATEST_SCHEMA_VERSION = 14;
+export const LATEST_SCHEMA_VERSION = 15;
 
 const migrations: Migration[] = [
   { version: 1, name: "baseline-appliance", up: createBaselineSchema },
@@ -69,6 +69,11 @@ const migrations: Migration[] = [
     version: 14,
     name: "account-deactivation-initiator",
     up: addAccountDeactivationInitiator,
+  },
+  {
+    version: 15,
+    name: "mandatory-temporary-password-change",
+    up: addMandatoryTemporaryPasswordChange,
   },
 ];
 
@@ -328,6 +333,7 @@ function createBaselineSchema(sqlite: Database.Database) {
       password_hash TEXT NOT NULL,
       role TEXT NOT NULL,
       is_active INTEGER NOT NULL DEFAULT 1,
+      must_change_password INTEGER NOT NULL DEFAULT 0,
       created_at TEXT NOT NULL,
       updated_at TEXT NOT NULL
     );
@@ -767,17 +773,18 @@ function addIdentityLinksSchema(sqlite: Database.Database) {
       password_hash TEXT,
       role TEXT NOT NULL,
       is_active INTEGER NOT NULL DEFAULT 1,
+      must_change_password INTEGER NOT NULL DEFAULT 0,
       auth_version INTEGER NOT NULL DEFAULT 1,
       created_at TEXT NOT NULL,
       updated_at TEXT NOT NULL
     );
 
     INSERT INTO users_new (
-      id, email, display_name, password_hash, role, is_active, auth_version,
-      created_at, updated_at
+      id, email, display_name, password_hash, role, is_active, must_change_password,
+      auth_version, created_at, updated_at
     )
-      SELECT id, email, display_name, password_hash, role, is_active, auth_version,
-        created_at, updated_at
+      SELECT id, email, display_name, password_hash, role, is_active, 0,
+        auth_version, created_at, updated_at
       FROM users;
 
     DROP TABLE users;
@@ -1173,5 +1180,14 @@ function addAccountDeactivationInitiator(sqlite: Database.Database) {
     "users",
     "deactivated_by_user_id",
     "deactivated_by_user_id TEXT REFERENCES users(id) ON DELETE RESTRICT",
+  );
+}
+
+function addMandatoryTemporaryPasswordChange(sqlite: Database.Database) {
+  ensureColumn(
+    sqlite,
+    "users",
+    "must_change_password",
+    "must_change_password INTEGER NOT NULL DEFAULT 0",
   );
 }

@@ -99,9 +99,8 @@ export function TemporaryAccountModal({
           <p role="status">Account created for {issued.displayName}.</p>
           <p className="body-copy">
             This password is shown once, until you close this dialog. Deliver it
-            directly to the account holder. It does not expire automatically and
-            a password change is not forced at first sign-in. Use the separate
-            password reset flow to replace it promptly.
+            directly to the account holder. It expires at first sign-in, when the
+            account holder must choose a new password before normal access.
           </p>
           <div className="field">
             <label htmlFor={`${id}-password`}>Temporary password</label>

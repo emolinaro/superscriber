@@ -106,6 +106,7 @@ export type AppUser = {
   displayName: string;
   role: UserRole;
   isActive: boolean;
+  mustChangePassword: boolean;
   createdAt: string;
   updatedAt: string;
 };

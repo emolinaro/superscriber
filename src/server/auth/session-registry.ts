@@ -47,6 +47,7 @@ export type SessionUserRecord = {
   displayName: string;
   role: UserRole;
   isActive: boolean;
+  mustChangePassword: boolean;
   authVersion: number;
 };
 
@@ -165,6 +166,7 @@ export function validateAuthSession(
           displayName: users.displayName,
           role: users.role,
           isActive: users.isActive,
+          mustChangePassword: users.mustChangePassword,
           authVersion: users.authVersion,
         },
       })

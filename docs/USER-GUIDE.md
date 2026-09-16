@@ -238,9 +238,9 @@ Choose **Create account > Use a generated temporary password** to create an
 account with an appliance-generated password. Enter the account details, role,
 and reason. Copy the password from the confirmation and deliver it directly
 to the account holder. Closing the dialog discards that disclosure. The password
-does not expire automatically and first sign-in does not force a change; use
-the separate password-reset flow to replace it promptly. If the handoff is lost,
-issue a password reset. You can also enter and confirm a password yourself.
+expires at first sign-in, when the account holder must choose a new password
+before normal access. If the handoff is lost, issue a password reset. You can
+also enter and confirm a password yourself.
 
 **Deactivate account** requires a reason, signs the account out everywhere,
 and blocks sign-in until an administrator explicitly chooses **Reactivate

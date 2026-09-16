@@ -214,6 +214,7 @@ describe("AccountsSection", () => {
           email: "reviewer2@example.com",
           role: "reviewer",
           isActive: true,
+          mustChangePassword: false,
           activeAssignmentCount: 0,
           createdAt: "2026-08-01T12:10:00.000Z",
           updatedAt: "2026-08-01T12:10:00.000Z",
