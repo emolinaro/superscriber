@@ -78,6 +78,7 @@ test("generated account handoff, durable deactivation, explicit reactivation, an
   const userPage = await userContext.newPage();
   try {
     await login(userPage, account);
+    await expect(userPage).toHaveURL(/\/account\/password-change/);
     await expect(
       userPage.getByRole("heading", { name: "Choose your password" }),
     ).toBeVisible();
