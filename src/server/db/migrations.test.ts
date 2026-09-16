@@ -94,7 +94,11 @@ describe("migrations", () => {
     runMigrations(sqlite);
     runMigrations(sqlite);
 
-    expect(sqlite.prepare("select version from schema_migrations order by version").all()).toEqual([
+    expect(
+      sqlite
+        .prepare("select version from schema_migrations order by version")
+        .all(),
+    ).toEqual([
       { version: 1 },
       { version: 2 },
       { version: 3 },
@@ -108,6 +112,7 @@ describe("migrations", () => {
       { version: 11 },
       { version: 12 },
       { version: 13 },
+      { version: 14 },
     ]);
   });
 
@@ -120,7 +125,11 @@ describe("migrations", () => {
     runMigrations(sqlite);
 
     expect(
-      sqlite.prepare("select id, auth_version as authVersion from users order by id").all(),
+      sqlite
+        .prepare(
+          "select id, auth_version as authVersion from users order by id",
+        )
+        .all(),
     ).toEqual([
       { id: "user-approver", authVersion: 1 },
       { id: "user-reviewer", authVersion: 1 },
@@ -136,7 +145,9 @@ describe("migrations", () => {
 
     // Re-running the migration must not duplicate the event.
     runMigrations(sqlite);
-    expect(sqlite.prepare("select count(*) as count from security_events").get()).toEqual({
+    expect(
+      sqlite.prepare("select count(*) as count from security_events").get(),
+    ).toEqual({
       count: 1,
     });
   });
@@ -146,7 +157,9 @@ describe("migrations", () => {
 
     runMigrations(sqlite);
 
-    expect(sqlite.prepare("select count(*) as count from security_events").get()).toEqual({
+    expect(
+      sqlite.prepare("select count(*) as count from security_events").get(),
+    ).toEqual({
       count: 0,
     });
   });
@@ -171,7 +184,11 @@ describe("migrations", () => {
     runMigrations(sqlite);
 
     expect(
-      sqlite.prepare("select id, password_hash as passwordHash, auth_version as authVersion from users").all(),
+      sqlite
+        .prepare(
+          "select id, password_hash as passwordHash, auth_version as authVersion from users",
+        )
+        .all(),
     ).toEqual([{ id: "user-a", passwordHash: "hash-a", authVersion: 1 }]);
     expect(
       sqlite.prepare("select id, user_id as userId from auth_sessions").all(),
@@ -254,7 +271,9 @@ describe("migrations", () => {
     runMigrations(sqlite);
 
     expect(
-      sqlite.prepare("select version from schema_migrations order by version").all(),
+      sqlite
+        .prepare("select version from schema_migrations order by version")
+        .all(),
     ).toContainEqual({ version: 8 });
     expect(
       sqlite
@@ -266,13 +285,17 @@ describe("migrations", () => {
 
     sqlite.prepare("update users set is_active = 0 where id = 'admin-2'").run();
     expect(() =>
-      sqlite.prepare("update users set role = 'reviewer' where id = 'admin-1'").run(),
+      sqlite
+        .prepare("update users set role = 'reviewer' where id = 'admin-1'")
+        .run(),
     ).toThrow(/at least one active administrator must remain/);
     sqlite.prepare("update users set is_active = 1 where id = 'admin-2'").run();
 
     expect(() =>
       sqlite
-        .prepare("update users set role = 'uploader' where id = 'assigned-reviewer'")
+        .prepare(
+          "update users set role = 'uploader' where id = 'assigned-reviewer'",
+        )
         .run(),
     ).toThrow(/active assignments must match the user's role/);
 
@@ -318,7 +341,9 @@ describe("migrations", () => {
     ).toThrow(/active assignment role must match the assigned user's role/);
 
     expect(() =>
-      sqlite.prepare("update users set role = 'reviewer' where id = 'repair-user'").run(),
+      sqlite
+        .prepare("update users set role = 'reviewer' where id = 'repair-user'")
+        .run(),
     ).not.toThrow();
     expect(sqlite.prepare("PRAGMA foreign_key_check").all()).toEqual([]);
     sqlite.close();
@@ -335,7 +360,11 @@ describe("migrations", () => {
 
     runMigrations(sqlite);
 
-    expect(sqlite.prepare("select status, end_reason from recording_assignments").all()).toContainEqual({
+    expect(
+      sqlite
+        .prepare("select status, end_reason from recording_assignments")
+        .all(),
+    ).toContainEqual({
       status: "completed",
       end_reason: "legacy_approved_backfill",
     });
@@ -367,7 +396,9 @@ describe("migrations", () => {
     runMigrations(sqlite);
 
     expect(
-      sqlite.prepare("select id, theme_preference as themePreference from users").all(),
+      sqlite
+        .prepare("select id, theme_preference as themePreference from users")
+        .all(),
     ).toEqual([{ id: "user-theme", themePreference: null }]);
 
     // The column accepts the three contract values and round-trips updates.
@@ -375,13 +406,21 @@ describe("migrations", () => {
       .prepare("update users set theme_preference = ? where id = ?")
       .run("dark", "user-theme");
     expect(
-      sqlite.prepare("select theme_preference as themePreference from users where id = 'user-theme'").get(),
+      sqlite
+        .prepare(
+          "select theme_preference as themePreference from users where id = 'user-theme'",
+        )
+        .get(),
     ).toEqual({ themePreference: "dark" });
 
     // Idempotent: re-running the full chain keeps the stored preference.
     runMigrations(sqlite);
     expect(
-      sqlite.prepare("select theme_preference as themePreference from users where id = 'user-theme'").get(),
+      sqlite
+        .prepare(
+          "select theme_preference as themePreference from users where id = 'user-theme'",
+        )
+        .get(),
     ).toEqual({ themePreference: "dark" });
     expect(sqlite.prepare("PRAGMA foreign_key_check").all()).toEqual([]);
   });
@@ -410,7 +449,9 @@ describe("migrations", () => {
     expect(columns.map((column) => column.name)).toContain("transcript_model");
 
     const rows = sqlite
-      .prepare("select id, transcript_model as transcriptModel from recordings where id = ?")
+      .prepare(
+        "select id, transcript_model as transcriptModel from recordings where id = ?",
+      )
       .all("pre-v12") as Array<{ id: string; transcriptModel: string | null }>;
     expect(rows).toEqual([{ id: "pre-v12", transcriptModel: null }]);
 
@@ -427,7 +468,9 @@ describe("migrations", () => {
     `);
     expect(
       sqlite
-        .prepare("select transcript_model from recordings where id = 'post-v12'")
+        .prepare(
+          "select transcript_model from recordings where id = 'post-v12'",
+        )
         .get(),
     ).toEqual({ transcript_model: "tiny" });
   });
@@ -462,7 +505,9 @@ describe("migrations", () => {
       .prepare(`PRAGMA table_info(transcript_jobs)`)
       .all() as Array<{ name: string }>;
     expect(columns.map((column) => column.name)).toContain("last_error_kind");
-    expect(columns.map((column) => column.name)).toContain("last_error_technical");
+    expect(columns.map((column) => column.name)).toContain(
+      "last_error_technical",
+    );
 
     // Legacy failures stay unclassified - the reviewer UI keeps its free-form
     // hint path only for rows the worker never classified.

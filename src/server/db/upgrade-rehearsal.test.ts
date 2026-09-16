@@ -1,6 +1,6 @@
 import Database from "better-sqlite3";
 import { describe, expect, it } from "vitest";
-import { runMigrations } from "@/server/db/migrations";
+import { LATEST_SCHEMA_VERSION, runMigrations } from "@/server/db/migrations";
 
 /**
  * Slice 8 qualification: every migration stage and the rollback rehearsal run
@@ -98,7 +98,9 @@ function seedProductionShapedV2(sqlite: Database.Database) {
 
 function invariants(sqlite: Database.Database) {
   const userIds = (
-    sqlite.prepare(`SELECT id FROM users ORDER BY id`).all() as Array<{ id: string }>
+    sqlite.prepare(`SELECT id FROM users ORDER BY id`).all() as Array<{
+      id: string;
+    }>
   ).map((row) => row.id);
   const referenceCounts: Record<string, number> = {};
   for (const column of [
@@ -113,17 +115,25 @@ function invariants(sqlite: Database.Database) {
   ]) {
     const [table, col] = column.split(".");
     referenceCounts[column] = (
-      sqlite.prepare(`SELECT COUNT(*) AS c FROM "${table}" WHERE "${col}" IS NOT NULL`).get() as {
+      sqlite
+        .prepare(
+          `SELECT COUNT(*) AS c FROM "${table}" WHERE "${col}" IS NOT NULL`,
+        )
+        .get() as {
         c: number;
       }
     ).c;
   }
-  const auditCount = (sqlite.prepare(`SELECT COUNT(*) AS c FROM audit_events`).get() as { c: number }).c;
+  const auditCount = (
+    sqlite.prepare(`SELECT COUNT(*) AS c FROM audit_events`).get() as {
+      c: number;
+    }
+  ).c;
   return { userIds, referenceCounts, auditCount };
 }
 
 describe("migration rehearsal on production-shaped copies", () => {
-  it("stages v2 through v13 preserving every id and reference count; backup stays restorable", () => {
+  it("stages v2 through the latest schema preserving every id and reference count; backup stays restorable", () => {
     const production = new Database(":memory:");
     production.pragma("foreign_keys = ON");
     runMigrations(production, 2);
@@ -134,7 +144,10 @@ describe("migration rehearsal on production-shaped copies", () => {
     const backup = Buffer.from(production.serialize());
 
     // Staged migration, one version at a time, as runbooks describe.
-    for (const stage of [3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13]) {
+    for (const stage of Array.from(
+      { length: LATEST_SCHEMA_VERSION - 2 },
+      (_, i) => i + 3,
+    )) {
       runMigrations(production, stage);
       expect(invariants(production)).toEqual(before);
       expect(production.prepare(`PRAGMA foreign_key_check`).all()).toEqual([]);
@@ -143,7 +156,10 @@ describe("migration rehearsal on production-shaped copies", () => {
     // The new auth surfaces exist, engine progress and model columns landed,
     // and the upgrade recorded its one-time event.
     expect(
-      production.prepare(`PRAGMA table_info(transcript_jobs)`).all().map((c) => (c as { name: string }).name),
+      production
+        .prepare(`PRAGMA table_info(transcript_jobs)`)
+        .all()
+        .map((c) => (c as { name: string }).name),
     ).toEqual(
       expect.arrayContaining([
         "transcribed_until_ms",
@@ -154,7 +170,10 @@ describe("migration rehearsal on production-shaped copies", () => {
       ]),
     );
     expect(
-      production.prepare(`PRAGMA table_info(recordings)`).all().map((c) => (c as { name: string }).name),
+      production
+        .prepare(`PRAGMA table_info(recordings)`)
+        .all()
+        .map((c) => (c as { name: string }).name),
     ).toContain("transcript_model");
     expect(
       production
@@ -167,10 +186,16 @@ describe("migration rehearsal on production-shaped copies", () => {
       { id: "job-live", state: "running", progressPercent: null },
     ]);
     expect(
-      production.prepare(`SELECT COUNT(*) AS c FROM security_events WHERE type = 'auth.legacy_sessions_invalidated'`).get(),
+      production
+        .prepare(
+          `SELECT COUNT(*) AS c FROM security_events WHERE type = 'auth.legacy_sessions_invalidated'`,
+        )
+        .get(),
     ).toEqual({ c: 1 });
     expect(
-      production.prepare(`SELECT auth_version FROM users WHERE id = 'user-admin'`).get(),
+      production
+        .prepare(`SELECT auth_version FROM users WHERE id = 'user-admin'`)
+        .get(),
     ).toEqual({ auth_version: 1 });
 
     // Rollback rehearsal: restore the backup; it must be readable at its
@@ -179,7 +204,11 @@ describe("migration rehearsal on production-shaped copies", () => {
     restored.pragma("foreign_keys = ON");
     expect(invariants(restored)).toEqual(before);
     expect(
-      restored.prepare(`SELECT COUNT(*) AS c FROM recording_assignments WHERE status = 'active'`).get(),
+      restored
+        .prepare(
+          `SELECT COUNT(*) AS c FROM recording_assignments WHERE status = 'active'`,
+        )
+        .get(),
     ).toEqual({ c: 1 });
 
     runMigrations(restored);
@@ -200,7 +229,7 @@ describe("migration rehearsal on production-shaped copies", () => {
         .prepare(`SELECT version FROM schema_migrations ORDER BY version`)
         .all()
         .map((row) => (row as { version: number }).version),
-    ).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13]);
+    ).toEqual(Array.from({ length: LATEST_SCHEMA_VERSION }, (_, i) => i + 1));
 
     production.close();
     restored.close();

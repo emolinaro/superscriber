@@ -1,5 +1,13 @@
 "use server";
 
+import type {
+  AccountLifecycleInput,
+  TemporaryAccountInput,
+} from "@/lib/account-lifecycle";
+import {
+  changeAccountLifecycle,
+  createAccountWithTemporaryPassword,
+} from "@/server/administration/account-lifecycle-service";
 import type { ZodError } from "zod";
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
@@ -118,7 +126,9 @@ function requireAdmin(role: UserRole) {
 }
 
 async function runAdministrationAction<T>(
-  operation: (principal: NonNullable<Awaited<ReturnType<typeof getActivePrincipal>>>) => Promise<T> | T,
+  operation: (
+    principal: NonNullable<Awaited<ReturnType<typeof getActivePrincipal>>>,
+  ) => Promise<T> | T,
   success: (value: T) => AdministrationMutationResult,
   notice: (value: T) => string,
 ): Promise<CommandResult<AdministrationMutationResult>> {
@@ -179,15 +189,19 @@ function roleChangeNotice(data: ChangeAccountRoleServiceSuccess) {
   return `${data.user.displayName}'s role changed from ${formatRoleLabel(data.oldRole)} to ${formatRoleLabel(data.newRole)}. Active sessions were revoked; they must sign in again.`;
 }
 
-function revalidateCommittedRoleChange(actorUserId: string, targetUserId: string) {
+function revalidateCommittedAccountChange(
+  actorUserId: string,
+  targetUserId: string,
+) {
   for (const path of ["/administration", "/workspace"]) {
     try {
       revalidatePath(path);
     } catch {
-      console.error(
-        "account role change committed but cache revalidation failed",
-        { actorUserId, targetUserId, path },
-      );
+      console.error("account change committed but cache revalidation failed", {
+        actorUserId,
+        targetUserId,
+        path,
+      });
     }
   }
 }
@@ -216,7 +230,7 @@ export async function changeAccountRoleAction(
       actorAuthSessionId: activeSession.authSessionId,
       input: parsed.data,
     });
-    revalidateCommittedRoleChange(principal.userId, parsed.data.userId);
+    revalidateCommittedAccountChange(principal.userId, parsed.data.userId);
     return { ok: true, data, notice: roleChangeNotice(data) };
   } catch (error) {
     if (error instanceof AccountRoleChangeServiceError) {
@@ -258,7 +272,8 @@ export async function createUserAction(
       }
 
       // confirmPassword is validated for the match and ends here.
-      const { confirmPassword: _confirmPassword, ...accountInput } = parsed.data;
+      const { confirmPassword: _confirmPassword, ...accountInput } =
+        parsed.data;
       return createLocalUser(accountInput);
     },
     (value) => ({
@@ -452,9 +467,11 @@ export async function resetLedgerAction(input: {
     revalidatePath("/administration");
     return {
       ok: true,
-      data: { href: "/administration?section=discipline", userId: principal.userId },
-      notice:
-        `Ledger reset complete: ${result.before.auditEvents} audit, ${result.before.decisionRows} decision, ${result.before.govActionSessions} governance sessions, ${result.before.endedAssignments} ended-assignment, and ${result.before.securityEvents} security rows cleared; one reset record survived and the pre-wipe export snapshot is on disk.`,
+      data: {
+        href: "/administration?section=discipline",
+        userId: principal.userId,
+      },
+      notice: `Ledger reset complete: ${result.before.auditEvents} audit, ${result.before.decisionRows} decision, ${result.before.govActionSessions} governance sessions, ${result.before.endedAssignments} ended-assignment, and ${result.before.securityEvents} security rows cleared; one reset record survived and the pre-wipe export snapshot is on disk.`,
     };
   } catch (error) {
     return toCommandResultError(error);
@@ -525,7 +542,11 @@ export async function adminResetAccountPasswordAction(
 ): Promise<AdminPasswordResetActionResult> {
   const activeSession = await getActiveSession();
   if (!activeSession) {
-    return { ok: false, code: "AUTH_EXPIRED", message: "Your session expired. Sign in again." };
+    return {
+      ok: false,
+      code: "AUTH_EXPIRED",
+      message: "Your session expired. Sign in again.",
+    };
   }
   const principal = activeSession.user;
   if (input.expectedActorUserId !== principal.userId) {
@@ -542,7 +563,9 @@ export async function adminResetAccountPasswordAction(
     return {
       ok: false,
       code: "VALIDATION_ERROR",
-      message: flat.fieldErrors.reason?.[0] ?? PASSWORD_RESET_ADMIN_COPY.VALIDATION_ERROR,
+      message:
+        flat.fieldErrors.reason?.[0] ??
+        PASSWORD_RESET_ADMIN_COPY.VALIDATION_ERROR,
       ...(flat.fieldErrors.reason?.[0]
         ? { fieldErrors: { reason: flat.fieldErrors.reason[0] } }
         : {}),
@@ -621,4 +644,71 @@ export async function adminResetAccountPasswordAction(
       actorMustRelogin: issued.actorMustRelogin,
     },
   };
+}
+
+export async function changeAccountLifecycleAction(
+  input: AccountLifecycleInput & { expectedActorUserId: string },
+): Promise<CommandResult<ReturnType<typeof changeAccountLifecycle>>> {
+  const session = await getActiveSession();
+  if (!session) return authExpiredResult();
+  if (input.expectedActorUserId !== session.user.userId) {
+    return {
+      ok: false,
+      code: "ACCESS_DENIED",
+      message: "The signed-in account changed. Reload this page.",
+    };
+  }
+  try {
+    const data = changeAccountLifecycle({
+      actorUserId: session.user.userId,
+      actorAuthSessionId: session.authSessionId,
+      input,
+    });
+    revalidateCommittedAccountChange(session.user.userId, data.userId);
+    return {
+      ok: true,
+      data,
+      notice:
+        input.action === "remove"
+          ? "Account access removed. Identity and history retained."
+          : input.action === "reactivate"
+            ? "Account reactivated. Previous sessions remain signed out."
+            : "Account deactivated and signed out everywhere. Only an administrator can reactivate it.",
+    };
+  } catch (error) {
+    return toCommandResultError(error);
+  }
+}
+
+export async function createTemporaryAccountAction(
+  input: TemporaryAccountInput & { expectedActorUserId: string },
+): Promise<
+  CommandResult<Awaited<ReturnType<typeof createAccountWithTemporaryPassword>>>
+> {
+  const session = await getActiveSession();
+  if (!session) return authExpiredResult();
+  if (input.expectedActorUserId !== session.user.userId) {
+    return {
+      ok: false,
+      code: "ACCESS_DENIED",
+      message: "The signed-in account changed. Reload this page.",
+    };
+  }
+  try {
+    const data = await createAccountWithTemporaryPassword({
+      actorUserId: session.user.userId,
+      actorAuthSessionId: session.authSessionId,
+      input,
+    });
+    // Cache errors cannot discard the only disclosure of a committed credential.
+    revalidateCommittedAccountChange(session.user.userId, data.user.id);
+    return {
+      ok: true,
+      data,
+      notice:
+        "Account created. Hand the temporary password to the account holder.",
+    };
+  } catch (error) {
+    return toCommandResultError(error);
+  }
 }

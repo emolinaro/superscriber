@@ -12,7 +12,11 @@ import {
   type AccountRoleChangeFailure,
   type ChangeAccountRoleInput,
 } from "@/lib/account-role-management";
-import { formatDateTimeIso, formatDateTimeUtc, formatRoleLabel } from "@/lib/format";
+import {
+  formatDateTimeIso,
+  formatDateTimeUtc,
+  formatRoleLabel,
+} from "@/lib/format";
 import type { AccountDirectoryEntry } from "@/server/access/service";
 import type { AdministrationAccountsViewModel } from "@/server/administration/service";
 import {
@@ -34,11 +38,21 @@ import {
 import { AccountPasswordResetModal } from "./account-password-reset";
 import { adminResetAccountPasswordAction } from "@/server/actions/administration-actions";
 
+import { AccountLifecycleModal } from "./account-lifecycle";
+import { TemporaryAccountModal } from "./temporary-account";
+import {
+  ACCOUNT_LIFECYCLE_LABELS,
+  type AccountLifecycleInput,
+} from "@/lib/account-lifecycle";
+
 const FIELD_CONFIG = {
   displayName: { id: "account-display-name", label: "Name" },
   email: { id: "account-email", label: "Email" },
   password: { id: "account-password", label: "Password" },
-  confirmPassword: { id: "account-confirm-password", label: "Confirm password" },
+  confirmPassword: {
+    id: "account-confirm-password",
+    label: "Confirm password",
+  },
   role: { id: "account-role", label: "Role" },
 } as const;
 
@@ -76,6 +90,7 @@ function toAccountRow(user: AccountDirectoryEntry): AccountRow {
     email: user.email,
     role: user.role,
     roleLabel: formatRoleLabel(user.role),
+    isActive: user.isActive,
     activeAssignmentCount: user.activeAssignmentCount,
     activeAssignments: { reviewer: 0, approver: 0 },
     hasActiveOidcIdentity: false,
@@ -93,7 +108,10 @@ function prependAccountRow(user: AccountRow, rows: AccountRow[]) {
 
 function mergeAccountRows(modelUsers: AccountRow[], addedUsers: AccountRow[]) {
   const addedUserIds = new Set(addedUsers.map((user) => user.id));
-  return [...addedUsers, ...modelUsers.filter((user) => !addedUserIds.has(user.id))];
+  return [
+    ...addedUsers,
+    ...modelUsers.filter((user) => !addedUserIds.has(user.id)),
+  ];
 }
 
 const defaultNavigateToSignIn = (href: string) => window.location.assign(href);
@@ -121,7 +139,9 @@ export function AccountsSection({
   const [open, setOpen] = useState(false);
   const [pending, setPending] = useState(false);
   const [values, setValues] = useState<AccountValues>(emptyValues());
-  const [fieldErrors, setFieldErrors] = useState<Partial<Record<FieldName, string>>>({});
+  const [fieldErrors, setFieldErrors] = useState<
+    Partial<Record<FieldName, string>>
+  >({});
   const [formError, setFormError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [focusUserId, setFocusUserId] = useState<string | null>(null);
@@ -132,7 +152,17 @@ export function AccountsSection({
   const [roleOverrides, setRoleOverrides] = useState<
     Partial<Record<string, UserRole>>
   >({});
-  const [pendingRoleUserId, setPendingRoleUserId] = useState<string | null>(null);
+  const [pendingRoleUserId, setPendingRoleUserId] = useState<string | null>(
+    null,
+  );
+  const [temporaryCreateOpen, setTemporaryCreateOpen] = useState(false);
+  const [lifecycleTarget, setLifecycleTarget] = useState<{
+    user: AccountRow;
+    kind: AccountLifecycleInput["action"];
+  } | null>(null);
+  const [activeOverrides, setActiveOverrides] = useState<
+    Record<string, boolean>
+  >({});
   const [resetTargetId, setResetTargetId] = useState<string | null>(null);
   const [roleFocusRequest, setRoleFocusRequest] = useState<{
     userId: string;
@@ -141,10 +171,22 @@ export function AccountsSection({
   const queryRef = useRef(model.query);
   const confirmPasswordRef = useRef<HTMLInputElement>(null);
 
+  useEffect(() => {
+    if (phoneSafetyMode) {
+      setTemporaryCreateOpen(false);
+      setLifecycleTarget(null);
+    }
+  }, [phoneSafetyMode]);
+  useEffect(() => {
+    setActiveOverrides({});
+  }, [model.users]);
+
   const summaryErrors = useMemo(
     () =>
       (Object.entries(fieldErrors) as Array<[FieldName, string | undefined]>)
-        .filter(([, message]) => typeof message === "string" && Boolean(message))
+        .filter(
+          ([, message]) => typeof message === "string" && Boolean(message),
+        )
         .map(([field, message]) => ({
           fieldId: FIELD_CONFIG[field].id,
           label: FIELD_CONFIG[field].label,
@@ -166,18 +208,23 @@ export function AccountsSection({
       return;
     }
 
-    setAddedUsers((current) => current.filter((user) => !model.users.some((modelUser) => modelUser.id === user.id)));
+    setAddedUsers((current) =>
+      current.filter(
+        (user) => !model.users.some((modelUser) => modelUser.id === user.id),
+      ),
+    );
   }, [model.query, model.users]);
 
   const users = useMemo(
     () =>
       mergeAccountRows(model.users, addedUsers).map((user) => {
+        user = { ...user, isActive: activeOverrides[user.id] ?? user.isActive };
         const role = roleOverrides[user.id];
         return role
           ? { ...user, role, roleLabel: formatRoleLabel(role) }
           : user;
       }),
-    [addedUsers, model.users, roleOverrides],
+    [addedUsers, model.users, roleOverrides, activeOverrides],
   );
 
   useEffect(() => {
@@ -224,7 +271,8 @@ export function AccountsSection({
         (element) => element.dataset.accountUserId === roleFocusRequest.userId,
       );
       const target =
-        matches.find((element) => element.getClientRects().length > 0) ?? matches[0];
+        matches.find((element) => element.getClientRects().length > 0) ??
+        matches[0];
       if (target) {
         target.focus();
       }
@@ -277,7 +325,8 @@ export function AccountsSection({
   // state that rides along in CreateUserInput so the server re-checks it, but
   // nothing beyond the match validation ever consumes it.
   const passwordsMismatch =
-    values.confirmPassword.length > 0 && values.password !== values.confirmPassword;
+    values.confirmPassword.length > 0 &&
+    values.password !== values.confirmPassword;
   const confirmPasswordError = passwordsMismatch
     ? PASSWORD_MISMATCH_MESSAGE
     : fieldErrors.confirmPassword;
@@ -495,7 +544,9 @@ export function AccountsSection({
           delete next[user.id];
           return next;
         });
-        setNotice(`${user.displayName}'s role is now ${formatRoleLabel(result.currentRole)}.`);
+        setNotice(
+          `${user.displayName}'s role is now ${formatRoleLabel(result.currentRole)}.`,
+        );
         setRoleFocusRequest({ userId: user.id, target: "select" });
       } else {
         setRoleFailure(user.id, state, result, "alert");
@@ -535,14 +586,18 @@ export function AccountsSection({
     try {
       const result = await createUserAction(values);
       if (!result.ok) {
-        setFieldErrors((result.fieldErrors ?? {}) as Partial<Record<FieldName, string>>);
+        setFieldErrors(
+          (result.fieldErrors ?? {}) as Partial<Record<FieldName, string>>,
+        );
         setFormError(result.fieldErrors ? null : result.message);
         return;
       }
 
       const createdUser = result.data.user;
       if (createdUser) {
-        setAddedUsers((current) => prependAccountRow(toAccountRow(createdUser), current));
+        setAddedUsers((current) =>
+          prependAccountRow(toAccountRow(createdUser), current),
+        );
       }
       setValues(emptyValues());
       setFieldErrors({});
@@ -556,8 +611,50 @@ export function AccountsSection({
     }
   }
 
+  function lifecycleControls(user: AccountRow) {
+    const protection = user.isBreakGlassAdministrator
+      ? "Transfer the break-glass designation first."
+      : user.isSoleActiveAdministrator
+        ? "The last active administrator must remain active."
+        : user.id === model.currentUserId
+          ? "Another administrator must manage your account lifecycle."
+          : null;
+    return (
+      <div className="stack-tight account-lifecycle-controls">
+        <span className="status-badge">
+          {user.isActive ? "Active" : "Deactivated"}
+        </span>
+        {!phoneSafetyMode ? (
+          <>
+            <div className="button-row">
+              {(
+                [user.isActive ? "deactivate" : "reactivate", "remove"] as const
+              ).map((kind) => (
+                <button
+                  className="button button-secondary interactive-target"
+                  type="button"
+                  key={kind}
+                  disabled={
+                    pending || Boolean(pendingRoleUserId) || Boolean(protection)
+                  }
+                  onClick={() => setLifecycleTarget({ user, kind })}
+                >
+                  {ACCOUNT_LIFECYCLE_LABELS[kind]}
+                </button>
+              ))}
+            </div>
+            {protection ? <small>{protection}</small> : null}
+          </>
+        ) : null}
+      </div>
+    );
+  }
+
   return (
-    <section className="panel panel-strong administration-section stack" aria-labelledby="accounts-heading">
+    <section
+      className="panel panel-strong administration-section stack"
+      aria-labelledby="accounts-heading"
+    >
       <div className="panel-inner stack administration-section__body">
         <div className="administration-section__header">
           <div className="stack-tight">
@@ -566,7 +663,8 @@ export function AccountsSection({
               Institutional accounts
             </h2>
             <p className="body-copy">
-              Review local users, exact role facts, and governed assignment counts.
+              Review local users, exact role facts, and governed assignment
+              counts.
             </p>
           </div>
           {!phoneSafetyMode ? (
@@ -591,7 +689,11 @@ export function AccountsSection({
           </p>
         ) : null}
 
-        <form action="/administration" className="administration-search" method="get">
+        <form
+          action="/administration"
+          className="administration-search"
+          method="get"
+        >
           <input name="section" type="hidden" value="accounts" />
           <label className="field" htmlFor="accounts-query">
             <span className="field-label">Search accounts</span>
@@ -603,13 +705,16 @@ export function AccountsSection({
               type="search"
             />
           </label>
-          <button className="button button-secondary interactive-target" type="submit">
+          <button
+            className="button button-secondary interactive-target"
+            type="submit"
+          >
             Search
           </button>
         </form>
 
         <div className="administration-table-wrap">
-          <table className="administration-table">
+          <table className="administration-table administration-table--accounts">
             <thead>
               <tr>
                 {model.columns.map((column) => (
@@ -618,6 +723,7 @@ export function AccountsSection({
                   </th>
                 ))}
                 <th scope="col">Password</th>
+                <th scope="col">Account state</th>
               </tr>
             </thead>
             <tbody>
@@ -634,10 +740,16 @@ export function AccountsSection({
                       user.roleLabel
                     ) : (
                       <AccountRoleEditor
-                        mutationsDisabled={pending || Boolean(pendingRoleUserId)}
+                        mutationsDisabled={
+                          pending || Boolean(pendingRoleUserId)
+                        }
                         onCancel={() => cancelRoleChange(user.id)}
-                        onReasonChange={(reason) => changeRoleReason(user, reason)}
-                        onSelectedRoleChange={(role) => changeSelectedRole(user, role)}
+                        onReasonChange={(reason) =>
+                          changeRoleReason(user, reason)
+                        }
+                        onSelectedRoleChange={(role) =>
+                          changeSelectedRole(user, role)
+                        }
                         onSubmit={() => void submitRoleChange(user)}
                         presentationId={`table-${user.id}`}
                         state={roleStateFor(user)}
@@ -647,7 +759,9 @@ export function AccountsSection({
                   </td>
                   <td>{user.activeAssignmentCount}</td>
                   <td>
-                    <time dateTime={user.createdAtIso}>{user.createdAtLabel}</time>
+                    <time dateTime={user.createdAtIso}>
+                      {user.createdAtLabel}
+                    </time>
                   </td>
                   <td>
                     {phoneSafetyMode ? null : (
@@ -661,6 +775,7 @@ export function AccountsSection({
                       </button>
                     )}
                   </td>
+                  <td>{lifecycleControls(user)}</td>
                 </tr>
               ))}
             </tbody>
@@ -684,10 +799,16 @@ export function AccountsSection({
                         user.roleLabel
                       ) : (
                         <AccountRoleEditor
-                          mutationsDisabled={pending || Boolean(pendingRoleUserId)}
+                          mutationsDisabled={
+                            pending || Boolean(pendingRoleUserId)
+                          }
                           onCancel={() => cancelRoleChange(user.id)}
-                          onReasonChange={(reason) => changeRoleReason(user, reason)}
-                          onSelectedRoleChange={(role) => changeSelectedRole(user, role)}
+                          onReasonChange={(reason) =>
+                            changeRoleReason(user, reason)
+                          }
+                          onSelectedRoleChange={(role) =>
+                            changeSelectedRole(user, role)
+                          }
                           onSubmit={() => void submitRoleChange(user)}
                           presentationId={`card-${user.id}`}
                           state={roleStateFor(user)}
@@ -703,10 +824,13 @@ export function AccountsSection({
                   <div>
                     <dt>Created</dt>
                     <dd>
-                      <time dateTime={user.createdAtIso}>{user.createdAtLabel}</time>
+                      <time dateTime={user.createdAtIso}>
+                        {user.createdAtLabel}
+                      </time>
                     </dd>
                   </div>
                 </dl>
+                {lifecycleControls(user)}
                 {phoneSafetyMode ? null : (
                   <button
                     className="button button-secondary interactive-target"
@@ -723,12 +847,42 @@ export function AccountsSection({
         </ul>
       </div>
 
+      {lifecycleTarget && !phoneSafetyMode ? (
+        <AccountLifecycleModal
+          account={lifecycleTarget.user}
+          kind={lifecycleTarget.kind}
+          currentUserId={model.currentUserId}
+          onClose={() => setLifecycleTarget(null)}
+          onChanged={(isActive, message) => {
+            setActiveOverrides((current) => ({
+              ...current,
+              [lifecycleTarget.user.id]: isActive,
+            }));
+            setNotice(message);
+            router.refresh();
+          }}
+        />
+      ) : null}
+      {temporaryCreateOpen && !phoneSafetyMode ? (
+        <TemporaryAccountModal
+          currentUserId={model.currentUserId}
+          onClose={() => setTemporaryCreateOpen(false)}
+          onCreated={(user) => {
+            setAddedUsers((current) =>
+              prependAccountRow(toAccountRow(user), current),
+            );
+            router.refresh();
+          }}
+        />
+      ) : null}
+
       {resetTargetId ? (
         <AccountPasswordResetModal
           account={{
             id: resetTargetId,
             displayName:
-              users.find((user) => user.id === resetTargetId)?.displayName ?? "",
+              users.find((user) => user.id === resetTargetId)?.displayName ??
+              "",
           }}
           action={adminResetAccountPasswordAction}
           currentUserId={model.currentUserId}
@@ -745,6 +899,17 @@ export function AccountsSection({
         surfaceClassName="administration-drawer administration-drawer--compact"
         title="Create local account"
       >
+        <button
+          className="button button-secondary"
+          type="button"
+          disabled={pending}
+          onClick={() => {
+            setOpen(false);
+            setTemporaryCreateOpen(true);
+          }}
+        >
+          Use a generated temporary password
+        </button>
         <ErrorSummary errors={summaryErrors} />
 
         <form
@@ -767,7 +932,10 @@ export function AccountsSection({
           onSubmit={(event) => void submitAccount(event)}
         >
           <div className="field">
-            <label className="field-label" htmlFor={FIELD_CONFIG.displayName.id}>
+            <label
+              className="field-label"
+              htmlFor={FIELD_CONFIG.displayName.id}
+            >
               Name
             </label>
             <input
@@ -775,7 +943,9 @@ export function AccountsSection({
               aria-invalid={fieldErrors.displayName ? true : undefined}
               id={FIELD_CONFIG.displayName.id}
               name="displayName"
-              onChange={(event) => updateValue("displayName", event.target.value)}
+              onChange={(event) =>
+                updateValue("displayName", event.target.value)
+              }
               required
               type="text"
               value={values.displayName}
@@ -814,7 +984,9 @@ export function AccountsSection({
             </label>
             <input
               aria-describedby={describedBy("password")}
-              aria-invalid={fieldErrors.password || passwordsMismatch ? true : undefined}
+              aria-invalid={
+                fieldErrors.password || passwordsMismatch ? true : undefined
+              }
               id={FIELD_CONFIG.password.id}
               name="password"
               onChange={(event) => updateValue("password", event.target.value)}
@@ -830,7 +1002,10 @@ export function AccountsSection({
           </div>
 
           <div className="field">
-            <label className="field-label" htmlFor={FIELD_CONFIG.confirmPassword.id}>
+            <label
+              className="field-label"
+              htmlFor={FIELD_CONFIG.confirmPassword.id}
+            >
               {FIELD_CONFIG.confirmPassword.label}
             </label>
             <input
@@ -839,7 +1014,9 @@ export function AccountsSection({
               autoComplete="new-password"
               id={FIELD_CONFIG.confirmPassword.id}
               name="confirmPassword"
-              onChange={(event) => updateValue("confirmPassword", event.target.value)}
+              onChange={(event) =>
+                updateValue("confirmPassword", event.target.value)
+              }
               ref={confirmPasswordRef}
               required
               type="password"
@@ -896,7 +1073,12 @@ export function AccountsSection({
           </button>
 
           <div className="button-row administration-drawer__actions">
-            <button className="button button-secondary" disabled={pending} onClick={closeDrawer} type="button">
+            <button
+              className="button button-secondary"
+              disabled={pending}
+              onClick={closeDrawer}
+              type="button"
+            >
               Close
             </button>
           </div>

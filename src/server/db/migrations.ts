@@ -1,5 +1,8 @@
 import Database from "better-sqlite3";
-import { LEGACY_AUDIT_METADATA, serializeAuditMetadata } from "@/server/db/mappers";
+import {
+  LEGACY_AUDIT_METADATA,
+  serializeAuditMetadata,
+} from "@/server/db/mappers";
 
 type Migration = {
   version: number;
@@ -13,29 +16,65 @@ type Migration = {
   rebuildsTables?: boolean;
 };
 
-export const LATEST_SCHEMA_VERSION = 13;
+export const LATEST_SCHEMA_VERSION = 14;
 
 const migrations: Migration[] = [
   { version: 1, name: "baseline-appliance", up: createBaselineSchema },
   { version: 2, name: "governed-casefile", up: addGovernedCasefileSchema },
-  { version: 3, name: "auth-session-registry", up: addAuthSessionRegistrySchema },
-  { version: 4, name: "identity-links", up: addIdentityLinksSchema, rebuildsTables: true },
-  { version: 5, name: "oidc-backchannel-replays", up: addOidcBackchannelReplaySchema },
+  {
+    version: 3,
+    name: "auth-session-registry",
+    up: addAuthSessionRegistrySchema,
+  },
+  {
+    version: 4,
+    name: "identity-links",
+    up: addIdentityLinksSchema,
+    rebuildsTables: true,
+  },
+  {
+    version: 5,
+    name: "oidc-backchannel-replays",
+    up: addOidcBackchannelReplaySchema,
+  },
   { version: 6, name: "break-glass-controls", up: addBreakGlassControlsSchema },
-  { version: 7, name: "break-glass-ceremonies", up: addBreakGlassCeremoniesSchema },
+  {
+    version: 7,
+    name: "break-glass-ceremonies",
+    up: addBreakGlassCeremoniesSchema,
+  },
   { version: 8, name: "account-role-guards", up: addAccountRoleGuards },
-  { version: 9, name: "user-theme-preference", up: addUserThemePreferenceSchema },
-  { version: 10, name: "password-reset-tokens", up: addPasswordResetTokensSchema },
-  { version: 11, name: "transcript-job-engine-progress", up: addTranscriptJobEngineProgressSchema },
+  {
+    version: 9,
+    name: "user-theme-preference",
+    up: addUserThemePreferenceSchema,
+  },
+  {
+    version: 10,
+    name: "password-reset-tokens",
+    up: addPasswordResetTokensSchema,
+  },
+  {
+    version: 11,
+    name: "transcript-job-engine-progress",
+    up: addTranscriptJobEngineProgressSchema,
+  },
   { version: 12, name: "transcript-model", up: addTranscriptModelSchema },
   {
     version: 13,
     name: "transcript-job-failure-classification",
     up: addTranscriptJobFailureClassificationSchema,
   },
+  {
+    version: 14,
+    name: "account-deactivation-initiator",
+    up: addAccountDeactivationInitiator,
+  },
 ];
 
-const LEGACY_AUDIT_METADATA_JSON = serializeAuditMetadata(LEGACY_AUDIT_METADATA);
+const LEGACY_AUDIT_METADATA_JSON = serializeAuditMetadata(
+  LEGACY_AUDIT_METADATA,
+);
 
 function nowIso() {
   return new Date().toISOString();
@@ -53,7 +92,11 @@ function tableColumns(sqlite: Database.Database, tableName: string) {
   return new Set(rows.map((row) => row.name));
 }
 
-function hasColumn(sqlite: Database.Database, tableName: string, columnName: string) {
+function hasColumn(
+  sqlite: Database.Database,
+  tableName: string,
+  columnName: string,
+) {
   return tableColumns(sqlite, tableName).has(columnName);
 }
 
@@ -358,7 +401,12 @@ function addGovernedCasefileSchema(sqlite: Database.Database) {
     "actor_user_id",
     "actor_user_id TEXT REFERENCES users(id) ON DELETE SET NULL",
   );
-  ensureColumn(sqlite, "approvals", "actor_display_name", "actor_display_name TEXT");
+  ensureColumn(
+    sqlite,
+    "approvals",
+    "actor_display_name",
+    "actor_display_name TEXT",
+  );
   ensureColumn(sqlite, "approvals", "effective_role", "effective_role TEXT");
   ensureColumn(
     sqlite,
@@ -372,7 +420,12 @@ function addGovernedCasefileSchema(sqlite: Database.Database) {
     "actor_user_id",
     "actor_user_id TEXT REFERENCES users(id) ON DELETE SET NULL",
   );
-  ensureColumn(sqlite, "audit_events", "actor_display_name", "actor_display_name TEXT");
+  ensureColumn(
+    sqlite,
+    "audit_events",
+    "actor_display_name",
+    "actor_display_name TEXT",
+  );
   ensureColumn(sqlite, "audit_events", "effective_role", "effective_role TEXT");
   ensureColumn(
     sqlite,
@@ -386,7 +439,12 @@ function addGovernedCasefileSchema(sqlite: Database.Database) {
     "metadata",
     `metadata TEXT NOT NULL DEFAULT '${LEGACY_AUDIT_METADATA_JSON}'`,
   );
-  ensureColumn(sqlite, "recording_assignments", "assignment_role", "assignment_role TEXT");
+  ensureColumn(
+    sqlite,
+    "recording_assignments",
+    "assignment_role",
+    "assignment_role TEXT",
+  );
   ensureColumn(
     sqlite,
     "recording_assignments",
@@ -394,7 +452,12 @@ function addGovernedCasefileSchema(sqlite: Database.Database) {
     "status TEXT NOT NULL DEFAULT 'active'",
   );
   ensureColumn(sqlite, "recording_assignments", "ended_at", "ended_at TEXT");
-  ensureColumn(sqlite, "recording_assignments", "end_reason", "end_reason TEXT");
+  ensureColumn(
+    sqlite,
+    "recording_assignments",
+    "end_reason",
+    "end_reason TEXT",
+  );
   ensureColumn(
     sqlite,
     "recording_assignments",
@@ -506,7 +569,8 @@ function addGovernedCasefileSchema(sqlite: Database.Database) {
       workspaceId: row.workspaceId,
       recordingId: row.recordingId,
       type: "approval.reopened",
-      detail: "Governed casefile migration normalized a legacy reopened approval pointer.",
+      detail:
+        "Governed casefile migration normalized a legacy reopened approval pointer.",
       createdAt: nowIso(),
     });
   }
@@ -556,12 +620,15 @@ function addGovernedCasefileSchema(sqlite: Database.Database) {
       workspaceId: row.workspaceId,
       recordingId: row.recordingId,
       type: "approval.approved",
-      detail: "Governed casefile migration completed a legacy active assignment after approval.",
+      detail:
+        "Governed casefile migration completed a legacy active assignment after approval.",
       createdAt: row.endedAt,
     });
   }
 
-  sqlite.exec(`DROP INDEX IF EXISTS recording_assignments_recording_user_unique;`);
+  sqlite.exec(
+    `DROP INDEX IF EXISTS recording_assignments_recording_user_unique;`,
+  );
 
   if (!hasIndex(sqlite, "recording_assignments_active_unique")) {
     sqlite.exec(`
@@ -595,7 +662,12 @@ function addGovernedCasefileSchema(sqlite: Database.Database) {
 }
 
 function addAuthSessionRegistrySchema(sqlite: Database.Database) {
-  ensureColumn(sqlite, "users", "auth_version", "auth_version INTEGER NOT NULL DEFAULT 1");
+  ensureColumn(
+    sqlite,
+    "users",
+    "auth_version",
+    "auth_version INTEGER NOT NULL DEFAULT 1",
+  );
 
   sqlite.exec(`
     CREATE TABLE IF NOT EXISTS auth_sessions (
@@ -660,7 +732,9 @@ function addAuthSessionRegistrySchema(sqlite: Database.Database) {
   // Auth.js cookie has no auth_sessions row and will be rejected. Record the
   // deployment-level event once instead of enumerating cookie holders.
   const userCount = (
-    sqlite.prepare("SELECT COUNT(*) AS count FROM users").get() as { count: number }
+    sqlite.prepare("SELECT COUNT(*) AS count FROM users").get() as {
+      count: number;
+    }
   ).count;
   if (userCount > 0) {
     sqlite
@@ -956,12 +1030,19 @@ function addUserThemePreferenceSchema(sqlite: Database.Database) {
   ensureColumn(sqlite, "users", "theme_preference", "theme_preference TEXT");
 }
 
-function addTranscriptJobFailureClassificationSchema(sqlite: Database.Database) {
+function addTranscriptJobFailureClassificationSchema(
+  sqlite: Database.Database,
+) {
   // mel-bins-mismatch / guided error surface: the worker classifies failures
   // into a stable, operator-greppable slug (last_error_kind) and keeps the raw
   // engine diagnostic (last_error_technical) separate so reviewer surfaces can
   // stay stack-free while admins keep the technical detail.
-  ensureColumn(sqlite, "transcript_jobs", "last_error_kind", "last_error_kind TEXT");
+  ensureColumn(
+    sqlite,
+    "transcript_jobs",
+    "last_error_kind",
+    "last_error_kind TEXT",
+  );
   ensureColumn(
     sqlite,
     "transcript_jobs",
@@ -974,7 +1055,12 @@ function addTranscriptModelSchema(sqlite: Database.Database) {
   // demo-advanced-model-picker: the recording stores the chosen faster-whisper
   // tier (absent = engine default), validated at ingest against provisioned
   // host artifacts and replayed to the worker in the claim payload.
-  ensureColumn(sqlite, "recordings", "transcript_model", "transcript_model TEXT");
+  ensureColumn(
+    sqlite,
+    "recordings",
+    "transcript_model",
+    "transcript_model TEXT",
+  );
 }
 
 function addPasswordResetTokensSchema(sqlite: Database.Database) {
@@ -1004,9 +1090,24 @@ function addTranscriptJobEngineProgressSchema(sqlite: Database.Database) {
   // transcribed so far, the full audio duration, and how many segments the
   // engine has emitted. Nullable: no engine sample yet means the UI renders a
   // liveness cue instead of a fabricated fill.
-  ensureColumn(sqlite, "transcript_jobs", "transcribed_until_ms", "transcribed_until_ms INTEGER");
-  ensureColumn(sqlite, "transcript_jobs", "audio_duration_ms", "audio_duration_ms INTEGER");
-  ensureColumn(sqlite, "transcript_jobs", "segments_seen", "segments_seen INTEGER");
+  ensureColumn(
+    sqlite,
+    "transcript_jobs",
+    "transcribed_until_ms",
+    "transcribed_until_ms INTEGER",
+  );
+  ensureColumn(
+    sqlite,
+    "transcript_jobs",
+    "audio_duration_ms",
+    "audio_duration_ms INTEGER",
+  );
+  ensureColumn(
+    sqlite,
+    "transcript_jobs",
+    "segments_seen",
+    "segments_seen INTEGER",
+  );
   sqlite.exec(`
     UPDATE transcript_jobs
     SET progress_percent = NULL
@@ -1026,7 +1127,9 @@ export function runMigrations(
     )
   `);
 
-  for (const migration of migrations.filter((entry) => entry.version <= targetVersion)) {
+  for (const migration of migrations.filter(
+    (entry) => entry.version <= targetVersion,
+  )) {
     if (hasMigration(sqlite, migration.version)) {
       continue;
     }
@@ -1062,4 +1165,13 @@ export function runMigrations(
       throw new Error(`Database migration ${migration.version} failed.`);
     }
   }
+}
+
+function addAccountDeactivationInitiator(sqlite: Database.Database) {
+  ensureColumn(
+    sqlite,
+    "users",
+    "deactivated_by_user_id",
+    "deactivated_by_user_id TEXT REFERENCES users(id) ON DELETE RESTRICT",
+  );
 }

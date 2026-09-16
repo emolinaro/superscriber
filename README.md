@@ -32,6 +32,7 @@ The public authentication landing page footer always links back to this reposito
 - Governed folder-watch ingest lane for unattended operator-managed intake from a watched directory ([`docs/operators/ingest-watch.md`](./docs/operators/ingest-watch.md))
 - Audited, policy-gated transcript export in `DOCX`, `TXT`, `MD`, `SRT`, `VTT`, `CSV`, `TSV`, and `JSON` - defaulting to the approved record, with revision-picker export of any revision under the same authority
 - Phone safety mode: status, inbox, read-only casefile, and supported ingest on phones; governed actions require a tablet or desktop
+- Account facts and self-deactivation at **Account > Your account**, with sign-in revival only after self-deactivation, plus governed admin account creation with a one-time password disclosure, deactivation, explicit reactivation, and removal of access with identity history retained; see [Administration surfaces](./docs/USER-GUIDE.md#administration-surfaces)
 - Light, Dark, and System appearance themes with a flash-free boot and a per-user preference persisted server-side so the choice follows the account across devices
 - SQLite-backed workflow persistence with mounted media storage
 - Internal Python worker with GPU-preferred transcription when compatible hardware is available

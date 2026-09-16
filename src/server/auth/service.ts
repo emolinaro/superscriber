@@ -1,3 +1,4 @@
+import { reviveAtSignIn } from "@/server/auth/account-lifecycle";
 import { hash, compare } from "bcryptjs";
 import { and, eq } from "drizzle-orm";
 import { type AppUser, type Principal, type UserRole } from "@/domain/models";
@@ -98,7 +99,10 @@ export async function getUserById(id: string, db: AppDatabase = getAppDb()) {
   return row ? toAppUser(row) : null;
 }
 
-export async function getUserByEmail(email: string, db: AppDatabase = getAppDb()) {
+export async function getUserByEmail(
+  email: string,
+  db: AppDatabase = getAppDb(),
+) {
   const row = db
     .select()
     .from(users)
@@ -160,9 +164,15 @@ export async function createBootstrapAdmin(
   const passwordHash = await hash(parsed.password, 12);
 
   const transaction = bundle.sqlite.transaction(() => {
-    const existingUser = bundle.db.select({ id: users.id }).from(users).limit(1).get();
+    const existingUser = bundle.db
+      .select({ id: users.id })
+      .from(users)
+      .limit(1)
+      .get();
     if (existingUser) {
-      throw new Error("First-run setup is already complete. Sign in with an existing account.");
+      throw new Error(
+        "First-run setup is already complete. Sign in with an existing account.",
+      );
     }
 
     return insertLocalUserRow(
@@ -193,7 +203,11 @@ export async function verifyLocalCredentials(
     .get();
 
   // OIDC-only shadow users carry no local secret; credentials cannot match.
-  if (!row || !row.isActive || !row.passwordHash) {
+  if (
+    !row ||
+    (!row.isActive && row.deactivatedByUserId !== row.id) ||
+    !row.passwordHash
+  ) {
     return null;
   }
 
@@ -202,5 +216,19 @@ export async function verifyLocalCredentials(
     return null;
   }
 
-  return toAppUser(row);
+  return db.transaction(
+    (tx) => {
+      const current = tx.select().from(users).where(eq(users.id, row.id)).get();
+      // Hashing yielded: an intervening admin action or credential reset wins.
+      if (
+        !current ||
+        current.authVersion !== row.authVersion ||
+        current.passwordHash !== row.passwordHash
+      )
+        return null;
+      if (!reviveAtSignIn(current, tx as AppDatabase, nowIso())) return null;
+      return toAppUser({ ...current, isActive: true });
+    },
+    { behavior: "immediate" },
+  );
 }
