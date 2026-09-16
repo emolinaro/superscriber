@@ -248,8 +248,9 @@ account**. Deactivation preserves credentials and identity links. Signing in
 never reactivates an administrator-deactivated account. **Remove account** offboards access: it also clears
 the local password and permanently retires linked sign-in identities. It keeps
 the account record, email reservation, assignments, and audit history intact.
-Reactivation does not recreate removed credentials or retired identity links.
-Active assignments remain recorded; review and reassign that work separately.
+Removal is terminal: a removed account cannot be reactivated. Create a fresh
+account if that person returns. Active assignments remain recorded; review and
+reassign that work separately.
 The final active administrator and designated break-glass administrator are
 protected. Another administrator must deactivate or remove your own account.
 These actions are withheld in phone safety mode.

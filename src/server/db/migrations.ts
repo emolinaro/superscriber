@@ -16,7 +16,7 @@ type Migration = {
   rebuildsTables?: boolean;
 };
 
-export const LATEST_SCHEMA_VERSION = 15;
+export const LATEST_SCHEMA_VERSION = 16;
 
 const migrations: Migration[] = [
   { version: 1, name: "baseline-appliance", up: createBaselineSchema },
@@ -74,6 +74,11 @@ const migrations: Migration[] = [
     version: 15,
     name: "mandatory-temporary-password-change",
     up: addMandatoryTemporaryPasswordChange,
+  },
+  {
+    version: 16,
+    name: "terminal-account-removal",
+    up: addTerminalAccountRemoval,
   },
 ];
 
@@ -1190,4 +1195,8 @@ function addMandatoryTemporaryPasswordChange(sqlite: Database.Database) {
     "must_change_password",
     "must_change_password INTEGER NOT NULL DEFAULT 0",
   );
+}
+
+function addTerminalAccountRemoval(sqlite: Database.Database) {
+  ensureColumn(sqlite, "users", "removed_at", "removed_at TEXT");
 }

@@ -59,6 +59,12 @@ export function changeAccountLifecycle(
           "NOT_FOUND",
           "This account is no longer available.",
         );
+      if (target.removedAt !== null) {
+        throw new CasefileCommandError(
+          input.action === "reactivate" ? "ACCESS_DENIED" : "STATE_CHANGED",
+          "Removed accounts are terminal. Create a new account for returning access.",
+        );
+      }
       if (
         target.isActive !== input.expectedIsActive ||
         (input.action === "reactivate" && target.isActive) ||
@@ -86,7 +92,9 @@ export function changeAccountLifecycle(
           deactivatedByUserId: isActive ? null : actor.id,
           authVersion: sql`${users.authVersion} + 1`,
           updatedAt: now,
-          ...(input.action === "remove" ? { passwordHash: null } : {}),
+          ...(input.action === "remove"
+            ? { passwordHash: null, mustChangePassword: false, removedAt: now }
+            : {}),
         })
         .where(eq(users.id, target.id))
         .run();

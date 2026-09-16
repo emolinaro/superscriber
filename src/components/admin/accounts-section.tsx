@@ -91,6 +91,7 @@ function toAccountRow(user: AccountDirectoryEntry): AccountRow {
     role: user.role,
     roleLabel: formatRoleLabel(user.role),
     isActive: user.isActive,
+    isRemoved: user.isRemoved,
     activeAssignmentCount: user.activeAssignmentCount,
     activeAssignments: { reviewer: 0, approver: 0 },
     hasActiveOidcIdentity: false,
@@ -612,10 +613,9 @@ export function AccountsSection({
   }
 
   function lifecycleControls(user: AccountRow) {
-    const lifecycleKinds = [
-      user.isActive ? "deactivate" : "reactivate",
-      "remove",
-    ] as const;
+    const lifecycleKinds = user.isRemoved
+      ? ([] as const)
+      : ([user.isActive ? "deactivate" : "reactivate", "remove"] as const);
     function protectionFor(kind: (typeof lifecycleKinds)[number]) {
       if (user.isBreakGlassAdministrator && kind !== "reactivate") {
         return "Transfer the break-glass designation first.";
@@ -632,7 +632,7 @@ export function AccountsSection({
     return (
       <div className="stack-tight account-lifecycle-controls">
         <span className="status-badge">
-          {user.isActive ? "Active" : "Deactivated"}
+          {user.isRemoved ? "Removed" : user.isActive ? "Active" : "Deactivated"}
         </span>
         {!phoneSafetyMode ? (
           <>

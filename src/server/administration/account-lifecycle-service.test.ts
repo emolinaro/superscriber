@@ -175,6 +175,10 @@ describe("governed account lifecycle", () => {
     change("reactivate", "target", false);
     change("remove");
     expect(target()).toMatchObject({ isActive: false, passwordHash: null });
+    expect(target().removedAt).toEqual(expect.any(String));
+    expect(() => change("reactivate", "target", false)).toThrow(
+      /Removed accounts are terminal/i,
+    );
     expect(bundle.db.select().from(externalIdentities).get()).toMatchObject({
       userId: "target",
       status: "retired",

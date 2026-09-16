@@ -289,6 +289,7 @@ export async function createUserAction(
       user: {
         ...value,
         activeAssignmentCount: 0,
+        isRemoved: false,
       },
     }),
     (value) => `${value.displayName} can now sign in as ${value.role}.`,

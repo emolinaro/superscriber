@@ -26,6 +26,7 @@ function account(overrides: Partial<AccountRow> = {}): AccountRow {
     role: "reviewer",
     roleLabel: "Reviewer",
     isActive: true,
+    isRemoved: false,
     activeAssignmentCount: 0,
     activeAssignments: { reviewer: 0, approver: 0 },
     hasActiveOidcIdentity: false,

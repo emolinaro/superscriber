@@ -83,6 +83,7 @@ export const users = sqliteTable(
       (): AnySQLiteColumn => users.id,
       { onDelete: "restrict" },
     ),
+    removedAt: text("removed_at"),
     // Appearance preference; the localStorage boot copy handles first paint,
     // this row is the per-user durable sync across devices.
     themePreference: text("theme_preference", {

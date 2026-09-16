@@ -153,7 +153,11 @@ test("generated account handoff, durable deactivation, explicit reactivation, an
 
     await lifecycle(page, account.email, "Reactivate account");
     await login(userPage, account);
-    await lifecycle(page, account.email, "Remove account");
+    const removedRow = await lifecycle(page, account.email, "Remove account");
+    await expect(removedRow).toContainText("Removed");
+    await expect(
+      removedRow.getByRole("button", { name: "Reactivate account" }),
+    ).toHaveCount(0);
     await userPage.goto("/account");
     await expect(
       userPage.getByRole("heading", { name: "Sign in" }),
@@ -161,10 +165,13 @@ test("generated account handoff, durable deactivation, explicit reactivation, an
     const facts = queryRuntimeRows<{
       is_active: number;
       password_hash: string | null;
-    }>("SELECT is_active, password_hash FROM users WHERE email = ?", [
+      removed_at: string | null;
+    }>("SELECT is_active, password_hash, removed_at FROM users WHERE email = ?", [
       account.email,
     ]);
-    expect(facts).toEqual([{ is_active: 0, password_hash: null }]);
+    expect(facts).toEqual([
+      { is_active: 0, password_hash: null, removed_at: expect.any(String) },
+    ]);
     const events = queryRuntimeRows<{
       type: string;
       actor_user_id: string;

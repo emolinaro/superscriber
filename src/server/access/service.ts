@@ -39,6 +39,7 @@ export type AssignmentSummary = {
 
 export type AccountDirectoryEntry = AppUser & {
   activeAssignmentCount: number;
+  isRemoved: boolean;
 };
 
 export type CasefileAccessGrant =
@@ -287,13 +288,16 @@ export function listLocalUsers(db: AppDatabase = getAppDb()) {
   return rows.map((row) => ({
     ...toAppUser(row),
     activeAssignmentCount: counts.get(row.id) ?? 0,
+    isRemoved: row.removedAt !== null,
   })) satisfies AccountDirectoryEntry[];
 }
 
 export function listAssignableUsers(db: AppDatabase = getAppDb()) {
   return listLocalUsers(db).filter(
     (user) =>
-      user.isActive && (user.role === "reviewer" || user.role === "approver"),
+      user.isActive &&
+      !user.isRemoved &&
+      (user.role === "reviewer" || user.role === "approver"),
   );
 }
 

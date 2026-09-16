@@ -106,6 +106,7 @@ export type AdministrationAccountsViewModel = {
       role: Principal["role"];
       roleLabel: string;
       isActive: boolean;
+      isRemoved: boolean;
       activeAssignmentCount: number;
       createdAt: string;
       createdAtLabel: string;
@@ -1155,6 +1156,7 @@ export function listAdministration(
       role: user.role,
       roleLabel: formatRoleLabel(user.role),
       isActive: user.isActive,
+      isRemoved: user.isRemoved,
       activeAssignmentCount: user.activeAssignmentCount,
       activeAssignments: activeAssignmentFacts.get(user.id) ?? {
         reviewer: 0,

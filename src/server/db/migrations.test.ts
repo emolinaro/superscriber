@@ -114,6 +114,7 @@ describe("migrations", () => {
       { version: 13 },
       { version: 14 },
       { version: 15 },
+      { version: 16 },
     ]);
   });
 
@@ -519,6 +520,27 @@ describe("migrations", () => {
         )
         .get(),
     ).toEqual({ kind: null, technical: null });
+  });
+
+  it("adds terminal removal state to existing users", () => {
+    const sqlite = new Database(":memory:");
+    sqlite.pragma("foreign_keys = ON");
+    runMigrations(sqlite, 15);
+
+    sqlite.exec(`
+      INSERT INTO users (id, email, display_name, password_hash, role, is_active, created_at, updated_at)
+        VALUES ('removed-state-user', 'removed-state@example.com', 'Removed State User', 'hash', 'reviewer', 1, '2026-08-01T00:00:00.000Z', '2026-08-01T00:00:00.000Z');
+    `);
+
+    runMigrations(sqlite, 16);
+
+    expect(
+      sqlite
+        .prepare("select removed_at as removedAt from users where id = 'removed-state-user'")
+        .get(),
+    ).toEqual({ removedAt: null });
+
+    sqlite.close();
   });
 
   it("adds the mandatory temporary-password-change flag to existing users", () => {

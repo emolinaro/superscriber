@@ -48,6 +48,7 @@ function createModel(
         role: "reviewer",
         roleLabel: "Reviewer",
         isActive: true,
+        isRemoved: false,
         activeAssignmentCount: 1,
         activeAssignments: { reviewer: 1, approver: 0 },
         hasActiveOidcIdentity: false,
@@ -214,6 +215,7 @@ describe("AccountsSection", () => {
           email: "reviewer2@example.com",
           role: "reviewer",
           isActive: true,
+          isRemoved: false,
           mustChangePassword: false,
           activeAssignmentCount: 0,
           createdAt: "2026-08-01T12:10:00.000Z",
@@ -267,6 +269,7 @@ describe("AccountsSection", () => {
               role: "reviewer",
               roleLabel: "Reviewer",
               isActive: true,
+              isRemoved: false,
               activeAssignmentCount: 0,
               activeAssignments: { reviewer: 0, approver: 0 },
               hasActiveOidcIdentity: false,
@@ -501,6 +504,7 @@ describe("AccountsSection", () => {
           email: "reviewer1@example.com",
           role: "approver",
           isActive: true,
+          isRemoved: false,
           activeAssignmentCount: 0,
           createdAt: "2026-08-01T12:00:00.000Z",
           updatedAt: "2026-08-01T12:30:00.000Z",
@@ -585,6 +589,7 @@ describe("AccountsSection", () => {
           email: "reviewer1@example.com",
           role: "uploader",
           isActive: true,
+          isRemoved: false,
           activeAssignmentCount: 0,
           createdAt: "2026-08-01T12:00:00.000Z",
           updatedAt: "2026-08-01T12:30:00.000Z",
@@ -655,6 +660,38 @@ describe("AccountsSection", () => {
     ).toHaveValue("reviewer");
   });
 
+  it("does not offer reactivation for a removed account", () => {
+    render(
+      <AccountsSection
+        model={createModel({
+          users: [
+            {
+              ...createModel().users[0]!,
+              id: "removed-user",
+              displayName: "Removed User",
+              email: "removed@example.com",
+              isActive: false,
+              isRemoved: true,
+              activeAssignmentCount: 0,
+            },
+          ],
+        })}
+        phoneSafetyMode={false}
+      />,
+    );
+
+    expect(
+      screen.getByRole("rowheader", { name: "Removed User" }),
+    ).toBeVisible();
+    expect(screen.getAllByText("Removed").length).toBeGreaterThan(0);
+    expect(
+      screen.queryByRole("button", { name: "Reactivate account" }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "Remove account" }),
+    ).not.toBeInTheDocument();
+  });
+
   it("keeps reactivate available for a deactivated break-glass administrator", () => {
     render(
       <AccountsSection
@@ -668,6 +705,7 @@ describe("AccountsSection", () => {
               role: "admin",
               roleLabel: "Administrator",
               isActive: false,
+              isRemoved: false,
               activeAssignmentCount: 0,
               isBreakGlassAdministrator: true,
               isSoleActiveAdministrator: false,
