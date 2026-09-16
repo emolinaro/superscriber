@@ -612,13 +612,23 @@ export function AccountsSection({
   }
 
   function lifecycleControls(user: AccountRow) {
-    const protection = user.isBreakGlassAdministrator
-      ? "Transfer the break-glass designation first."
-      : user.isSoleActiveAdministrator
-        ? "The last active administrator must remain active."
-        : user.id === model.currentUserId
-          ? "Another administrator must manage your account lifecycle."
-          : null;
+    const lifecycleKinds = [
+      user.isActive ? "deactivate" : "reactivate",
+      "remove",
+    ] as const;
+    function protectionFor(kind: (typeof lifecycleKinds)[number]) {
+      if (user.isBreakGlassAdministrator && kind !== "reactivate") {
+        return "Transfer the break-glass designation first.";
+      }
+      if (user.isSoleActiveAdministrator) {
+        return "The last active administrator must remain active.";
+      }
+      if (user.id === model.currentUserId) {
+        return "Another administrator must manage your account lifecycle.";
+      }
+      return null;
+    }
+    const protection = lifecycleKinds.map(protectionFor).find(Boolean) ?? null;
     return (
       <div className="stack-tight account-lifecycle-controls">
         <span className="status-badge">
@@ -627,21 +637,24 @@ export function AccountsSection({
         {!phoneSafetyMode ? (
           <>
             <div className="button-row">
-              {(
-                [user.isActive ? "deactivate" : "reactivate", "remove"] as const
-              ).map((kind) => (
-                <button
-                  className="button button-secondary interactive-target"
-                  type="button"
-                  key={kind}
-                  disabled={
-                    pending || Boolean(pendingRoleUserId) || Boolean(protection)
-                  }
-                  onClick={() => setLifecycleTarget({ user, kind })}
-                >
-                  {ACCOUNT_LIFECYCLE_LABELS[kind]}
-                </button>
-              ))}
+              {lifecycleKinds.map((kind) => {
+                const actionProtection = protectionFor(kind);
+                return (
+                  <button
+                    className="button button-secondary interactive-target"
+                    type="button"
+                    key={kind}
+                    disabled={
+                      pending ||
+                      Boolean(pendingRoleUserId) ||
+                      Boolean(actionProtection)
+                    }
+                    onClick={() => setLifecycleTarget({ user, kind })}
+                  >
+                    {ACCOUNT_LIFECYCLE_LABELS[kind]}
+                  </button>
+                );
+              })}
             </div>
             {protection ? <small>{protection}</small> : null}
           </>

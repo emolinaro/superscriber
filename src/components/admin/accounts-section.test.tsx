@@ -654,6 +654,44 @@ describe("AccountsSection", () => {
     ).toHaveValue("reviewer");
   });
 
+  it("keeps reactivate available for a deactivated break-glass administrator", () => {
+    render(
+      <AccountsSection
+        model={createModel({
+          users: [
+            {
+              ...createModel().users[0]!,
+              id: "break-glass-admin",
+              displayName: "Break Glass Admin",
+              email: "break-glass@example.com",
+              role: "admin",
+              roleLabel: "Administrator",
+              isActive: false,
+              activeAssignmentCount: 0,
+              isBreakGlassAdministrator: true,
+              isSoleActiveAdministrator: false,
+            },
+          ],
+        })}
+        phoneSafetyMode={false}
+      />,
+    );
+
+    expect(
+      screen.getByRole("rowheader", { name: "Break Glass Admin" }),
+    ).toBeVisible();
+    for (const button of screen.getAllByRole("button", {
+      name: "Reactivate account",
+    })) {
+      expect(button).toBeEnabled();
+    }
+    for (const button of screen.getAllByRole("button", {
+      name: "Remove account",
+    })) {
+      expect(button).toBeDisabled();
+    }
+  });
+
   it("keeps account facts visible on phone while hiding the create drawer", () => {
     render(<AccountsSection model={createModel()} phoneSafetyMode={true} />);
 
