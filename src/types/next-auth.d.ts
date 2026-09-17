@@ -10,6 +10,7 @@ declare module "next-auth" {
     };
     authSource?: AuthSource;
     authSessionId?: string;
+    mustChangePassword?: boolean;
   }
 
   interface User {

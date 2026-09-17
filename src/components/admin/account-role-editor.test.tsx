@@ -1,6 +1,12 @@
 // @vitest-environment jsdom
 
-import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
+import {
+  cleanup,
+  fireEvent,
+  render,
+  screen,
+  within,
+} from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { AdministrationAccountsViewModel } from "@/server/administration/service";
@@ -19,6 +25,8 @@ function account(overrides: Partial<AccountRow> = {}): AccountRow {
     email: "reviewer@example.com",
     role: "reviewer",
     roleLabel: "Reviewer",
+    isActive: true,
+    isRemoved: false,
     activeAssignmentCount: 0,
     activeAssignments: { reviewer: 0, approver: 0 },
     hasActiveOidcIdentity: false,
@@ -89,11 +97,15 @@ describe("AccountRoleEditor", () => {
       />,
     );
 
-    expect(screen.getByRole("combobox", { name: "Role for Reviewer One" })).toHaveValue(
-      "reviewer",
-    );
-    expect(screen.queryByLabelText("Change reason for Reviewer One")).not.toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "Save role" })).not.toBeInTheDocument();
+    expect(
+      screen.getByRole("combobox", { name: "Role for Reviewer One" }),
+    ).toHaveValue("reviewer");
+    expect(
+      screen.queryByLabelText("Change reason for Reviewer One"),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "Save role" }),
+    ).not.toBeInTheDocument();
 
     const tableId = screen.getByRole("combobox").id;
     rerender(
@@ -124,8 +136,12 @@ describe("AccountRoleEditor", () => {
     });
     const save = within(form).getByRole("button", { name: "Save role" });
     const cancel = within(form).getByRole("button", { name: "Cancel" });
-    expect(reason.compareDocumentPosition(save) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
-    expect(save.compareDocumentPosition(cancel) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(
+      reason.compareDocumentPosition(save) & Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+    expect(
+      save.compareDocumentPosition(cancel) & Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
 
     await user.selectOptions(within(form).getByRole("combobox"), "admin");
     expect(handlers.onSelectedRoleChange).toHaveBeenCalledWith("admin");
@@ -149,9 +165,15 @@ describe("AccountRoleEditor", () => {
       state: dirtyState({ selectedRole: "uploader" }),
     });
 
-    expect(screen.getByText(/Set exactly one Authentik role group for Uploader/)).toBeVisible();
-    expect(screen.getByText(/designated break-glass administrator/)).toBeVisible();
-    expect(screen.getByText(/At least one active administrator must remain/)).toBeVisible();
+    expect(
+      screen.getByText(/Set exactly one Authentik role group for Uploader/),
+    ).toBeVisible();
+    expect(
+      screen.getByText(/designated break-glass administrator/),
+    ).toBeVisible();
+    expect(
+      screen.getByText(/At least one active administrator must remain/),
+    ).toBeVisible();
     expect(screen.getByText(/2 active Reviewer assignments/)).toBeVisible();
     expect(screen.getByRole("button", { name: "Save role" })).toBeEnabled();
   });
@@ -215,7 +237,9 @@ describe("AccountRoleEditor", () => {
     expect(form).toHaveAttribute("aria-busy", "true");
     expect(within(form).getByRole("combobox")).toBeDisabled();
     expect(within(form).getByRole("textbox")).toBeDisabled();
-    expect(within(form).getByRole("button", { name: "Saving role..." })).toBeDisabled();
+    expect(
+      within(form).getByRole("button", { name: "Saving role..." }),
+    ).toBeDisabled();
     expect(within(form).getByRole("button", { name: "Cancel" })).toBeDisabled();
     form.focus();
     await user.keyboard("{Escape}");

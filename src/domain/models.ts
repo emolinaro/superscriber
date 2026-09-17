@@ -1,4 +1,9 @@
-export const USER_ROLES = ["uploader", "reviewer", "approver", "admin"] as const;
+export const USER_ROLES = [
+  "uploader",
+  "reviewer",
+  "approver",
+  "admin",
+] as const;
 export type UserRole = (typeof USER_ROLES)[number];
 
 export const INTEGRITY_STATES = [
@@ -45,17 +50,25 @@ export type ApprovalState = (typeof APPROVAL_STATES)[number];
 export const ASSIGNMENT_STATUSES = ["active", "completed", "removed"] as const;
 export type AssignmentStatus = (typeof ASSIGNMENT_STATUSES)[number];
 
-export const ADMIN_ACTION_END_REASONS = ["exited", "expired", "switched"] as const;
+export const ADMIN_ACTION_END_REASONS = [
+  "exited",
+  "expired",
+  "switched",
+] as const;
 export type AdminActionEndReason = (typeof ADMIN_ACTION_END_REASONS)[number];
 
-export const POLICY_PROFILES = ["strict", "reviewable-approved-export"] as const;
+export const POLICY_PROFILES = [
+  "strict",
+  "reviewable-approved-export",
+] as const;
 export type PolicyProfileId = (typeof POLICY_PROFILES)[number];
 
 export type MediaKind = "audio" | "video";
 export type RecordingSource = "upload" | "record";
 export type DiarizationStatus = "pending" | "available" | "degraded" | "failed";
 export type AssignmentRole = Extract<UserRole, "reviewer" | "approver">;
-export type AssignmentEndReason = "removed_by_admin" | "legacy_approved_backfill";
+export type AssignmentEndReason =
+  "removed_by_admin" | "legacy_approved_backfill";
 
 export type AuditMetadata = {
   version: number;
@@ -93,6 +106,7 @@ export type AppUser = {
   displayName: string;
   role: UserRole;
   isActive: boolean;
+  mustChangePassword: boolean;
   createdAt: string;
   updatedAt: string;
 };
@@ -244,6 +258,12 @@ export type AuditEvent = {
     | "assignment.created"
     | "assignment.completed"
     | "assignment.removed"
+    | "account.self_deactivated"
+    | "account.self_reactivated"
+    | "account.created"
+    | "account.deactivated"
+    | "account.reactivated"
+    | "account.removed"
     | "account.role_changed"
     | "account.password_reset"
     | "admin.action_mode.entered"

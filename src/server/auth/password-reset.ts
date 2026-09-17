@@ -281,7 +281,7 @@ export async function completePasswordReset(
       }
       markResetTokenUsed(current.token.id, db, nowIso);
       db.update(users)
-        .set({ passwordHash, updatedAt: nowIso })
+        .set({ passwordHash, mustChangePassword: false, updatedAt: nowIso })
         .where(eq(users.id, current.token.userId))
         .run();
       retireUserSessions({ userId: current.token.userId, reason: "password_reset" }, db);

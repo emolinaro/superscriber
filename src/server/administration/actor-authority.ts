@@ -5,9 +5,9 @@ import { authSessions, users } from "@/server/db/schema";
 /**
  * Live authority revalidation for governed admin mutations: the actor's
  * durable session must be active, version-matched, and unexpired, and the
- * actor row must still be an active admin. Callers supply their typed denial.
+ * actor row must still be active. Callers supply their typed denial.
  */
-export function revalidateAdminActor(
+export function revalidateActiveActor(
   db: AppDatabase,
   params: { actorUserId: string; actorAuthSessionId: string },
   nowIso: string,
@@ -25,7 +25,9 @@ export function revalidateAdminActor(
 
   const nowMs = Date.parse(nowIso);
   const idleExpiresAt = row ? Date.parse(row.session.idleExpiresAt) : NaN;
-  const absoluteExpiresAt = row ? Date.parse(row.session.absoluteExpiresAt) : NaN;
+  const absoluteExpiresAt = row
+    ? Date.parse(row.session.absoluteExpiresAt)
+    : NaN;
 
   if (
     !row ||
@@ -36,11 +38,21 @@ export function revalidateAdminActor(
     !Number.isFinite(absoluteExpiresAt) ||
     nowMs >= idleExpiresAt ||
     nowMs >= absoluteExpiresAt ||
-    !row.actor.isActive ||
-    row.actor.role !== "admin"
+    !row.actor.isActive
   ) {
     deny();
   }
 
   return row!.actor;
+}
+
+export function revalidateAdminActor(
+  db: AppDatabase,
+  params: { actorUserId: string; actorAuthSessionId: string },
+  nowIso: string,
+  deny: () => never,
+): typeof users.$inferSelect {
+  const actor = revalidateActiveActor(db, params, nowIso, deny);
+  if (actor.role !== "admin") deny();
+  return actor;
 }

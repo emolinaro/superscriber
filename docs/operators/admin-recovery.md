@@ -3,10 +3,10 @@
 Superscriber normally creates the first administrator through first-run setup
 and then closes self-service admission entirely. That leaves one dangerous
 corner: **accounts survive, but no active administrator remains.** Supported
-role changes refuse to demote the final active admin, and a designated
-break-glass admin has additional database guards. The state can still result
-from out-of-band changes to an undesignated admin or a partial restore that
-brought back user rows without an active admin. In that state nobody can
+role and lifecycle changes refuse to demote, deactivate, or remove the final
+active admin, and a designated break-glass admin has additional database
+guards. The state can still result from out-of-band edits or a partial restore
+that brought back user rows without an active admin. In that state nobody can
 provision accounts, reset passwords, or exercise any governed admin command -
 the instance is unmanageable.
 
@@ -80,9 +80,9 @@ so recovery is never needed.
    consumes the token, and lands on the sign-in door with a completion
    notice; sign in with the new administrator.
 5. Re-establish hygiene: review the surviving accounts under Administration >
-   Accounts, provision replacement access where needed, and investigate how
-   the appliance lost its last administrator before returning to service.
-   Account reactivation is not exposed in the product UI.
+   Accounts. Explicitly reactivate deactivated accounts where appropriate,
+   create fresh accounts for people whose rows were removed, and investigate
+   how the appliance lost its last administrator before returning to service.
 
 ## Rotating or withholding the proof
 

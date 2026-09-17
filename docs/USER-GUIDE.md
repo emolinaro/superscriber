@@ -225,13 +225,45 @@ impersonates an assigned user.
 The **Administration** page is organized into four sections:
 
 - **Accounts.** Provision local accounts, set roles (uploader, reviewer,
-  approver, admin), and issue password resets.
+  approver, admin), issue password resets, deactivate or reactivate accounts,
+  and remove account access.
 - **Assignments.** Assign reviewers and approvers to recordings; assignment
   history is append-only.
 - **Policy.** Set the workspace policy, which can remove media and export
   capabilities over and above roles.
 - **Data discipline.** Counts the governed ledger rows and hosts the
   typed-phrase ledger reset, attributing the acting admin.
+
+Choose **Create account > Use a generated temporary password** to create an
+account with an appliance-generated password. Enter the account details, role,
+and reason. Copy the password from the confirmation and deliver it directly
+to the account holder. Closing the dialog discards that disclosure. The password
+expires at first sign-in, when the account holder must choose a new password
+before normal access. If the handoff is lost, issue a password reset. You can
+also enter and confirm a password yourself.
+
+**Deactivate account** requires a reason, signs the account out everywhere,
+and blocks sign-in until an administrator explicitly chooses **Reactivate
+account**. Deactivation preserves credentials and identity links. Signing in
+never reactivates an administrator-deactivated account. **Remove account**
+offboards access: it also clears the local password, releases the local email
+address for a fresh account, and permanently retires linked sign-in identities.
+It keeps the account record, assignments, and audit history intact. Removal is
+terminal: a removed account cannot be reactivated. Create a fresh account if
+that person returns. Active assignments remain recorded; review and reassign
+that work separately.
+The final active administrator and designated break-glass administrator are
+protected. Another administrator must deactivate or remove your own account.
+These actions are withheld in phone safety mode.
+
+Open **Account > Your account** to view your name, email, role, account state,
+and creation date, with guidance on lifecycle management and password reset.
+On a wider screen, **Deactivate my account** signs you out everywhere and
+records that you initiated the deactivation. A later sign-in with valid local
+credentials or an admitted institutional identity restores access. An account
+deactivated by an administrator cannot revive this way. The final active
+administrator and break-glass custodian remain protected. The page is read-only
+on phones; self-deactivation is withheld there.
 
 Permanently deleting a recording lives on the recording itself: in admin
 oversight the casefile's pinned action bar ends with **Delete recording**,

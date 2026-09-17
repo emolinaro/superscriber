@@ -86,6 +86,13 @@ export function AccountMenu({ principal }: { principal: Principal }) {
               ))}
             </div>
           </fieldset>
+          <a
+            className="button button-secondary interactive-target"
+            href="/account"
+            onClick={() => setOpen(false)}
+          >
+            Your account
+          </a>
           <LogoutButton />
         </div>
       ) : null}

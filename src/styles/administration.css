@@ -308,3 +308,7 @@
   font-family: var(--font-mono);
   font-size: var(--type-20);
 }
+
+.administration-table--accounts td {
+  overflow-wrap: anywhere;
+}

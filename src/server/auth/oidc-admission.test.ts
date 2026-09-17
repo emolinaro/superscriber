@@ -1,6 +1,12 @@
 import { describe, expect, it } from "vitest";
-import { applyIdentityLink, retireIdentityLink } from "@/server/auth/identity-links";
-import { resolveOidcAdmission, type OidcAuthConfig } from "@/server/auth/oidc-admission";
+import {
+  applyIdentityLink,
+  retireIdentityLink,
+} from "@/server/auth/identity-links";
+import {
+  resolveOidcAdmission,
+  type OidcAuthConfig,
+} from "@/server/auth/oidc-admission";
 import type { RoleMap } from "@/server/auth/role-mapping";
 import { openAppDatabase, type AppDatabase } from "@/server/db/client";
 
@@ -22,7 +28,11 @@ const ROLE_MAP: RoleMap = {
 
 const CONFIG: OidcAuthConfig = {
   mode: "dual",
-  oidc: { issuer: ISSUER, clientId: "superscriber", clientSecretFile: "/nonexistent" },
+  oidc: {
+    issuer: ISSUER,
+    clientId: "superscriber",
+    clientSecretFile: "/nonexistent",
+  },
   roleMap: ROLE_MAP,
 };
 
@@ -34,9 +44,30 @@ function setup() {
     `INSERT INTO users (id, email, display_name, password_hash, role, is_active, created_at, updated_at)
      VALUES (?, ?, ?, 'hash', ?, 1, ?, ?)`,
   );
-  insert.run("user-reviewer", "reviewer.secret@example.com", "Reviewer", "reviewer", NOW.toISOString(), NOW.toISOString());
-  insert.run("user-approver", "approver.secret@example.com", "Approver", "approver", NOW.toISOString(), NOW.toISOString());
-  insert.run("user-operator", "op@example.com", "Operator", "admin", NOW.toISOString(), NOW.toISOString());
+  insert.run(
+    "user-reviewer",
+    "reviewer.secret@example.com",
+    "Reviewer",
+    "reviewer",
+    NOW.toISOString(),
+    NOW.toISOString(),
+  );
+  insert.run(
+    "user-approver",
+    "approver.secret@example.com",
+    "Approver",
+    "approver",
+    NOW.toISOString(),
+    NOW.toISOString(),
+  );
+  insert.run(
+    "user-operator",
+    "op@example.com",
+    "Operator",
+    "admin",
+    NOW.toISOString(),
+    NOW.toISOString(),
+  );
   return bundle;
 }
 
@@ -69,7 +100,13 @@ function events(sqlite: import("better-sqlite3").Database) {
     .prepare(
       `SELECT type, outcome, user_id AS userId, detail, metadata FROM security_events WHERE type LIKE 'oidc.%' ORDER BY created_at, id`,
     )
-    .all() as Array<{ type: string; outcome: string; userId: string | null; detail: string; metadata: string }>;
+    .all() as Array<{
+    type: string;
+    outcome: string;
+    userId: string | null;
+    detail: string;
+    metadata: string;
+  }>;
 }
 
 describe("OIDC admission", () => {
@@ -77,7 +114,10 @@ describe("OIDC admission", () => {
     const { db, sqlite } = setup();
     const link = linkReviewer(db);
 
-    const result = resolveOidcAdmission({ claims: claims(), config: CONFIG, now: NOW }, db);
+    const result = resolveOidcAdmission(
+      { claims: claims(), config: CONFIG, now: NOW },
+      db,
+    );
 
     expect(result).toMatchObject({
       ok: true,
@@ -89,7 +129,9 @@ describe("OIDC admission", () => {
     });
 
     const updated = sqlite
-      .prepare(`SELECT last_login_at AS lla, last_role_map_version AS lrmv FROM external_identities WHERE id = ?`)
+      .prepare(
+        `SELECT last_login_at AS lla, last_role_map_version AS lrmv FROM external_identities WHERE id = ?`,
+      )
       .get(link.id) as { lla: string; lrmv: number };
     expect(updated).toEqual({ lla: NOW.toISOString(), lrmv: 2 });
 
@@ -100,7 +142,9 @@ describe("OIDC admission", () => {
       outcome: "success",
       userId: "user-reviewer",
     });
-    const metadata = JSON.parse(rows[0].metadata) as { data: Record<string, unknown> };
+    const metadata = JSON.parse(rows[0].metadata) as {
+      data: Record<string, unknown>;
+    };
     expect(metadata.data.role).toBe("reviewer");
     expect(metadata.data.mapVersion).toBe(2);
     expect(metadata.data.matchedGroupHash).toMatch(/^[0-9a-f]{64}$/);
@@ -118,7 +162,10 @@ describe("OIDC admission", () => {
       resolveOidcAdmission({ claims: { iss: ISSUER }, config: CONFIG }, db),
     ).toEqual({ ok: false, reason: "malformed_claims" });
     expect(
-      resolveOidcAdmission({ claims: { iss: ISSUER, sub: 42 }, config: CONFIG }, db),
+      resolveOidcAdmission(
+        { claims: { iss: ISSUER, sub: 42 }, config: CONFIG },
+        db,
+      ),
     ).toEqual({ ok: false, reason: "malformed_claims" });
   });
 
@@ -143,7 +190,9 @@ describe("OIDC admission", () => {
   it("denies an unlinked subject without revealing existence", () => {
     const { db, sqlite } = setup();
 
-    expect(resolveOidcAdmission({ claims: claims(), config: CONFIG }, db)).toEqual({
+    expect(
+      resolveOidcAdmission({ claims: claims(), config: CONFIG }, db),
+    ).toEqual({
       ok: false,
       reason: "identity_not_linked",
     });
@@ -158,9 +207,14 @@ describe("OIDC admission", () => {
   it("denies a retired identity link", () => {
     const { db } = setup();
     const link = linkReviewer(db);
-    retireIdentityLink({ identityId: link.id, changeReason: "Retired.", now: NOW }, db);
+    retireIdentityLink(
+      { identityId: link.id, changeReason: "Retired.", now: NOW },
+      db,
+    );
 
-    expect(resolveOidcAdmission({ claims: claims(), config: CONFIG }, db)).toEqual({
+    expect(
+      resolveOidcAdmission({ claims: claims(), config: CONFIG }, db),
+    ).toEqual({
       ok: false,
       reason: "identity_retired",
     });
@@ -169,9 +223,13 @@ describe("OIDC admission", () => {
   it("denies an inactive local user", () => {
     const { db, sqlite } = setup();
     linkReviewer(db);
-    sqlite.prepare(`UPDATE users SET is_active = 0 WHERE id = 'user-reviewer'`).run();
+    sqlite
+      .prepare(`UPDATE users SET is_active = 0 WHERE id = 'user-reviewer'`)
+      .run();
 
-    expect(resolveOidcAdmission({ claims: claims(), config: CONFIG }, db)).toEqual({
+    expect(
+      resolveOidcAdmission({ claims: claims(), config: CONFIG }, db),
+    ).toEqual({
       ok: false,
       reason: "user_inactive",
     });
@@ -182,7 +240,9 @@ describe("OIDC admission", () => {
     linkReviewer(db);
 
     const { superscriber_role_group_ids: _drop, ...noClaim } = claims();
-    expect(resolveOidcAdmission({ claims: noClaim, config: CONFIG }, db)).toEqual({
+    expect(
+      resolveOidcAdmission({ claims: noClaim, config: CONFIG }, db),
+    ).toEqual({
       ok: false,
       reason: "missing_claim",
     });
@@ -197,7 +257,9 @@ describe("OIDC admission", () => {
     expect(
       resolveOidcAdmission(
         {
-          claims: claims({ superscriber_role_group_ids: [GROUPS.reviewer, GROUPS.admin] }),
+          claims: claims({
+            superscriber_role_group_ids: [GROUPS.reviewer, GROUPS.admin],
+          }),
           config: CONFIG,
         },
         db,
@@ -208,9 +270,13 @@ describe("OIDC admission", () => {
   it("denies when mapped role disagrees with the local role", () => {
     const { db, sqlite } = setup();
     linkReviewer(db);
-    sqlite.prepare(`UPDATE users SET role = 'approver' WHERE id = 'user-reviewer'`).run();
+    sqlite
+      .prepare(`UPDATE users SET role = 'approver' WHERE id = 'user-reviewer'`)
+      .run();
 
-    expect(resolveOidcAdmission({ claims: claims(), config: CONFIG }, db)).toEqual({
+    expect(
+      resolveOidcAdmission({ claims: claims(), config: CONFIG }, db),
+    ).toEqual({
       ok: false,
       reason: "role_mismatch",
     });
@@ -219,7 +285,9 @@ describe("OIDC admission", () => {
   it("records only a redacted denial during the pre-mint admission check", () => {
     const { db, sqlite } = setup();
     const link = linkReviewer(db);
-    sqlite.prepare(`UPDATE users SET role = 'approver' WHERE id = 'user-reviewer'`).run();
+    sqlite
+      .prepare(`UPDATE users SET role = 'approver' WHERE id = 'user-reviewer'`)
+      .run();
 
     const result = resolveOidcAdmission(
       {
@@ -246,7 +314,9 @@ describe("OIDC admission", () => {
     expect(rows[0].metadata).not.toContain("subject-secret-1");
     expect(rows[0].metadata).not.toContain(GROUPS.reviewer);
     const identity = sqlite
-      .prepare(`SELECT last_login_at AS lastLoginAt FROM external_identities WHERE id = ?`)
+      .prepare(
+        `SELECT last_login_at AS lastLoginAt FROM external_identities WHERE id = ?`,
+      )
       .get(link.id) as { lastLoginAt: string | null };
     expect(identity.lastLoginAt).toBeNull();
   });
@@ -264,8 +334,67 @@ describe("OIDC admission", () => {
     expect(result.ok).toBe(true);
     expect(events(sqlite)).toHaveLength(0);
     const row = sqlite
-      .prepare(`SELECT last_login_at AS lla FROM external_identities WHERE id = ?`)
+      .prepare(
+        `SELECT last_login_at AS lla FROM external_identities WHERE id = ?`,
+      )
       .get(link.id) as { lla: string | null };
     expect(row.lla).toBeNull();
   });
+});
+
+it("revives self-deactivated OIDC accounts only after every admission guard passes at sign-in", () => {
+  const { db, sqlite } = setup();
+  try {
+    linkReviewer(db);
+    sqlite
+      .prepare(
+        "UPDATE users SET is_active = 0, deactivated_by_user_id = id WHERE id = ?",
+      )
+      .run("user-reviewer");
+    expect(
+      resolveOidcAdmission(
+        {
+          claims: claims({ superscriber_role_group_ids: [GROUPS.admin] }),
+          config: CONFIG,
+        },
+        db,
+      ),
+    ).toMatchObject({ ok: false, reason: "role_mismatch" });
+    expect(
+      sqlite
+        .prepare("SELECT is_active FROM users WHERE id = ?")
+        .get("user-reviewer"),
+    ).toEqual({ is_active: 0 });
+    expect(
+      resolveOidcAdmission(
+        { claims: claims(), config: CONFIG, recordEvent: false },
+        db,
+      ).ok,
+    ).toBe(true);
+    expect(
+      sqlite
+        .prepare("SELECT is_active FROM users WHERE id = ?")
+        .get("user-reviewer"),
+    ).toEqual({ is_active: 0 });
+    expect(
+      resolveOidcAdmission({ claims: claims(), config: CONFIG }, db).ok,
+    ).toBe(true);
+    expect(
+      sqlite
+        .prepare(
+          "SELECT is_active, deactivated_by_user_id FROM users WHERE id = ?",
+        )
+        .get("user-reviewer"),
+    ).toEqual({ is_active: 1, deactivated_by_user_id: null });
+    sqlite
+      .prepare(
+        "UPDATE users SET is_active = 0, deactivated_by_user_id = ? WHERE id = ?",
+      )
+      .run("user-operator", "user-reviewer");
+    expect(
+      resolveOidcAdmission({ claims: claims(), config: CONFIG }, db),
+    ).toMatchObject({ ok: false, reason: "user_inactive" });
+  } finally {
+    sqlite.close();
+  }
 });

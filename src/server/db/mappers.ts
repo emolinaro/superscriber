@@ -84,6 +84,7 @@ export function toAppUser(row: UserRow): AppUser {
     displayName: row.displayName,
     role: row.role,
     isActive: row.isActive,
+    mustChangePassword: row.mustChangePassword,
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,
   };

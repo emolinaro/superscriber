@@ -31,15 +31,23 @@ export type LinkedUserRecord = {
   displayName: string;
   role: UserRole;
   isActive: boolean;
+  deactivatedByUserId: string | null;
   authVersion: number;
 };
 
 export type IdentityLinkResolution =
-  | { status: "linked"; identity: ExternalIdentityRecord; user: LinkedUserRecord }
+  | {
+      status: "linked";
+      identity: ExternalIdentityRecord;
+      user: LinkedUserRecord;
+    }
   | { status: "retired"; identity: ExternalIdentityRecord }
   | { status: "unlinked" };
 
-function safeRecord(input: Parameters<typeof recordSecurityEvent>[0], db: AppDatabase) {
+function safeRecord(
+  input: Parameters<typeof recordSecurityEvent>[0],
+  db: AppDatabase,
+) {
   try {
     recordSecurityEvent(input, db);
   } catch {
@@ -53,6 +61,7 @@ const LINKED_USER_COLUMNS = {
   displayName: users.displayName,
   role: users.role,
   isActive: users.isActive,
+  deactivatedByUserId: users.deactivatedByUserId,
   authVersion: users.authVersion,
 } as const;
 
@@ -65,7 +74,12 @@ export function resolveIdentityLink(
     .select({ identity: externalIdentities, user: LINKED_USER_COLUMNS })
     .from(externalIdentities)
     .innerJoin(users, eq(externalIdentities.userId, users.id))
-    .where(and(eq(externalIdentities.issuer, issuer), eq(externalIdentities.subject, subject)))
+    .where(
+      and(
+        eq(externalIdentities.issuer, issuer),
+        eq(externalIdentities.subject, subject),
+      ),
+    )
     .get();
 
   if (!row) {
@@ -97,7 +111,9 @@ export function applyIdentityLink(
     .where(eq(users.id, params.userId))
     .get();
   if (!user) {
-    throw new Error(`Cannot link an identity to unknown user ${params.userId}.`);
+    throw new Error(
+      `Cannot link an identity to unknown user ${params.userId}.`,
+    );
   }
 
   const existingPair = db
@@ -294,7 +310,14 @@ export function offboardLinkedUser(
 ): { revokedSessionCount: number } {
   const result = db.transaction((tx) => {
     tx.update(users)
-      .set({ isActive: false, updatedAt: (params.now ?? new Date()).toISOString() })
+      .set({
+        isActive: false,
+        deactivatedByUserId:
+          params.actorUserId === params.userId
+            ? null
+            : (params.actorUserId ?? null),
+        updatedAt: (params.now ?? new Date()).toISOString(),
+      })
       .where(eq(users.id, params.userId))
       .run();
 
@@ -310,7 +333,8 @@ export function offboardLinkedUser(
       type: "identity.offboarded",
       outcome: "success",
       userId: params.userId,
-      detail: "External identity offboarded; sessions revoked and user deactivated.",
+      detail:
+        "External identity offboarded; sessions revoked and user deactivated.",
       metadata: { revokedSessionCount: result.revokedSessionCount },
       now: params.now,
     },
@@ -325,7 +349,10 @@ export function offboardLinkedUser(
  * revision, approval, action-session, or audit references exist. Operators
  * use deactivation, not deletion.
  */
-export function assertUserDeletionBlocked(userId: string, db: AppDatabase = getAppDb()): void {
+export function assertUserDeletionBlocked(
+  userId: string,
+  db: AppDatabase = getAppDb(),
+): void {
   const linkCount = db
     .select({ count: sql<number>`count(*)` })
     .from(externalIdentities)
@@ -362,7 +389,12 @@ export function assertUserDeletionBlocked(userId: string, db: AppDatabase = getA
   const revisionCount = db
     .select({ count: sql<number>`count(*)` })
     .from(revisions)
-    .where(or(eq(revisions.createdByUserId, userId), eq(revisions.submittedByUserId, userId)))
+    .where(
+      or(
+        eq(revisions.createdByUserId, userId),
+        eq(revisions.submittedByUserId, userId),
+      ),
+    )
     .get()!.count;
   if (revisionCount > 0) {
     throw new Error(

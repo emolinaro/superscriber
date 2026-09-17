@@ -14,10 +14,17 @@ import {
   listLocalUsers,
 } from "@/server/access/service";
 import { recordSecurityEvent } from "@/server/auth/security-events";
-import { actorContextForPrincipal, insertAuditEvent } from "@/server/casefile/audit";
+import {
+  actorContextForPrincipal,
+  insertAuditEvent,
+} from "@/server/casefile/audit";
 import { CasefileCommandError } from "@/server/casefile/errors";
 import { loadResetMailConfig } from "@/server/auth/reset-mail-config";
-import { getAppDb, resolveLedgerSnapshotDir, type AppDatabase } from "@/server/db/client";
+import {
+  getAppDb,
+  resolveLedgerSnapshotDir,
+  type AppDatabase,
+} from "@/server/db/client";
 import {
   deserializeSegments,
   toApprovalRecord,
@@ -45,14 +52,19 @@ import {
   webauthnCredentials,
   workspaces,
 } from "@/server/db/schema";
-import { formatDateTimeIso, formatDateTimeUtc, formatRoleLabel } from "@/lib/format";
+import {
+  formatDateTimeIso,
+  formatDateTimeUtc,
+  formatRoleLabel,
+} from "@/lib/format";
 import {
   buildRecordingHref,
   deriveStageForSelection,
   formatWorkflowStageLabel,
 } from "@/server/casefile/read-model";
 
-export type AdministrationSection = "accounts" | "assignments" | "policy" | "discipline";
+export type AdministrationSection =
+  "accounts" | "assignments" | "policy" | "discipline";
 
 export type AdministrationAssignmentCompatibility = {
   allowed: boolean;
@@ -93,6 +105,8 @@ export type AdministrationAccountsViewModel = {
       email: string;
       role: Principal["role"];
       roleLabel: string;
+      isActive: boolean;
+      isRemoved: boolean;
       activeAssignmentCount: number;
       createdAt: string;
       createdAtLabel: string;
@@ -245,7 +259,8 @@ function parseAssignmentFilters(
     recordingId: firstValue(values.recordingId) ?? null,
     userId: firstValue(values.userId) ?? null,
     role:
-      firstValue(values.role) === "reviewer" || firstValue(values.role) === "approver"
+      firstValue(values.role) === "reviewer" ||
+      firstValue(values.role) === "approver"
         ? (firstValue(values.role) as "reviewer" | "approver")
         : null,
     status: firstValue(values.status) === "history" ? "history" : "active",
@@ -301,10 +316,14 @@ function stageLabelForRecording(
   decisionMap: Map<string, DecisionRows>,
 ) {
   const revision = recording.currentRevisionId
-    ? revisionMap.get(recording.currentRevisionId) ?? null
+    ? (revisionMap.get(recording.currentRevisionId) ?? null)
     : null;
   return formatWorkflowStageLabel(
-    deriveStageForSelection(recording, revision, decisionMap.get(recording.id) ?? []),
+    deriveStageForSelection(
+      recording,
+      revision,
+      decisionMap.get(recording.id) ?? [],
+    ),
   );
 }
 
@@ -327,7 +346,10 @@ function completedRevisionLabel(
 function assignmentCompatibility(
   recording: Pick<
     Recording,
-    "integrityState" | "transcriptJobState" | "approvedRevisionId" | "currentRevisionId"
+    | "integrityState"
+    | "transcriptJobState"
+    | "approvedRevisionId"
+    | "currentRevisionId"
   >,
   role: AssignmentRole,
 ): AdministrationAssignmentCompatibility {
@@ -338,7 +360,10 @@ function assignmentCompatibility(
       reason: null,
     };
   } catch (error) {
-    if (error instanceof CasefileCommandError && error.code === "VALIDATION_ERROR") {
+    if (
+      error instanceof CasefileCommandError &&
+      error.code === "VALIDATION_ERROR"
+    ) {
       return {
         allowed: false,
         label: "Unavailable",
@@ -364,7 +389,8 @@ function endedAssignmentPredicate() {
 
 function ledgerCounts(db: AppDatabase) {
   return {
-    auditEvents: db.select({ id: auditEvents.id }).from(auditEvents).all().length,
+    auditEvents: db.select({ id: auditEvents.id }).from(auditEvents).all()
+      .length,
     decisionRows: db.select({ id: approvals.id }).from(approvals).all().length,
     govActionSessions: db
       .select({ id: adminActionSessions.id })
@@ -375,7 +401,10 @@ function ledgerCounts(db: AppDatabase) {
       .from(recordingAssignments)
       .where(endedAssignmentPredicate())
       .all().length,
-    securityEvents: db.select({ id: securityEvents.id }).from(securityEvents).all().length,
+    securityEvents: db
+      .select({ id: securityEvents.id })
+      .from(securityEvents)
+      .all().length,
   };
 }
 
@@ -394,7 +423,11 @@ function writeLedgerSnapshot(
   const path = join(snapshotDir, `${kind}-${stamp}.json`);
   writeFileSync(
     path,
-    JSON.stringify({ type: kind, actorUserId, at: new Date().toISOString(), tables }, null, 2),
+    JSON.stringify(
+      { type: kind, actorUserId, at: new Date().toISOString(), tables },
+      null,
+      2,
+    ),
     { mode: 0o600 },
   );
   return path;
@@ -439,10 +472,7 @@ export function resetWorkspaceLedger(
     tx.delete(auditEvents).run();
     tx.delete(approvals).run();
     tx.delete(adminActionSessions).run();
-    tx
-      .delete(recordingAssignments)
-      .where(endedAssignmentPredicate())
-      .run();
+    tx.delete(recordingAssignments).where(endedAssignmentPredicate()).run();
     tx.delete(securityEvents).run();
 
     return recordSecurityEvent(
@@ -479,15 +509,25 @@ export function deleteRecordingPermanently(
   db: AppDatabase = getAppDb(),
   snapshotDir: string = resolveLedgerSnapshotDir(),
 ) {
-  const row = db.select().from(recordings).where(eq(recordings.id, input.recordingId)).get();
+  const row = db
+    .select()
+    .from(recordings)
+    .where(eq(recordings.id, input.recordingId))
+    .get();
   if (!row) {
-    throw new CasefileCommandError("NOT_FOUND", "No recording with that id exists.");
+    throw new CasefileCommandError(
+      "NOT_FOUND",
+      "No recording with that id exists.",
+    );
   }
   if (row.title !== input.expectedTitle.trim()) {
     throw new CasefileCommandError(
       "VALIDATION_ERROR",
       "Type the recording title exactly to confirm permanent deletion.",
-      { expectedTitle: "Type the recording title exactly to confirm permanent deletion." },
+      {
+        expectedTitle:
+          "Type the recording title exactly to confirm permanent deletion.",
+      },
     );
   }
 
@@ -506,8 +546,16 @@ export function deleteRecordingPermanently(
     input.actorUserId,
     {
       recording: [row],
-      revisions: db.select().from(revisions).where(eq(revisions.recordingId, input.recordingId)).all(),
-      approvals: db.select().from(approvals).where(eq(approvals.recordingId, input.recordingId)).all(),
+      revisions: db
+        .select()
+        .from(revisions)
+        .where(eq(revisions.recordingId, input.recordingId))
+        .all(),
+      approvals: db
+        .select()
+        .from(approvals)
+        .where(eq(approvals.recordingId, input.recordingId))
+        .all(),
       recordingAssignments: db
         .select()
         .from(recordingAssignments)
@@ -563,16 +611,24 @@ export function deleteRecordingPermanently(
     tx.delete(adminActionSessions)
       .where(eq(adminActionSessions.recordingId, input.recordingId))
       .run();
-    tx.delete(approvals).where(eq(approvals.recordingId, input.recordingId)).run();
-    tx.delete(revisions).where(eq(revisions.recordingId, input.recordingId)).run();
+    tx.delete(approvals)
+      .where(eq(approvals.recordingId, input.recordingId))
+      .run();
+    tx.delete(revisions)
+      .where(eq(revisions.recordingId, input.recordingId))
+      .run();
     tx.delete(ingestionSessions)
       .where(eq(ingestionSessions.recordingId, input.recordingId))
       .run();
-    tx.delete(transcriptJobs).where(eq(transcriptJobs.recordingId, input.recordingId)).run();
+    tx.delete(transcriptJobs)
+      .where(eq(transcriptJobs.recordingId, input.recordingId))
+      .run();
 
     // Every audit line of the casefile dies with it - except the deletion
     // record above (security_events is global, not per-recording).
-    tx.delete(auditEvents).where(eq(auditEvents.recordingId, input.recordingId)).run();
+    tx.delete(auditEvents)
+      .where(eq(auditEvents.recordingId, input.recordingId))
+      .run();
 
     tx.delete(recordings).where(eq(recordings.id, input.recordingId)).run();
   });
@@ -611,7 +667,10 @@ export function recoverRevisionVersion(
     .where(eq(recordings.id, input.recordingId))
     .get();
   if (!recordingRow) {
-    throw new CasefileCommandError("NOT_FOUND", "No recording with that id exists.");
+    throw new CasefileCommandError(
+      "NOT_FOUND",
+      "No recording with that id exists.",
+    );
   }
   if (recordingRow.pendingRevisionId) {
     // Captain decision 2026-08-10: recovery while a submission is pending
@@ -635,10 +694,16 @@ export function recoverRevisionVersion(
     )
     .get();
   if (!sourceRow) {
-    throw new CasefileCommandError("NOT_FOUND", "That revision is not part of this casefile.");
+    throw new CasefileCommandError(
+      "NOT_FOUND",
+      "That revision is not part of this casefile.",
+    );
   }
   if (sourceRow.id === recordingRow.currentRevisionId) {
-    throw new CasefileCommandError("STATE_CHANGED", "That revision is already the active one.");
+    throw new CasefileCommandError(
+      "STATE_CHANGED",
+      "That revision is already the active one.",
+    );
   }
 
   const nextVersion =
@@ -654,7 +719,10 @@ export function recoverRevisionVersion(
     .where(eq(usersTable.id, input.actorUserId))
     .get();
   if (!actorRow) {
-    throw new CasefileCommandError("ACCESS_DENIED", "The acting account no longer exists.");
+    throw new CasefileCommandError(
+      "ACCESS_DENIED",
+      "The acting account no longer exists.",
+    );
   }
   const actorPrincipal: Principal = {
     userId: actorRow.id,
@@ -731,7 +799,10 @@ export function recoverRevisionVersion(
           outcome: "success",
           userId: input.actorUserId,
           detail: `Administrator recovered revision v${sourceRow.version} as the active draft.`,
-          metadata: { recordingId: input.recordingId, fromVersion: sourceRow.version },
+          metadata: {
+            recordingId: input.recordingId,
+            fromVersion: sourceRow.version,
+          },
         },
         tx,
       );
@@ -740,7 +811,11 @@ export function recoverRevisionVersion(
     }
   });
 
-  return { recording: toRecording(recordingRow), newRevisionId, newVersion: nextVersion };
+  return {
+    recording: toRecording(recordingRow),
+    newRevisionId,
+    newVersion: nextVersion,
+  };
 }
 
 // Policy profile editing (demo-governance-bringback): the workspace policy
@@ -751,7 +826,10 @@ export function setWorkspacePolicyProfile(
   db: AppDatabase = getAppDb(),
 ) {
   if (!POLICY_PROFILES.includes(input.profileId)) {
-    throw new CasefileCommandError("VALIDATION_ERROR", "Unknown policy profile.");
+    throw new CasefileCommandError(
+      "VALIDATION_ERROR",
+      "Unknown policy profile.",
+    );
   }
 
   const workspace = db.select().from(workspaces).get();
@@ -912,12 +990,25 @@ export function listAdministration(
       .all()
       .map(toRecordingAssignment)
       .filter((assignment) =>
-        isHistory ? assignment.status !== "active" : assignment.status === "active",
+        isHistory
+          ? assignment.status !== "active"
+          : assignment.status === "active",
       )
-      .filter((assignment) => !filters.recordingId || assignment.recordingId === filters.recordingId)
-      .filter((assignment) => !filters.userId || assignment.userId === filters.userId)
-      .filter((assignment) => !filters.role || assignment.assignmentRole === filters.role)
-      .filter((assignment) => !filters.from || assignment.updatedAt >= filters.from)
+      .filter(
+        (assignment) =>
+          !filters.recordingId ||
+          assignment.recordingId === filters.recordingId,
+      )
+      .filter(
+        (assignment) => !filters.userId || assignment.userId === filters.userId,
+      )
+      .filter(
+        (assignment) =>
+          !filters.role || assignment.assignmentRole === filters.role,
+      )
+      .filter(
+        (assignment) => !filters.from || assignment.updatedAt >= filters.from,
+      )
       .filter((assignment) => !filters.to || assignment.updatedAt <= filters.to)
       .map((assignment) => {
         const recording = recordingMap.get(assignment.recordingId);
@@ -931,31 +1022,48 @@ export function listAdministration(
           id: assignment.id,
           recordingId: assignment.recordingId,
           recordingTitle: recording.title,
-          stageLabel: stageLabelForRecording(recording, revisionMap, decisionMap),
+          stageLabel: stageLabelForRecording(
+            recording,
+            revisionMap,
+            decisionMap,
+          ),
           userId: assignment.userId,
-          userDisplayName: user?.displayName ?? `Unknown ${formatRoleLabel(assignment.assignmentRole)}`,
+          userDisplayName:
+            user?.displayName ??
+            `Unknown ${formatRoleLabel(assignment.assignmentRole)}`,
           userEmail: user?.email ?? "Unknown email",
           role: assignment.assignmentRole,
           roleLabel: formatRoleLabel(assignment.assignmentRole),
           status: assignment.status,
           statusLabel: statusLabel(assignment.status),
-          outcomeLabel: assignment.status === "active" ? null : statusLabel(assignment.status),
+          outcomeLabel:
+            assignment.status === "active"
+              ? null
+              : statusLabel(assignment.status),
           completedRevisionId: assignment.completedRevisionId,
           completedRevisionLabel:
             assignment.status === "active"
               ? null
-              : completedRevisionLabel(assignment.completedRevisionId, revisionMap),
+              : completedRevisionLabel(
+                  assignment.completedRevisionId,
+                  revisionMap,
+                ),
           updatedAt: assignment.updatedAt,
           updatedAtLabel: formatDateTimeUtc(assignment.updatedAt),
           updatedAtIso: formatDateTimeIso(assignment.updatedAt),
-          href: buildRecordingHref(assignment.recordingId, assignment.completedRevisionId),
+          href: buildRecordingHref(
+            assignment.recordingId,
+            assignment.completedRevisionId,
+          ),
         };
       });
 
     return {
       section: "assignments",
       filters,
-      columns: isHistory ? [...HISTORY_ASSIGNMENT_COLUMNS] : [...ACTIVE_ASSIGNMENT_COLUMNS],
+      columns: isHistory
+        ? [...HISTORY_ASSIGNMENT_COLUMNS]
+        : [...ACTIVE_ASSIGNMENT_COLUMNS],
       stateOptions: [...ASSIGNMENT_STATUS_OPTIONS],
       recordings: Array.from(recordingMap.values()).map((recording) => ({
         recordingId: recording.id,
@@ -999,7 +1107,11 @@ export function listAdministration(
   const query = firstValue(values.query)?.trim() ?? "";
   const needle = query.toLowerCase();
   const localUsers = listLocalUsers(db);
-  const designationRow = db.select().from(authControl).where(eq(authControl.id, 1)).get();
+  const designationRow = db
+    .select()
+    .from(authControl)
+    .where(eq(authControl.id, 1))
+    .get();
   const activeAdminCount = localUsers.filter(
     (user) => user.role === "admin" && user.isActive,
   ).length;
@@ -1043,14 +1155,15 @@ export function listAdministration(
       email: user.email,
       role: user.role,
       roleLabel: formatRoleLabel(user.role),
+      isActive: user.isActive,
+      isRemoved: user.isRemoved,
       activeAssignmentCount: user.activeAssignmentCount,
       activeAssignments: activeAssignmentFacts.get(user.id) ?? {
         reviewer: 0,
         approver: 0,
       },
       hasActiveOidcIdentity: oidcLinkedUserIds.has(user.id),
-      isBreakGlassAdministrator:
-        designationRow?.breakGlassUserId === user.id,
+      isBreakGlassAdministrator: designationRow?.breakGlassUserId === user.id,
       isSoleActiveAdministrator:
         user.role === "admin" && user.isActive && activeAdminCount === 1,
       createdAt: user.createdAt,
@@ -1081,7 +1194,9 @@ export function listAdministration(
       ? db
           .select({ count: sql<number>`count(*)` })
           .from(webauthnCredentials)
-          .where(eq(webauthnCredentials.userId, designationRow.breakGlassUserId))
+          .where(
+            eq(webauthnCredentials.userId, designationRow.breakGlassUserId),
+          )
           .get()!.count
       : 0,
     recoveryCodeCount: designationRow
@@ -1090,7 +1205,10 @@ export function listAdministration(
           .from(breakGlassRecoveryCodes)
           .where(
             and(
-              eq(breakGlassRecoveryCodes.breakGlassUserId, designationRow.breakGlassUserId),
+              eq(
+                breakGlassRecoveryCodes.breakGlassUserId,
+                designationRow.breakGlassUserId,
+              ),
               isNull(breakGlassRecoveryCodes.usedAt),
               isNull(breakGlassRecoveryCodes.rotatedAt),
             ),
@@ -1108,9 +1226,12 @@ export function listAdministration(
   try {
     resetMailConfigured = loadResetMailConfig().mode === "smtp";
   } catch (error) {
-    console.error("reset mail configuration could not be read for the accounts view", {
-      message: error instanceof Error ? error.message : String(error),
-    });
+    console.error(
+      "reset mail configuration could not be read for the accounts view",
+      {
+        message: error instanceof Error ? error.message : String(error),
+      },
+    );
   }
 
   return {

@@ -1,5 +1,12 @@
 import { sql } from "drizzle-orm";
-import { index, integer, sqliteTable, text, uniqueIndex } from "drizzle-orm/sqlite-core";
+import {
+  index,
+  integer,
+  sqliteTable,
+  text,
+  uniqueIndex,
+  type AnySQLiteColumn,
+} from "drizzle-orm/sqlite-core";
 import {
   APPROVAL_STATES,
   ASSIGNMENT_STATUSES,
@@ -35,7 +42,9 @@ export const schemaMigrations = sqliteTable("schema_migrations", {
 });
 
 export const policyProfiles = sqliteTable("policy_profiles", {
-  id: text("id", { enum: POLICY_PROFILES }).$type<PolicyProfileId>().primaryKey(),
+  id: text("id", { enum: POLICY_PROFILES })
+    .$type<PolicyProfileId>()
+    .primaryKey(),
   label: text("label").notNull(),
   description: text("description").notNull(),
 });
@@ -66,6 +75,15 @@ export const users = sqliteTable(
     passwordHash: text("password_hash"),
     role: text("role", { enum: USER_ROLES }).$type<UserRole>().notNull(),
     isActive: integer("is_active", { mode: "boolean" }).notNull().default(true),
+    mustChangePassword: integer("must_change_password", { mode: "boolean" })
+      .notNull()
+      .default(false),
+    // Null for legacy/operator deactivation. Only an exact self-reference permits sign-in revival.
+    deactivatedByUserId: text("deactivated_by_user_id").references(
+      (): AnySQLiteColumn => users.id,
+      { onDelete: "restrict" },
+    ),
+    removedAt: text("removed_at"),
     // Appearance preference; the localStorage boot copy handles first paint,
     // this row is the per-user durable sync across devices.
     themePreference: text("theme_preference", {
@@ -98,7 +116,9 @@ export const authSessions = sqliteTable(
     userId: text("user_id")
       .notNull()
       .references(() => users.id, { onDelete: "restrict" }),
-    authSource: text("auth_source", { enum: AUTH_SOURCES }).$type<AuthSource>().notNull(),
+    authSource: text("auth_source", { enum: AUTH_SOURCES })
+      .$type<AuthSource>()
+      .notNull(),
     authVersion: integer("auth_version").notNull(),
     providerSid: text("provider_sid"),
     externalIdentityId: text("external_identity_id").references(
@@ -117,13 +137,19 @@ export const authSessions = sqliteTable(
     emergencyActivationId: text("emergency_activation_id"),
   },
   (table) => ({
-    userStatusIdx: index("auth_sessions_user_status_idx").on(table.userId, table.status),
-    providerSidIdx: index("auth_sessions_provider_sid_idx").on(table.providerSid),
+    userStatusIdx: index("auth_sessions_user_status_idx").on(
+      table.userId,
+      table.status,
+    ),
+    providerSidIdx: index("auth_sessions_provider_sid_idx").on(
+      table.providerSid,
+    ),
   }),
 );
 
 export const EXTERNAL_IDENTITY_STATUSES = ["active", "retired"] as const;
-export type ExternalIdentityStatus = (typeof EXTERNAL_IDENTITY_STATUSES)[number];
+export type ExternalIdentityStatus =
+  (typeof EXTERNAL_IDENTITY_STATUSES)[number];
 
 export const externalIdentities = sqliteTable(
   "external_identities",
@@ -187,28 +213,36 @@ export const emergencyActivations = sqliteTable(
     closedAt: text("closed_at"),
   },
   (table) => ({
-    correlationUnique: uniqueIndex("emergency_activations_correlation_unique").on(
-      table.correlationId,
-    ),
+    correlationUnique: uniqueIndex(
+      "emergency_activations_correlation_unique",
+    ).on(table.correlationId),
   }),
 );
 
-export const breakGlassRecoveryCodes = sqliteTable("break_glass_recovery_codes", {
-  id: text("id").primaryKey(),
-  breakGlassUserId: text("break_glass_user_id")
-    .notNull()
-    .references(() => users.id, { onDelete: "restrict" }),
-  codeHash: text("code_hash").notNull(),
-  createdAt: text("created_at").notNull(),
-  usedAt: text("used_at"),
-  rotatedAt: text("rotated_at"),
-});
+export const breakGlassRecoveryCodes = sqliteTable(
+  "break_glass_recovery_codes",
+  {
+    id: text("id").primaryKey(),
+    breakGlassUserId: text("break_glass_user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "restrict" }),
+    codeHash: text("code_hash").notNull(),
+    createdAt: text("created_at").notNull(),
+    usedAt: text("used_at"),
+    rotatedAt: text("rotated_at"),
+  },
+);
 
 export const PASSWORD_RESET_TOKEN_SOURCES = ["self_service", "admin"] as const;
-export type PasswordResetTokenSource = (typeof PASSWORD_RESET_TOKEN_SOURCES)[number];
+export type PasswordResetTokenSource =
+  (typeof PASSWORD_RESET_TOKEN_SOURCES)[number];
 
-export const PASSWORD_RESET_TOKEN_DELIVERIES = ["email", "operator_handoff"] as const;
-export type PasswordResetTokenDelivery = (typeof PASSWORD_RESET_TOKEN_DELIVERIES)[number];
+export const PASSWORD_RESET_TOKEN_DELIVERIES = [
+  "email",
+  "operator_handoff",
+] as const;
+export type PasswordResetTokenDelivery =
+  (typeof PASSWORD_RESET_TOKEN_DELIVERIES)[number];
 
 export const passwordResetTokens = sqliteTable(
   "password_reset_tokens",
@@ -234,7 +268,9 @@ export const passwordResetTokens = sqliteTable(
     invalidatedReason: text("invalidated_reason"),
   },
   (table) => ({
-    tokenHashUnique: uniqueIndex("password_reset_tokens_hash_unique").on(table.tokenHash),
+    tokenHashUnique: uniqueIndex("password_reset_tokens_hash_unique").on(
+      table.tokenHash,
+    ),
     userIdx: index("password_reset_tokens_user_idx").on(table.userId),
   }),
 );
@@ -300,7 +336,9 @@ export const securityEvents = sqliteTable(
     outcome: text("outcome", { enum: SECURITY_EVENT_OUTCOMES })
       .$type<SecurityEventOutcome>()
       .notNull(),
-    userId: text("user_id").references(() => users.id, { onDelete: "set null" }),
+    userId: text("user_id").references(() => users.id, {
+      onDelete: "set null",
+    }),
     sessionId: text("session_id"),
     correlationId: text("correlation_id"),
     sourceZone: text("source_zone"),
@@ -310,7 +348,10 @@ export const securityEvents = sqliteTable(
   },
   (table) => ({
     createdIdx: index("security_events_created_idx").on(table.createdAt),
-    userCreatedIdx: index("security_events_user_created_idx").on(table.userId, table.createdAt),
+    userCreatedIdx: index("security_events_user_created_idx").on(
+      table.userId,
+      table.createdAt,
+    ),
   }),
 );
 
@@ -357,7 +398,9 @@ export const recordings = sqliteTable(
       table.updatedAt,
     ),
     jobStateIdx: index("recordings_job_state_idx").on(table.transcriptJobState),
-    integrityStateIdx: index("recordings_integrity_state_idx").on(table.integrityState),
+    integrityStateIdx: index("recordings_integrity_state_idx").on(
+      table.integrityState,
+    ),
   }),
 );
 
@@ -367,7 +410,9 @@ export const ingestionSessions = sqliteTable(
     id: text("id").primaryKey(),
     recordingId: text("recording_id").notNull(),
     source: text("source").$type<RecordingSource>().notNull(),
-    state: text("state", { enum: INTEGRITY_STATES }).$type<IntegrityState>().notNull(),
+    state: text("state", { enum: INTEGRITY_STATES })
+      .$type<IntegrityState>()
+      .notNull(),
     adapter: text("adapter").notNull(),
     createdByUserId: text("created_by_user_id").references(() => users.id, {
       onDelete: "set null",
@@ -383,7 +428,9 @@ export const ingestionSessions = sqliteTable(
     bytesExpected: integer("bytes_expected"),
   },
   (table) => ({
-    recordingUnique: uniqueIndex("ingestion_sessions_recording_unique").on(table.recordingId),
+    recordingUnique: uniqueIndex("ingestion_sessions_recording_unique").on(
+      table.recordingId,
+    ),
     stateIdx: index("ingestion_sessions_state_idx").on(table.state),
   }),
 );
@@ -393,7 +440,9 @@ export const transcriptJobs = sqliteTable(
   {
     id: text("id").primaryKey(),
     recordingId: text("recording_id").notNull(),
-    state: text("state", { enum: JOB_STATES }).$type<TranscriptJobState>().notNull(),
+    state: text("state", { enum: JOB_STATES })
+      .$type<TranscriptJobState>()
+      .notNull(),
     adapter: text("adapter").notNull(),
     claimedByWorkerId: text("claimed_by_worker_id"),
     attemptCount: integer("attempt_count").notNull().default(0),
@@ -414,10 +463,14 @@ export const transcriptJobs = sqliteTable(
     lastError: text("last_error"),
     lastErrorKind: text("last_error_kind"),
     lastErrorTechnical: text("last_error_technical"),
-    diarizationStatus: text("diarization_status").$type<DiarizationStatus>().notNull(),
+    diarizationStatus: text("diarization_status")
+      .$type<DiarizationStatus>()
+      .notNull(),
   },
   (table) => ({
-    recordingUnique: uniqueIndex("transcript_jobs_recording_unique").on(table.recordingId),
+    recordingUnique: uniqueIndex("transcript_jobs_recording_unique").on(
+      table.recordingId,
+    ),
     stateHeartbeatIdx: index("transcript_jobs_state_heartbeat_idx").on(
       table.state,
       table.lastHeartbeatAt,
@@ -431,9 +484,13 @@ export const revisions = sqliteTable(
     id: text("id").primaryKey(),
     recordingId: text("recording_id").notNull(),
     version: integer("version").notNull(),
-    state: text("state", { enum: REVISION_STATES }).$type<TranscriptRevisionState>().notNull(),
+    state: text("state", { enum: REVISION_STATES })
+      .$type<TranscriptRevisionState>()
+      .notNull(),
     basedOnRevisionId: text("based_on_revision_id"),
-    createdByRole: text("created_by_role").$type<UserRole | "system">().notNull(),
+    createdByRole: text("created_by_role")
+      .$type<UserRole | "system">()
+      .notNull(),
     createdByUserId: text("created_by_user_id").references(() => users.id, {
       onDelete: "set null",
     }),
@@ -447,11 +504,13 @@ export const revisions = sqliteTable(
     segmentsJson: text("segments_json").notNull(),
   },
   (table) => ({
-    recordingVersionUnique: uniqueIndex("revisions_recording_version_unique").on(
+    recordingVersionUnique: uniqueIndex(
+      "revisions_recording_version_unique",
+    ).on(table.recordingId, table.version),
+    recordingStateIdx: index("revisions_recording_state_idx").on(
       table.recordingId,
-      table.version,
+      table.state,
     ),
-    recordingStateIdx: index("revisions_recording_state_idx").on(table.recordingId, table.state),
   }),
 );
 
@@ -461,13 +520,18 @@ export const approvals = sqliteTable(
     id: text("id").primaryKey(),
     recordingId: text("recording_id").notNull(),
     revisionId: text("revision_id").notNull(),
-    state: text("state", { enum: APPROVAL_STATES }).$type<ApprovalState>().notNull(),
-    actorRole: text("actor_role", { enum: USER_ROLES }).$type<UserRole>().notNull(),
+    state: text("state", { enum: APPROVAL_STATES })
+      .$type<ApprovalState>()
+      .notNull(),
+    actorRole: text("actor_role", { enum: USER_ROLES })
+      .$type<UserRole>()
+      .notNull(),
     actorUserId: text("actor_user_id").references(() => users.id, {
       onDelete: "set null",
     }),
     actorDisplayName: text("actor_display_name"),
-    effectiveRole: text("effective_role").$type<ApprovalRecord["effectiveRole"]>(),
+    effectiveRole:
+      text("effective_role").$type<ApprovalRecord["effectiveRole"]>(),
     adminActionSessionId: text("admin_action_session_id"),
     createdAt: text("created_at").notNull(),
     note: text("note"),
@@ -528,9 +592,12 @@ export const recordingAssignments = sqliteTable(
     updatedAt: text("updated_at").notNull(),
     endedAt: text("ended_at"),
     endReason: text("end_reason"),
-    completedRevisionId: text("completed_revision_id").references(() => revisions.id, {
-      onDelete: "set null",
-    }),
+    completedRevisionId: text("completed_revision_id").references(
+      () => revisions.id,
+      {
+        onDelete: "set null",
+      },
+    ),
     removedByUserId: text("removed_by_user_id").references(() => users.id, {
       onDelete: "set null",
     }),
@@ -555,7 +622,9 @@ export const adminActionSessions = sqliteTable(
       .notNull()
       .references(() => users.id),
     recordingId: text("recording_id").notNull(),
-    effectiveRole: text("effective_role").$type<AdminActionSession["effectiveRole"]>().notNull(),
+    effectiveRole: text("effective_role")
+      .$type<AdminActionSession["effectiveRole"]>()
+      .notNull(),
     purpose: text("purpose").notNull(),
     startedAt: text("started_at").notNull(),
     expiresAt: text("expires_at").notNull(),
@@ -563,7 +632,9 @@ export const adminActionSessions = sqliteTable(
     endReason: text("end_reason").$type<AdminActionSession["endReason"]>(),
   },
   (table) => ({
-    recordingIdx: index("admin_action_sessions_recording_idx").on(table.recordingId),
+    recordingIdx: index("admin_action_sessions_recording_idx").on(
+      table.recordingId,
+    ),
   }),
 );
 

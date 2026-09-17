@@ -31,7 +31,7 @@ export function checkSelfServiceEligibility(
       isActive: users.isActive,
     })
     .from(users)
-    .where(eq(users.email, email))
+    .where(and(eq(users.email, email), isNull(users.removedAt)))
     .get();
 
   if (!row || !row.isActive || !row.passwordHash || row.passwordHash.startsWith("disabled:")) {

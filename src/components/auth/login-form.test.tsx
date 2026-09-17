@@ -88,6 +88,24 @@ describe("LoginForm", () => {
     expect(screen.getByLabelText("Password")).toHaveFocus();
   });
 
+  it("passes the account self-service return path through sign-in", async () => {
+    const user = userEvent.setup();
+    mockSignIn.mockResolvedValue({ error: "CredentialsSignin" });
+
+    render(<LoginForm returnTo="/account" />);
+
+    await user.type(screen.getByLabelText("Email"), "reviewer@example.com");
+    await user.type(screen.getByLabelText("Password"), "wrong password");
+    await user.click(screen.getByRole("button", { name: "Sign in" }));
+
+    expect(mockSignIn).toHaveBeenCalledWith("credentials", {
+      email: "reviewer@example.com",
+      password: "wrong password",
+      redirect: false,
+      callbackUrl: "/account",
+    });
+  });
+
   it("treats a CredentialsSignin error in the returned url as wrong credentials", async () => {
     const user = userEvent.setup();
     mockSignIn.mockResolvedValue({

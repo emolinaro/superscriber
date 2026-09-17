@@ -30,7 +30,7 @@ import {
   type SourceZone,
 } from "@/server/auth/management-network";
 import { hasAnyActiveAdmin, hasAnyUsers } from "@/server/auth/service";
-import { getActivePrincipal, resolveAuthorizedReturnTo } from "@/server/session";
+import { getActiveSession, resolveAuthorizedReturnTo } from "@/server/session";
 
 export const dynamic = "force-dynamic";
 
@@ -60,9 +60,14 @@ export default async function LandingPage({
 }) {
   const params = await searchParams;
   const requestedReturnTo = sanitizeReturnTo(firstValue(params.returnTo));
-  const principal = await getActivePrincipal();
-  if (principal) {
-    redirect(resolveAuthorizedReturnTo(principal, requestedReturnTo));
+  const session = await getActiveSession();
+  if (session?.mustChangePassword) {
+    redirect(
+      `/account/password-change?returnTo=${encodeURIComponent(requestedReturnTo)}`,
+    );
+  }
+  if (session) {
+    redirect(resolveAuthorizedReturnTo(session.user, requestedReturnTo));
   }
 
   const anyUsers = await hasAnyUsers();

@@ -16,7 +16,11 @@ import { runMigrations } from "@/server/db/migrations";
  * intentionally update EXPECTED_USER_REFERENCES below.
  */
 
-const EXPECTED_USER_REFERENCES: ReadonlyArray<{ table: string; column: string }> = [
+const EXPECTED_USER_REFERENCES: ReadonlyArray<{
+  table: string;
+  column: string;
+}> = [
+  { table: "users", column: "deactivated_by_user_id" },
   { table: "admin_action_sessions", column: "admin_user_id" },
   { table: "approvals", column: "actor_user_id" },
   { table: "audit_events", column: "actor_user_id" },
@@ -42,9 +46,13 @@ const EXPECTED_USER_REFERENCES: ReadonlyArray<{ table: string; column: string }>
   { table: "revisions", column: "submitted_by_user_id" },
 ];
 
-function sortReferences(references: ReadonlyArray<{ table: string; column: string }>) {
+function sortReferences(
+  references: ReadonlyArray<{ table: string; column: string }>,
+) {
   return [...references].sort((a, b) =>
-    a.table === b.table ? a.column.localeCompare(b.column) : a.table.localeCompare(b.table),
+    a.table === b.table
+      ? a.column.localeCompare(b.column)
+      : a.table.localeCompare(b.table),
   );
 }
 
@@ -62,7 +70,9 @@ function listUserReferences(sqlite: Database.Database) {
   const references: Array<{ table: string; column: string }> = [];
   for (const { name } of tables) {
     const fks = sqlite
-      .prepare(`SELECT "from" AS columnName, "table" AS refTable FROM pragma_foreign_key_list(?)`)
+      .prepare(
+        `SELECT "from" AS columnName, "table" AS refTable FROM pragma_foreign_key_list(?)`,
+      )
       .all(name) as Array<{ columnName: string; refTable: string }>;
 
     for (const fk of fks) {
@@ -73,7 +83,9 @@ function listUserReferences(sqlite: Database.Database) {
   }
 
   return references.sort((a, b) =>
-    a.table === b.table ? a.column.localeCompare(b.column) : a.table.localeCompare(b.table),
+    a.table === b.table
+      ? a.column.localeCompare(b.column)
+      : a.table.localeCompare(b.table),
   );
 }
 
@@ -81,7 +93,9 @@ function referenceCounts(sqlite: Database.Database) {
   const counts: Record<string, number> = {};
   for (const { table, column } of EXPECTED_USER_REFERENCES) {
     const row = sqlite
-      .prepare(`SELECT COUNT(*) AS count FROM "${table}" WHERE "${column}" IS NOT NULL`)
+      .prepare(
+        `SELECT COUNT(*) AS count FROM "${table}" WHERE "${column}" IS NOT NULL`,
+      )
       .get() as { count: number };
     counts[`${table}.${column}`] = row.count;
   }
@@ -89,7 +103,9 @@ function referenceCounts(sqlite: Database.Database) {
 }
 
 function userIds(sqlite: Database.Database) {
-  const rows = sqlite.prepare(`SELECT id FROM users ORDER BY id`).all() as Array<{ id: string }>;
+  const rows = sqlite
+    .prepare(`SELECT id FROM users ORDER BY id`)
+    .all() as Array<{ id: string }>;
   return rows.map((row) => row.id);
 }
 
@@ -169,7 +185,9 @@ describe("identity contract inventory", () => {
     const sqlite = new Database(":memory:");
     try {
       runMigrations(sqlite);
-      expect(listUserReferences(sqlite)).toEqual(sortReferences(EXPECTED_USER_REFERENCES));
+      expect(listUserReferences(sqlite)).toEqual(
+        sortReferences(EXPECTED_USER_REFERENCES),
+      );
     } finally {
       sqlite.close();
     }
@@ -182,6 +200,7 @@ describe("identity contract inventory", () => {
       seedGovernedFixture(sqlite);
 
       expect(referenceCounts(sqlite)).toEqual({
+        "users.deactivated_by_user_id": 0,
         "admin_action_sessions.admin_user_id": 1,
         "approvals.actor_user_id": 1,
         "audit_events.actor_user_id": 1,
@@ -209,6 +228,27 @@ describe("identity contract inventory", () => {
 
       const orphans = sqlite.prepare(`PRAGMA foreign_key_check`).all();
       expect(orphans).toEqual([]);
+    } finally {
+      sqlite.close();
+    }
+  });
+
+  it("preserves id-based references when a removed account releases its email", () => {
+    const sqlite = new Database(":memory:");
+    try {
+      runMigrations(sqlite);
+      sqlite.pragma("foreign_keys = ON");
+      seedGovernedFixture(sqlite);
+      const beforeIds = userIds(sqlite);
+      const beforeCounts = referenceCounts(sqlite);
+
+      sqlite
+        .prepare(`UPDATE users SET email = 'removed:user-reviewer' WHERE id = 'user-reviewer'`)
+        .run();
+
+      expect(userIds(sqlite)).toEqual(beforeIds);
+      expect(referenceCounts(sqlite)).toEqual(beforeCounts);
+      expect(sqlite.prepare(`PRAGMA foreign_key_check`).all()).toEqual([]);
     } finally {
       sqlite.close();
     }

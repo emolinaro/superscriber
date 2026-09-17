@@ -43,6 +43,14 @@ export function buildAuthNotice(
       focusHeading: true,
     };
   }
+  if (reason === "account-deactivated") {
+    return {
+      tone: "ok",
+      message:
+        "Your account is deactivated and signed out everywhere. Sign in again to restore access after self-deactivation. Administrator deactivation still requires administrator reactivation.",
+      focusHeading: true,
+    };
+  }
   if (reason === "logged-out") {
     return {
       tone: "ok",
@@ -77,7 +85,8 @@ export function buildAuthNotice(
  *   locally claimed admin could not sign in; the break-glass runbook owns
  *   recovery instead
  */
-export type SignUpSurface = "first-run" | "provisioned" | "recovery" | "recovery-break-glass";
+export type SignUpSurface =
+  "first-run" | "provisioned" | "recovery" | "recovery-break-glass";
 
 export function resolveSignUpSurface(input: {
   anyUsers: boolean;
@@ -90,7 +99,9 @@ export function resolveSignUpSurface(input: {
   if (input.anyActiveAdmin) {
     return "provisioned";
   }
-  return input.mode === "authentik-primary" ? "recovery-break-glass" : "recovery";
+  return input.mode === "authentik-primary"
+    ? "recovery-break-glass"
+    : "recovery";
 }
 
 export type AuthSurfaceModel = {

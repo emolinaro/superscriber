@@ -39,6 +39,7 @@ export type AssignmentSummary = {
 
 export type AccountDirectoryEntry = AppUser & {
   activeAssignmentCount: number;
+  isRemoved: boolean;
 };
 
 export type CasefileAccessGrant =
@@ -67,8 +68,20 @@ function nowIso() {
 }
 
 function isIngestFailure(recording: {
-  integrityState: "capturing" | "uploading" | "verifying" | "verified" | "verification_failed" | "interrupted";
-  transcriptJobState: "queued" | "running" | "partial_result" | "completed" | "failed" | "cancelled";
+  integrityState:
+    | "capturing"
+    | "uploading"
+    | "verifying"
+    | "verified"
+    | "verification_failed"
+    | "interrupted";
+  transcriptJobState:
+    | "queued"
+    | "running"
+    | "partial_result"
+    | "completed"
+    | "failed"
+    | "cancelled";
 }) {
   return (
     recording.integrityState === "interrupted" ||
@@ -79,8 +92,20 @@ function isIngestFailure(recording: {
 }
 
 function isProcessing(recording: {
-  integrityState: "capturing" | "uploading" | "verifying" | "verified" | "verification_failed" | "interrupted";
-  transcriptJobState: "queued" | "running" | "partial_result" | "completed" | "failed" | "cancelled";
+  integrityState:
+    | "capturing"
+    | "uploading"
+    | "verifying"
+    | "verified"
+    | "verification_failed"
+    | "interrupted";
+  transcriptJobState:
+    | "queued"
+    | "running"
+    | "partial_result"
+    | "completed"
+    | "failed"
+    | "cancelled";
 }) {
   return (
     recording.integrityState === "capturing" ||
@@ -94,8 +119,20 @@ function isProcessing(recording: {
 
 export function assertAssignmentCompatible(
   recording: {
-    integrityState: "capturing" | "uploading" | "verifying" | "verified" | "verification_failed" | "interrupted";
-    transcriptJobState: "queued" | "running" | "partial_result" | "completed" | "failed" | "cancelled";
+    integrityState:
+      | "capturing"
+      | "uploading"
+      | "verifying"
+      | "verified"
+      | "verification_failed"
+      | "interrupted";
+    transcriptJobState:
+      | "queued"
+      | "running"
+      | "partial_result"
+      | "completed"
+      | "failed"
+      | "cancelled";
     approvedRevisionId: string | null;
     currentRevisionId: string | null;
   },
@@ -205,7 +242,9 @@ function findCompletedAssignment(
     .get();
 }
 
-function completedGrantForAssignment(assignment: typeof recordingAssignments.$inferSelect) {
+function completedGrantForAssignment(
+  assignment: typeof recordingAssignments.$inferSelect,
+) {
   return {
     kind:
       assignment.assignmentRole === "reviewer"
@@ -227,7 +266,11 @@ function isActiveAssignmentUniqueConstraintError(error: unknown) {
 }
 
 export function listLocalUsers(db: AppDatabase = getAppDb()) {
-  const rows = db.select().from(users).orderBy(users.role, users.displayName).all();
+  const rows = db
+    .select()
+    .from(users)
+    .orderBy(users.role, users.displayName)
+    .all();
 
   const counts = db
     .select({
@@ -245,11 +288,17 @@ export function listLocalUsers(db: AppDatabase = getAppDb()) {
   return rows.map((row) => ({
     ...toAppUser(row),
     activeAssignmentCount: counts.get(row.id) ?? 0,
+    isRemoved: row.removedAt !== null,
   })) satisfies AccountDirectoryEntry[];
 }
 
 export function listAssignableUsers(db: AppDatabase = getAppDb()) {
-  return listLocalUsers(db).filter((user) => user.role === "reviewer" || user.role === "approver");
+  return listLocalUsers(db).filter(
+    (user) =>
+      user.isActive &&
+      !user.isRemoved &&
+      (user.role === "reviewer" || user.role === "approver"),
+  );
 }
 
 export function listAssignments(
@@ -260,11 +309,15 @@ export function listAssignments(
   },
   db: AppDatabase = getAppDb(),
 ) {
-  const statuses = filters?.statuses?.length ? filters.statuses : (["active"] satisfies AssignmentStatus[]);
+  const statuses = filters?.statuses?.length
+    ? filters.statuses
+    : (["active"] satisfies AssignmentStatus[]);
   const conditions = [activeStatusCondition(statuses)];
 
   if (filters?.recordingIds && filters.recordingIds.length > 0) {
-    conditions.push(inArray(recordingAssignments.recordingId, filters.recordingIds));
+    conditions.push(
+      inArray(recordingAssignments.recordingId, filters.recordingIds),
+    );
   }
   if (filters?.userId) {
     conditions.push(eq(recordingAssignments.userId, filters.userId));
@@ -314,17 +367,28 @@ export function assignRecordingToUser(
   bundle: AppDatabaseBundle = getAppDbBundle(),
 ): { assignment: RecordingAssignment; alreadyActive: boolean } {
   return runImmediateGovernedTransaction((db, now) => {
-    const user = db.select().from(users).where(eq(users.id, params.userId)).get();
+    const user = db
+      .select()
+      .from(users)
+      .where(eq(users.id, params.userId))
+      .get();
     if (!user || !user.isActive) {
       throw new Error("Choose an active user before assigning a recording.");
     }
 
     if (user.role !== "reviewer" && user.role !== "approver") {
-      throw new Error("Only reviewer and approver accounts can receive recording assignments.");
+      throw new Error(
+        "Only reviewer and approver accounts can receive recording assignments.",
+      );
     }
 
     const assignmentRole: AssignmentRole = user.role;
-    const active = findActiveAssignment(db, params.userId, params.recordingId, assignmentRole);
+    const active = findActiveAssignment(
+      db,
+      params.userId,
+      params.recordingId,
+      assignmentRole,
+    );
     if (active) {
       return { assignment: toRecordingAssignment(active), alreadyActive: true };
     }
@@ -355,7 +419,12 @@ export function assignRecordingToUser(
         throw error;
       }
 
-      const raced = findActiveAssignment(db, params.userId, params.recordingId, assignmentRole);
+      const raced = findActiveAssignment(
+        db,
+        params.userId,
+        params.recordingId,
+        assignmentRole,
+      );
       if (!raced) {
         throw error;
       }
@@ -555,13 +624,21 @@ export function resolveCasefileAccess(
   const active = findActiveAssignment(db, principal.userId, recordingId);
   if (active) {
     return {
-      kind: active.assignmentRole === "reviewer" ? "active_reviewer" : "active_approver",
+      kind:
+        active.assignmentRole === "reviewer"
+          ? "active_reviewer"
+          : "active_approver",
       recordingId,
       assignmentId: active.id,
     };
   }
 
-  const completed = findCompletedAssignment(db, principal.userId, recordingId, requestedRevisionId);
+  const completed = findCompletedAssignment(
+    db,
+    principal.userId,
+    recordingId,
+    requestedRevisionId,
+  );
   return completed ? completedGrantForAssignment(completed) : null;
 }
 
@@ -604,7 +681,10 @@ export function visibleRecordingIdsForPrincipal(
       and(
         eq(recordingAssignments.userId, principal.userId),
         eq(recordingAssignments.status, "completed"),
-        eq(recordingAssignments.completedRevisionId, recordings.currentRevisionId),
+        eq(
+          recordingAssignments.completedRevisionId,
+          recordings.currentRevisionId,
+        ),
       ),
     )
     .all()) {
@@ -626,7 +706,12 @@ export function canAccessRecording(
       .where(eq(recordings.id, recordingId))
       .get()?.currentRevisionId ?? null;
 
-  const access = resolveCasefileAccess(principal, recordingId, requestedRevisionId, db);
+  const access = resolveCasefileAccess(
+    principal,
+    recordingId,
+    requestedRevisionId,
+    db,
+  );
   if (access) {
     return {
       allowed: true as const,

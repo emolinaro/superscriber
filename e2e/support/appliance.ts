@@ -907,7 +907,11 @@ export async function bootstrapAndLogin(page: Page, user: LocalUser): Promise<vo
   await login(page, user);
 }
 
-export async function login(page: Page, user: LocalUser): Promise<void> {
+export async function login(
+  page: Page,
+  user: LocalUser,
+  options: { expectedUrl?: RegExp; expectPrimaryNavigation?: boolean } = {},
+): Promise<void> {
   await page.context().clearCookies();
 
   const csrfResponse = await page.request.get("/api/auth/csrf");
@@ -926,8 +930,10 @@ export async function login(page: Page, user: LocalUser): Promise<void> {
   expect(signInResponse.status()).toBeLessThan(400);
 
   await page.goto("/workspace");
-  await expect(page).toHaveURL(/\/workspace$/);
-  await expect(page.getByRole("navigation", { name: "Primary" })).toBeVisible();
+  await expect(page).toHaveURL(options.expectedUrl ?? /\/workspace$/);
+  if (options.expectPrimaryNavigation ?? true) {
+    await expect(page.getByRole("navigation", { name: "Primary" })).toBeVisible();
+  }
 }
 
 export async function logout(page: Page) {

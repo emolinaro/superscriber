@@ -79,20 +79,11 @@ function resolveProviders(): NextAuthOptions["providers"] {
           return null;
         }
 
-        const user = await verifyLocalCredentials(parsed.data);
-        if (!user) {
-          return null;
-        }
-
+        // Admission mode must be checked before credentials can revive a self-deactivated account.
         const config = loadAuthConfig();
-        if (config.mode === "authentik-primary") {
-          // Plan 3.1/8.2: in authentik-primary, plain password credentials
-          // admit nobody - not even the designee. The designated break-glass
-          // account enters only through the emergency ceremony (password +
-          // WebAuthn or recovery code, incident reason, management boundary),
-          // which mints via the breakGlassCeremony branch above.
-          return null;
-        }
+        if (config.mode === "authentik-primary") return null;
+        const user = await verifyLocalCredentials(parsed.data);
+        if (!user) return null;
 
         return {
           id: user.id,
@@ -153,11 +144,16 @@ export const authOptions: NextAuthOptions = {
       }
     },
     async jwt({ token, user, account, profile }) {
-      if (user && account?.provider !== "authentik" && (user as { breakGlassCeremonyId?: string }).breakGlassCeremonyId) {
+      if (
+        user &&
+        account?.provider !== "authentik" &&
+        (user as { breakGlassCeremonyId?: string }).breakGlassCeremonyId
+      ) {
         // Emergency-mint path: consume the ceremony token, open the audited
         // emergency activation, and mint the short-lived break-glass session.
         try {
-          const ceremonyId = (user as { breakGlassCeremonyId: string }).breakGlassCeremonyId;
+          const ceremonyId = (user as { breakGlassCeremonyId: string })
+            .breakGlassCeremonyId;
           const ceremony = consumeBreakGlassCeremony(ceremonyId);
           if (!ceremony) {
             return {};
@@ -223,7 +219,8 @@ export const authOptions: NextAuthOptions = {
           const created = createAuthSession({
             userId: user.id,
             authSource,
-            providerSid: (user as { providerSid?: string | null }).providerSid ?? null,
+            providerSid:
+              (user as { providerSid?: string | null }).providerSid ?? null,
           });
 
           token.tokenVersion = TOKEN_SCHEMA_VERSION;
@@ -270,6 +267,7 @@ export const authOptions: NextAuthOptions = {
           };
           session.authSource = validation.session.authSource;
           session.authSessionId = validation.session.id;
+          session.mustChangePassword = validation.user.mustChangePassword;
           return session;
         }
       }
@@ -278,6 +276,7 @@ export const authOptions: NextAuthOptions = {
       delete session.user;
       delete session.authSource;
       delete session.authSessionId;
+      delete session.mustChangePassword;
       return session;
     },
   },

@@ -1,6 +1,12 @@
 // @vitest-environment jsdom
 
-import { cleanup, render, screen, waitFor, within } from "@testing-library/react";
+import {
+  cleanup,
+  render,
+  screen,
+  waitFor,
+  within,
+} from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { CommandResult } from "@/lib/command-result";
@@ -41,6 +47,8 @@ function createModel(
         email: "reviewer1@example.com",
         role: "reviewer",
         roleLabel: "Reviewer",
+        isActive: true,
+        isRemoved: false,
         activeAssignmentCount: 1,
         activeAssignments: { reviewer: 1, approver: 0 },
         hasActiveOidcIdentity: false,
@@ -76,18 +84,32 @@ describe("AccountsSection", () => {
   it("renders the exact account facts, search, and in-scope lifecycle controls", () => {
     render(<AccountsSection model={createModel()} phoneSafetyMode={false} />);
 
-    expect(screen.getByRole("searchbox", { name: "Search accounts" })).toHaveValue("reviewer");
+    expect(
+      screen.getByRole("searchbox", { name: "Search accounts" }),
+    ).toHaveValue("reviewer");
     expect(screen.getByRole("columnheader", { name: "Name" })).toBeVisible();
     expect(screen.getByRole("columnheader", { name: "Email" })).toBeVisible();
     expect(screen.getByRole("columnheader", { name: "Role" })).toBeVisible();
-    expect(screen.getByRole("columnheader", { name: "Active assignments" })).toBeVisible();
+    expect(
+      screen.getByRole("columnheader", { name: "Active assignments" }),
+    ).toBeVisible();
     expect(screen.getByRole("columnheader", { name: "Created" })).toBeVisible();
-    expect(screen.getByRole("rowheader", { name: "Reviewer One" })).toBeVisible();
-    expect(screen.getByRole("columnheader", { name: "Password" })).toBeVisible();
-    expect(screen.queryByRole("button", { name: "Deactivate account" })).not.toBeInTheDocument();
+    expect(
+      screen.getByRole("rowheader", { name: "Reviewer One" }),
+    ).toBeVisible();
+    expect(
+      screen.getByRole("columnheader", { name: "Password" }),
+    ).toBeVisible();
+    expect(
+      screen.getAllByRole("button", { name: "Deactivate account" }),
+    ).toHaveLength(2);
     // Table and card presentations both render the reset control.
-    expect(screen.getAllByRole("button", { name: "Reset password" })).toHaveLength(2);
-    expect(screen.queryByRole("button", { name: "Change role" })).not.toBeInTheDocument();
+    expect(
+      screen.getAllByRole("button", { name: "Reset password" }),
+    ).toHaveLength(2);
+    expect(
+      screen.queryByRole("button", { name: "Change role" }),
+    ).not.toBeInTheDocument();
   });
 
   it("uses localUserSchema validation with an error summary and focus", async () => {
@@ -104,15 +126,23 @@ describe("AccountsSection", () => {
 
     await user.click(screen.getByRole("button", { name: "Create account" }));
     const dialog = screen.getByRole("dialog", { name: "Create local account" });
-    await user.click(within(dialog).getByRole("button", { name: "Create local account" }));
+    await user.click(
+      within(dialog).getByRole("button", { name: "Create local account" }),
+    );
 
-    const summary = within(dialog).getByRole("alert", { name: "There is a problem" });
+    const summary = within(dialog).getByRole("alert", {
+      name: "There is a problem",
+    });
     await waitFor(() => {
       expect(summary).toHaveFocus();
     });
     expect(screen.getByText("Name - Enter the user's name.")).toBeVisible();
-    expect(screen.getByText("Email - Enter a valid email address.")).toBeVisible();
-    expect(screen.getByText("Password - Use at least 10 characters.")).toBeVisible();
+    expect(
+      screen.getByText("Email - Enter a valid email address."),
+    ).toBeVisible();
+    expect(
+      screen.getByText("Password - Use at least 10 characters."),
+    ).toBeVisible();
     expect(createUserAction).not.toHaveBeenCalled();
   });
 
@@ -141,14 +171,22 @@ describe("AccountsSection", () => {
     await user.click(screen.getByRole("button", { name: "Create account" }));
     const dialog = screen.getByRole("dialog", { name: "Create local account" });
     await user.type(within(dialog).getByLabelText("Name"), "Reviewer Two");
-    await user.type(within(dialog).getByLabelText("Email"), "reviewer2@example.com");
-    await user.type(within(dialog).getByLabelText("Password"), "correct horse battery staple");
+    await user.type(
+      within(dialog).getByLabelText("Email"),
+      "reviewer2@example.com",
+    );
+    await user.type(
+      within(dialog).getByLabelText("Password"),
+      "correct horse battery staple",
+    );
     await user.type(
       within(dialog).getByLabelText("Confirm password"),
       "correct horse battery staple",
     );
     await user.selectOptions(within(dialog).getByLabelText("Role"), "reviewer");
-    await user.click(within(dialog).getByRole("button", { name: "Create local account" }));
+    await user.click(
+      within(dialog).getByRole("button", { name: "Create local account" }),
+    );
 
     expect(createUserAction).toHaveBeenCalledWith({
       displayName: "Reviewer Two",
@@ -157,7 +195,9 @@ describe("AccountsSection", () => {
       confirmPassword: "correct horse battery staple",
       role: "reviewer",
     });
-    expect(screen.getByRole("button", { name: "Creating account..." })).toBeDisabled();
+    expect(
+      screen.getByRole("button", { name: "Creating account..." }),
+    ).toBeDisabled();
 
     if (!resolveActionRef.current) {
       throw new Error("Expected create account action to be pending.");
@@ -175,6 +215,8 @@ describe("AccountsSection", () => {
           email: "reviewer2@example.com",
           role: "reviewer",
           isActive: true,
+          isRemoved: false,
+          mustChangePassword: false,
           activeAssignmentCount: 0,
           createdAt: "2026-08-01T12:10:00.000Z",
           updatedAt: "2026-08-01T12:10:00.000Z",
@@ -184,24 +226,32 @@ describe("AccountsSection", () => {
 
     await waitFor(() => {
       expect(routerRefreshMock).toHaveBeenCalledTimes(1);
-      expect(screen.getByRole("rowheader", { name: "Reviewer Two" })).toBeVisible();
+      expect(
+        screen.getByRole("rowheader", { name: "Reviewer Two" }),
+      ).toBeVisible();
     });
 
     expect(screen.getByRole("status")).toHaveTextContent(
       "Reviewer Two can now sign in as reviewer.",
     );
-    const newRowHeader = screen.getByRole("rowheader", { name: "Reviewer Two" });
+    const newRowHeader = screen.getByRole("rowheader", {
+      name: "Reviewer Two",
+    });
     const newRow = newRowHeader.closest("tr");
     if (!newRow) {
       throw new Error("Expected the new account row to render.");
     }
-    expect(within(newRow).getByRole("cell", { name: "reviewer2@example.com" })).toBeVisible();
+    expect(
+      within(newRow).getByRole("cell", { name: "reviewer2@example.com" }),
+    ).toBeVisible();
     expect(
       within(newRow).getByRole("combobox", { name: "Role for Reviewer Two" }),
     ).toHaveValue("reviewer");
     expect(within(newRow).getByRole("cell", { name: "0" })).toBeVisible();
     expect(within(newRow).getByText("01 Aug 2026, 12:10 UTC")).toBeVisible();
-    expect(screen.queryByRole("dialog", { name: "Create local account" })).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("dialog", { name: "Create local account" }),
+    ).not.toBeInTheDocument();
 
     await waitFor(() => {
       expect(document.getElementById("account-row-user-2")).toHaveFocus();
@@ -218,6 +268,8 @@ describe("AccountsSection", () => {
               email: "reviewer2@example.com",
               role: "reviewer",
               roleLabel: "Reviewer",
+              isActive: true,
+              isRemoved: false,
               activeAssignmentCount: 0,
               activeAssignments: { reviewer: 0, approver: 0 },
               hasActiveOidcIdentity: false,
@@ -234,14 +286,20 @@ describe("AccountsSection", () => {
       />,
     );
 
-    expect(screen.getAllByRole("rowheader", { name: "Reviewer Two" })).toHaveLength(1);
+    expect(
+      screen.getAllByRole("rowheader", { name: "Reviewer Two" }),
+    ).toHaveLength(1);
 
     await user.click(screen.getByRole("button", { name: "Create account" }));
-    const resetDialog = screen.getByRole("dialog", { name: "Create local account" });
+    const resetDialog = screen.getByRole("dialog", {
+      name: "Create local account",
+    });
     expect(within(resetDialog).getByLabelText("Name")).toHaveValue("");
     expect(within(resetDialog).getByLabelText("Email")).toHaveValue("");
     expect(within(resetDialog).getByLabelText("Password")).toHaveValue("");
-    expect(within(resetDialog).getByLabelText("Confirm password")).toHaveValue("");
+    expect(within(resetDialog).getByLabelText("Confirm password")).toHaveValue(
+      "",
+    );
     expect(within(resetDialog).getByLabelText("Role")).toHaveValue("reviewer");
   });
 
@@ -254,7 +312,9 @@ describe("AccountsSection", () => {
     const dialog = screen.getByRole("dialog", { name: "Create local account" });
     expect(dialog).toHaveClass("administration-drawer");
     expect(dialog).toHaveClass("administration-drawer--compact");
-    expect(within(dialog).getByLabelText("Confirm password")).toBeInTheDocument();
+    expect(
+      within(dialog).getByLabelText("Confirm password"),
+    ).toBeInTheDocument();
     expect(
       within(dialog).getByLabelText("Confirm password"),
     ).toHaveAccessibleName("Confirm password");
@@ -276,18 +336,31 @@ describe("AccountsSection", () => {
     const dialog = screen.getByRole("dialog", { name: "Create local account" });
 
     await user.type(within(dialog).getByLabelText("Name"), "Reviewer Two");
-    await user.type(within(dialog).getByLabelText("Email"), "reviewer2@example.com");
+    await user.type(
+      within(dialog).getByLabelText("Email"),
+      "reviewer2@example.com",
+    );
     const passwordInput = within(dialog).getByLabelText("Password");
     const confirmInput = within(dialog).getByLabelText("Confirm password");
     await user.type(passwordInput, "correct horse battery staple");
     await user.type(confirmInput, "different horse battery staple");
 
-    expect(within(dialog).getByText("Passwords must match.")).toHaveAttribute("role", "alert");
+    expect(within(dialog).getByText("Passwords must match.")).toHaveAttribute(
+      "role",
+      "alert",
+    );
     expect(confirmInput).toHaveAttribute("aria-invalid", "true");
-    expect(confirmInput).toHaveAttribute("aria-describedby", "confirmPassword-error");
+    expect(confirmInput).toHaveAttribute(
+      "aria-describedby",
+      "confirmPassword-error",
+    );
     expect(passwordInput).toHaveAttribute("aria-invalid", "true");
-    expect(passwordInput.getAttribute("aria-describedby")).toContain("confirmPassword-error");
-    const submitButton = within(dialog).getByRole("button", { name: "Create local account" });
+    expect(passwordInput.getAttribute("aria-describedby")).toContain(
+      "confirmPassword-error",
+    );
+    const submitButton = within(dialog).getByRole("button", {
+      name: "Create local account",
+    });
     expect(submitButton).toBeDisabled();
 
     // A real Enter key from another single-line field must still surface the
@@ -295,7 +368,9 @@ describe("AccountsSection", () => {
     // though the submit button is disabled during a live mismatch.
     await user.type(within(dialog).getByLabelText("Email"), "{Enter}");
     expect(createUserAction).not.toHaveBeenCalled();
-    const summary = within(dialog).getByRole("alert", { name: "There is a problem" });
+    const summary = within(dialog).getByRole("alert", {
+      name: "There is a problem",
+    });
     expect(
       within(summary).getByText("Confirm password - Passwords must match."),
     ).toBeVisible();
@@ -306,7 +381,9 @@ describe("AccountsSection", () => {
     await user.clear(confirmInput);
     await user.type(confirmInput, "correct horse battery staple");
     await waitFor(() => {
-      expect(within(dialog).queryByText("Passwords must match.")).not.toBeInTheDocument();
+      expect(
+        within(dialog).queryByText("Passwords must match."),
+      ).not.toBeInTheDocument();
     });
     expect(confirmInput).not.toHaveAttribute("aria-invalid");
     expect(passwordInput).not.toHaveAttribute("aria-invalid");
@@ -316,7 +393,9 @@ describe("AccountsSection", () => {
   it("shares one dirty role state across table and card presentations and Cancel restores focus", async () => {
     const user = userEvent.setup();
     const changeAccountRoleAction = vi.fn(
-      async (_input: ChangeAccountRoleInput): Promise<ChangeAccountRoleActionResult> => {
+      async (
+        _input: ChangeAccountRoleInput,
+      ): Promise<ChangeAccountRoleActionResult> => {
         throw new Error("Role action was not expected during Cancel coverage.");
       },
     );
@@ -359,7 +438,8 @@ describe("AccountsSection", () => {
 
   it("validates reason, submits once, disables all mutations, and focuses successful role", async () => {
     const user = userEvent.setup();
-    let resolveAction: ((result: ChangeAccountRoleActionResult) => void) | undefined;
+    let resolveAction:
+      ((result: ChangeAccountRoleActionResult) => void) | undefined;
     const changeAccountRoleAction: (
       input: ChangeAccountRoleInput,
     ) => Promise<ChangeAccountRoleActionResult> = vi.fn(
@@ -401,7 +481,9 @@ describe("AccountsSection", () => {
       newRole: "approver",
       reason: "Duties changed for coverage.",
     });
-    expect(screen.getAllByRole("button", { name: "Saving role..." })).toHaveLength(2);
+    expect(
+      screen.getAllByRole("button", { name: "Saving role..." }),
+    ).toHaveLength(2);
     expect(
       screen.getByRole("button", { name: "Create account" }),
     ).toBeDisabled();
@@ -422,6 +504,8 @@ describe("AccountsSection", () => {
           email: "reviewer1@example.com",
           role: "approver",
           isActive: true,
+          mustChangePassword: false,
+          isRemoved: false,
           activeAssignmentCount: 0,
           createdAt: "2026-08-01T12:00:00.000Z",
           updatedAt: "2026-08-01T12:30:00.000Z",
@@ -506,6 +590,8 @@ describe("AccountsSection", () => {
           email: "reviewer1@example.com",
           role: "uploader",
           isActive: true,
+          mustChangePassword: false,
+          isRemoved: false,
           activeAssignmentCount: 0,
           createdAt: "2026-08-01T12:00:00.000Z",
           updatedAt: "2026-08-01T12:30:00.000Z",
@@ -576,12 +662,91 @@ describe("AccountsSection", () => {
     ).toHaveValue("reviewer");
   });
 
+  it("does not offer reactivation for a removed account", () => {
+    render(
+      <AccountsSection
+        model={createModel({
+          users: [
+            {
+              ...createModel().users[0]!,
+              id: "removed-user",
+              displayName: "Removed User",
+              email: "removed@example.com",
+              isActive: false,
+              isRemoved: true,
+              activeAssignmentCount: 0,
+            },
+          ],
+        })}
+        phoneSafetyMode={false}
+      />,
+    );
+
+    expect(
+      screen.getByRole("rowheader", { name: "Removed User" }),
+    ).toBeVisible();
+    expect(screen.getAllByText("Removed").length).toBeGreaterThan(0);
+    expect(
+      screen.queryByRole("button", { name: "Reactivate account" }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "Remove account" }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("keeps reactivate available for a deactivated break-glass administrator", () => {
+    render(
+      <AccountsSection
+        model={createModel({
+          users: [
+            {
+              ...createModel().users[0]!,
+              id: "break-glass-admin",
+              displayName: "Break Glass Admin",
+              email: "break-glass@example.com",
+              role: "admin",
+              roleLabel: "Administrator",
+              isActive: false,
+              isRemoved: false,
+              activeAssignmentCount: 0,
+              isBreakGlassAdministrator: true,
+              isSoleActiveAdministrator: false,
+            },
+          ],
+        })}
+        phoneSafetyMode={false}
+      />,
+    );
+
+    expect(
+      screen.getByRole("rowheader", { name: "Break Glass Admin" }),
+    ).toBeVisible();
+    for (const button of screen.getAllByRole("button", {
+      name: "Reactivate account",
+    })) {
+      expect(button).toBeEnabled();
+    }
+    for (const button of screen.getAllByRole("button", {
+      name: "Remove account",
+    })) {
+      expect(button).toBeDisabled();
+    }
+  });
+
   it("keeps account facts visible on phone while hiding the create drawer", () => {
     render(<AccountsSection model={createModel()} phoneSafetyMode={true} />);
 
-    expect(screen.getByRole("rowheader", { name: "Reviewer One" })).toBeVisible();
-    expect(screen.queryByRole("button", { name: "Reset password" })).not.toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "Create account" })).not.toBeInTheDocument();
-    expect(screen.queryByRole("dialog", { name: "Create local account" })).not.toBeInTheDocument();
+    expect(
+      screen.getByRole("rowheader", { name: "Reviewer One" }),
+    ).toBeVisible();
+    expect(
+      screen.queryByRole("button", { name: "Reset password" }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "Create account" }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("dialog", { name: "Create local account" }),
+    ).not.toBeInTheDocument();
   });
 });

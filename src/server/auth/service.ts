@@ -1,5 +1,6 @@
+import { reviveAtSignIn } from "@/server/auth/account-lifecycle";
 import { hash, compare } from "bcryptjs";
-import { and, eq } from "drizzle-orm";
+import { and, eq, isNull } from "drizzle-orm";
 import { type AppUser, type Principal, type UserRole } from "@/domain/models";
 import {
   getAppDb,
@@ -21,6 +22,7 @@ function toAppUser(row: typeof users.$inferSelect): AppUser {
     displayName: row.displayName,
     role: row.role,
     isActive: row.isActive,
+    mustChangePassword: row.mustChangePassword,
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,
   };
@@ -32,6 +34,7 @@ function insertLocalUserRow(
     displayName: string;
     passwordHash: string;
     role: UserRole;
+    mustChangePassword?: boolean;
   },
   db: AppDatabase,
 ) {
@@ -45,6 +48,7 @@ function insertLocalUserRow(
       passwordHash: params.passwordHash,
       role: params.role,
       isActive: true,
+      mustChangePassword: params.mustChangePassword ?? false,
       createdAt: timestamp,
       updatedAt: timestamp,
     })
@@ -79,9 +83,10 @@ export async function hasAnyUsers(db: AppDatabase = getAppDb()) {
 
 /**
  * Unmanageable-instance detection: accounts survive but no active
- * administrator remains (deactivation, deletion, or a partial restore - the
- * role guard only blocks in-app demotion of the final admin). This state
- * opens the operator-gated recovery claim on the sign-up door.
+ * administrator remains. Role and lifecycle guards block in-app changes that
+ * would strand the final active admin, but out-of-band edits or a partial
+ * restore can still create this state. It opens the operator-gated recovery
+ * claim on the sign-up door.
  */
 export async function hasAnyActiveAdmin(db: AppDatabase = getAppDb()) {
   const result = db
@@ -98,11 +103,14 @@ export async function getUserById(id: string, db: AppDatabase = getAppDb()) {
   return row ? toAppUser(row) : null;
 }
 
-export async function getUserByEmail(email: string, db: AppDatabase = getAppDb()) {
+export async function getUserByEmail(
+  email: string,
+  db: AppDatabase = getAppDb(),
+) {
   const row = db
     .select()
     .from(users)
-    .where(eq(users.email, normalizeEmail(email)))
+    .where(and(eq(users.email, normalizeEmail(email)), isNull(users.removedAt)))
     .get();
 
   return row ? toAppUser(row) : null;
@@ -160,9 +168,15 @@ export async function createBootstrapAdmin(
   const passwordHash = await hash(parsed.password, 12);
 
   const transaction = bundle.sqlite.transaction(() => {
-    const existingUser = bundle.db.select({ id: users.id }).from(users).limit(1).get();
+    const existingUser = bundle.db
+      .select({ id: users.id })
+      .from(users)
+      .limit(1)
+      .get();
     if (existingUser) {
-      throw new Error("First-run setup is already complete. Sign in with an existing account.");
+      throw new Error(
+        "First-run setup is already complete. Sign in with an existing account.",
+      );
     }
 
     return insertLocalUserRow(
@@ -189,11 +203,15 @@ export async function verifyLocalCredentials(
   const row = db
     .select()
     .from(users)
-    .where(eq(users.email, normalizeEmail(credentials.email)))
+    .where(and(eq(users.email, normalizeEmail(credentials.email)), isNull(users.removedAt)))
     .get();
 
   // OIDC-only shadow users carry no local secret; credentials cannot match.
-  if (!row || !row.isActive || !row.passwordHash) {
+  if (
+    !row ||
+    (!row.isActive && row.deactivatedByUserId !== row.id) ||
+    !row.passwordHash
+  ) {
     return null;
   }
 
@@ -202,5 +220,19 @@ export async function verifyLocalCredentials(
     return null;
   }
 
-  return toAppUser(row);
+  return db.transaction(
+    (tx) => {
+      const current = tx.select().from(users).where(eq(users.id, row.id)).get();
+      // Hashing yielded: an intervening admin action or credential reset wins.
+      if (
+        !current ||
+        current.authVersion !== row.authVersion ||
+        current.passwordHash !== row.passwordHash
+      )
+        return null;
+      if (!reviveAtSignIn(current, tx as AppDatabase, nowIso())) return null;
+      return toAppUser({ ...current, isActive: true });
+    },
+    { behavior: "immediate" },
+  );
 }
