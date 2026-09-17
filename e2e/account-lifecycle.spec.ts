@@ -77,8 +77,10 @@ test("generated account handoff, durable deactivation, explicit reactivation, an
   const userContext = await browser.newContext();
   const userPage = await userContext.newPage();
   try {
-    await login(userPage, account);
-    await expect(userPage).toHaveURL(/\/account\/password-change/);
+    await login(userPage, account, {
+      expectedUrl: /\/account\/password-change/,
+      expectPrimaryNavigation: false,
+    });
     await expect(
       userPage.getByRole("heading", { name: "Choose your password" }),
     ).toBeVisible();
@@ -87,11 +89,16 @@ test("generated account handoff, durable deactivation, explicit reactivation, an
       .getByLabel("Confirm password")
       .fill("reviewer-changed-secret");
     await userPage.getByRole("button", { name: "Change password" }).click();
+    await expect(userPage).toHaveURL(/\/workspace$/);
     account.password = "reviewer-changed-secret";
     await userPage.getByRole("button", { name: "Open account menu" }).click();
-    await userPage
-      .getByRole("link", { name: "Your account", exact: true })
-      .click();
+    const accountLink = userPage.getByRole("link", {
+      name: "Your account",
+      exact: true,
+    });
+    await expect(accountLink).toBeVisible();
+    await accountLink.click();
+    await expect(userPage).toHaveURL(/\/account$/);
     await expect(
       userPage.getByRole("heading", { name: "Your account" }),
     ).toBeVisible();
@@ -160,8 +167,12 @@ test("generated account handoff, durable deactivation, explicit reactivation, an
     expect(accountRows).toHaveLength(1);
     const accountId = accountRows[0]!.id;
     await lifecycle(page, account.email, "Remove account");
+    await page.reload();
     const removedRow = page.getByRole("row").filter({
-      has: page.getByRole("cell", { name: account.displayName, exact: true }),
+      has: page.getByRole("rowheader", {
+        name: account.displayName,
+        exact: true,
+      }),
     });
     await expect(removedRow).toContainText("Removed");
     await expect(
@@ -202,6 +213,7 @@ test("generated account handoff, durable deactivation, explicit reactivation, an
     );
     expect(events.map((event) => event.type)).toEqual([
       "account.created",
+      "account.password_reset",
       "account.self_deactivated",
       "account.self_reactivated",
       "account.deactivated",

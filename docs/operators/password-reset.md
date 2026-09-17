@@ -19,9 +19,9 @@ session of the target account immediately.
   "This instance does not send email. Your administrator can reset your
   password for you from Administration > Accounts."
 - A request alone changes nothing: no session is revoked, no password is
-  touched. Only completing a reset rotates the credential, advances
-  `auth_version`, and revokes every session from every auth source (local,
-  Authentik, break-glass).
+  touched. Only completing a reset rotates the credential, clears any mandatory
+  temporary-password change state, advances `auth_version`, and revokes every
+  session from every auth source (local, Authentik, break-glass).
 - Reset links are single-use, expire 60 minutes after issuance, and only the
   newest link for an account is live. Only the SHA-256 digest of the link
   secret is stored; the raw link is never logged.

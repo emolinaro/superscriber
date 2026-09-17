@@ -245,12 +245,13 @@ also enter and confirm a password yourself.
 **Deactivate account** requires a reason, signs the account out everywhere,
 and blocks sign-in until an administrator explicitly chooses **Reactivate
 account**. Deactivation preserves credentials and identity links. Signing in
-never reactivates an administrator-deactivated account. **Remove account** offboards access: it also clears
-the local password, releases the local email address for a fresh account, and
-permanently retires linked sign-in identities. It keeps the account record,
-assignments, and audit history intact. Removal is terminal: a removed account
-cannot be reactivated. Create a fresh account if that person returns. Active
-assignments remain recorded; review and reassign that work separately.
+never reactivates an administrator-deactivated account. **Remove account**
+offboards access: it also clears the local password, releases the local email
+address for a fresh account, and permanently retires linked sign-in identities.
+It keeps the account record, assignments, and audit history intact. Removal is
+terminal: a removed account cannot be reactivated. Create a fresh account if
+that person returns. Active assignments remain recorded; review and reassign
+that work separately.
 The final active administrator and designated break-glass administrator are
 protected. Another administrator must deactivate or remove your own account.
 These actions are withheld in phone safety mode.

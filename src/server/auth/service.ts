@@ -83,9 +83,10 @@ export async function hasAnyUsers(db: AppDatabase = getAppDb()) {
 
 /**
  * Unmanageable-instance detection: accounts survive but no active
- * administrator remains (deactivation, deletion, or a partial restore - the
- * role guard only blocks in-app demotion of the final admin). This state
- * opens the operator-gated recovery claim on the sign-up door.
+ * administrator remains. Role and lifecycle guards block in-app changes that
+ * would strand the final active admin, but out-of-band edits or a partial
+ * restore can still create this state. It opens the operator-gated recovery
+ * claim on the sign-up door.
  */
 export async function hasAnyActiveAdmin(db: AppDatabase = getAppDb()) {
   const result = db

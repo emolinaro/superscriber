@@ -13,6 +13,7 @@ const account = {
   email: "self@example.com",
   role: "admin" as const,
   isActive: true,
+  mustChangePassword: false,
   createdAt: "2026-09-01T12:00:00.000Z",
   updatedAt: "2026-09-01T12:00:00.000Z",
 };
