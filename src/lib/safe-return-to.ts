@@ -11,6 +11,7 @@ const ALLOWED_QUERY_KEYS: Record<string, Set<string>> = {
     "sort",
   ]),
   "/ingest": new Set(),
+  "/account": new Set(),
   "/administration": new Set([
     "section",
     "query",

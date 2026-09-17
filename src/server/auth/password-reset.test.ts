@@ -259,9 +259,12 @@ describe("completePasswordReset", () => {
       .run(input.id, input.userId, input.authSource ?? "local", T0, T0);
   }
 
-  it("rewrites the hash, bumps auth_version, and revokes every session source", async () => {
+  it("rewrites the hash, clears mandatory change, bumps auth_version, and revokes every session source", async () => {
     const bundle = openAppDatabase(":memory:");
     seedUser(bundle.sqlite, "user-1");
+    bundle.sqlite
+      .prepare(`UPDATE users SET must_change_password = 1 WHERE id = 'user-1'`)
+      .run();
     insertAuthSession(bundle, { id: "s-local", userId: "user-1" });
     insertAuthSession(bundle, { id: "s-oidc", userId: "user-1", authSource: "authentik" });
     insertAuthSession(bundle, { id: "s-bg", userId: "user-1", authSource: "break_glass" });
@@ -277,9 +280,10 @@ describe("completePasswordReset", () => {
 
     expect(result).toEqual({ ok: true });
     const user = bundle.sqlite
-      .prepare(`SELECT auth_version AS authVersion, password_hash AS passwordHash FROM users WHERE id = 'user-1'`)
-      .get() as { authVersion: number; passwordHash: string };
+      .prepare(`SELECT auth_version AS authVersion, password_hash AS passwordHash, must_change_password AS mustChangePassword FROM users WHERE id = 'user-1'`)
+      .get() as { authVersion: number; passwordHash: string; mustChangePassword: number };
     expect(user.authVersion).toBe(2);
+    expect(user.mustChangePassword).toBe(0);
     const sessions = bundle.sqlite
       .prepare(`SELECT status, revoked_reason AS revokedReason FROM auth_sessions WHERE user_id = 'user-1'`)
       .all() as Array<{ status: string; revokedReason: string }>;

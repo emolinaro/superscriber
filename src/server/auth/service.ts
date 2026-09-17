@@ -1,6 +1,6 @@
 import { reviveAtSignIn } from "@/server/auth/account-lifecycle";
 import { hash, compare } from "bcryptjs";
-import { and, eq } from "drizzle-orm";
+import { and, eq, isNull } from "drizzle-orm";
 import { type AppUser, type Principal, type UserRole } from "@/domain/models";
 import {
   getAppDb,
@@ -109,7 +109,7 @@ export async function getUserByEmail(
   const row = db
     .select()
     .from(users)
-    .where(eq(users.email, normalizeEmail(email)))
+    .where(and(eq(users.email, normalizeEmail(email)), isNull(users.removedAt)))
     .get();
 
   return row ? toAppUser(row) : null;
@@ -202,7 +202,7 @@ export async function verifyLocalCredentials(
   const row = db
     .select()
     .from(users)
-    .where(eq(users.email, normalizeEmail(credentials.email)))
+    .where(and(eq(users.email, normalizeEmail(credentials.email)), isNull(users.removedAt)))
     .get();
 
   // OIDC-only shadow users carry no local secret; credentials cannot match.

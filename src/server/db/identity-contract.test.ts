@@ -233,6 +233,27 @@ describe("identity contract inventory", () => {
     }
   });
 
+  it("preserves id-based references when a removed account releases its email", () => {
+    const sqlite = new Database(":memory:");
+    try {
+      runMigrations(sqlite);
+      sqlite.pragma("foreign_keys = ON");
+      seedGovernedFixture(sqlite);
+      const beforeIds = userIds(sqlite);
+      const beforeCounts = referenceCounts(sqlite);
+
+      sqlite
+        .prepare(`UPDATE users SET email = 'removed:user-reviewer' WHERE id = 'user-reviewer'`)
+        .run();
+
+      expect(userIds(sqlite)).toEqual(beforeIds);
+      expect(referenceCounts(sqlite)).toEqual(beforeCounts);
+      expect(sqlite.prepare(`PRAGMA foreign_key_check`).all()).toEqual([]);
+    } finally {
+      sqlite.close();
+    }
+  });
+
   it("preserves every user id and reference count across a database copy and migration rerun", () => {
     const source = new Database(":memory:");
     try {

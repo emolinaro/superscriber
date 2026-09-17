@@ -109,6 +109,40 @@ describe("local auth service", () => {
     }
   });
 
+  it("does not return removed rows from email-based auth lookups", async () => {
+    const bundle = openAppDatabase(":memory:");
+
+    try {
+      const user = await createLocalUser(
+        {
+          displayName: "Removed User",
+          email: "removed@example.com",
+          password: "correct horse battery staple",
+          role: "reviewer",
+        },
+        bundle.db,
+      );
+      bundle.db
+        .update(users)
+        .set({ removedAt: new Date().toISOString() })
+        .where(eq(users.id, user.id))
+        .run();
+
+      expect(await getUserByEmail("removed@example.com", bundle.db)).toBeNull();
+      expect(
+        await verifyLocalCredentials(
+          {
+            email: "removed@example.com",
+            password: "correct horse battery staple",
+          },
+          bundle.db,
+        ),
+      ).toBeNull();
+    } finally {
+      bundle.sqlite.close();
+    }
+  });
+
   it("detects whether an active administrator remains", async () => {
     const bundle = openAppDatabase(":memory:");
 

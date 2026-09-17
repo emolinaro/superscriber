@@ -153,7 +153,16 @@ test("generated account handoff, durable deactivation, explicit reactivation, an
 
     await lifecycle(page, account.email, "Reactivate account");
     await login(userPage, account);
-    const removedRow = await lifecycle(page, account.email, "Remove account");
+    const accountRows = queryRuntimeRows<{ id: string }>(
+      "SELECT id FROM users WHERE email = ?",
+      [account.email],
+    );
+    expect(accountRows).toHaveLength(1);
+    const accountId = accountRows[0]!.id;
+    await lifecycle(page, account.email, "Remove account");
+    const removedRow = page.getByRole("row").filter({
+      has: page.getByRole("cell", { name: account.displayName, exact: true }),
+    });
     await expect(removedRow).toContainText("Removed");
     await expect(
       removedRow.getByRole("button", { name: "Reactivate account" }),
@@ -163,22 +172,33 @@ test("generated account handoff, durable deactivation, explicit reactivation, an
       userPage.getByRole("heading", { name: "Sign in" }),
     ).toBeVisible();
     const facts = queryRuntimeRows<{
+      email: string;
       is_active: number;
       password_hash: string | null;
       removed_at: string | null;
-    }>("SELECT is_active, password_hash, removed_at FROM users WHERE email = ?", [
-      account.email,
+    }>("SELECT email, is_active, password_hash, removed_at FROM users WHERE id = ?", [
+      accountId,
     ]);
     expect(facts).toEqual([
-      { is_active: 0, password_hash: null, removed_at: expect.any(String) },
+      {
+        email: `removed:${accountId}`,
+        is_active: 0,
+        password_hash: null,
+        removed_at: expect.any(String),
+      },
     ]);
+    expect(
+      queryRuntimeRows<{ id: string }>("SELECT id FROM users WHERE email = ?", [
+        account.email,
+      ]),
+    ).toEqual([]);
     const events = queryRuntimeRows<{
       type: string;
       actor_user_id: string;
       metadata: string;
     }>(
-      "SELECT a.type, a.actor_user_id, a.metadata FROM audit_events a WHERE json_extract(a.metadata, '$.data.targetUserId') = (SELECT id FROM users WHERE email = ?) ORDER BY a.created_at",
-      [account.email],
+      "SELECT a.type, a.actor_user_id, a.metadata FROM audit_events a WHERE json_extract(a.metadata, '$.data.targetUserId') = ? ORDER BY a.created_at",
+      [accountId],
     );
     expect(events.map((event) => event.type)).toEqual([
       "account.created",

@@ -50,6 +50,20 @@ it("requires a reason, describes OIDC and assignment impact, and recovers from a
     reason: "Staff leave",
   });
 });
+it("describes released email behavior for removal", () => {
+  render(
+    <AccountLifecycleModal
+      account={account}
+      kind="remove"
+      currentUserId="admin"
+      action={vi.fn()}
+      onClose={vi.fn()}
+      onChanged={vi.fn()}
+    />,
+  );
+
+  expect(screen.getByText(/release its local email address/i)).toBeVisible();
+});
 it("discloses a generated password only until the confirmation closes", async () => {
   const user = userEvent.setup();
   const action = vi.fn().mockResolvedValue({

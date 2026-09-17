@@ -98,7 +98,7 @@ export function AccountLifecycleModal({
       <form className="form-grid" noValidate onSubmit={submit}>
         <p className="body-copy">
           {kind === "remove"
-            ? "Remove this account's access: deactivate it, clear its local password, and retire its linked sign-in identities. Its account record, email reservation, assignments, and audit history remain. This is offboarding; it does not erase the person's history."
+            ? "Remove this account's access: deactivate it, clear its local password, release its local email address, and retire its linked sign-in identities. Its account record, assignments, and audit history remain. This is offboarding; it does not erase the person's history."
             : kind === "deactivate"
               ? "Sign this account out everywhere and prevent further sign-in. Its password and identity links remain. Only an explicit administrator reactivation restores access."
               : "Allow this account to sign in again using its existing credentials. Previously revoked sessions stay signed out. Reactivation does not restore credentials or identity links cleared by removal."}

@@ -22,6 +22,9 @@ import { externalIdentities, users } from "@/server/db/schema";
 import { runImmediateGovernedTransaction } from "@/server/db/transaction";
 
 type Actor = { actorUserId: string; actorAuthSessionId: string };
+function removedEmailFor(userId: string) {
+  return `removed:${userId}`;
+}
 function parse<T>(schema: z.ZodType<T>, input: unknown): T {
   const result = schema.safeParse(input);
   if (result.success) return result.data;
@@ -93,12 +96,16 @@ export function changeAccountLifecycle(
           authVersion: sql`${users.authVersion} + 1`,
           updatedAt: now,
           ...(input.action === "remove"
-            ? { passwordHash: null, mustChangePassword: false, removedAt: now }
+            ? {
+                email: removedEmailFor(target.id),
+                passwordHash: null,
+                mustChangePassword: false,
+                removedAt: now,
+              }
             : {}),
         })
         .where(eq(users.id, target.id))
         .run();
-      // Removal is offboarding, never deletion: every identity and forensic reference survives.
       if (input.action === "remove") {
         db.update(externalIdentities)
           .set({

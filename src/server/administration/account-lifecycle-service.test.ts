@@ -10,7 +10,7 @@ import {
   users,
 } from "@/server/db/schema";
 import { completeMandatoryPasswordChange } from "@/server/auth/account-lifecycle";
-import { verifyLocalCredentials } from "@/server/auth/service";
+import { createLocalUser, verifyLocalCredentials } from "@/server/auth/service";
 import {
   changeAccountLifecycle,
   createAccountWithTemporaryPassword,
@@ -156,6 +156,7 @@ describe("governed account lifecycle", () => {
     expect(() => change("deactivate")).toThrow(/active administrator/i);
   });
   it("removal offboards without deleting identity or session references", () => {
+    const originalEmail = target().email;
     bundle.db
       .insert(externalIdentities)
       .values({
@@ -174,8 +175,15 @@ describe("governed account lifecycle", () => {
     );
     change("reactivate", "target", false);
     change("remove");
-    expect(target()).toMatchObject({ isActive: false, passwordHash: null });
+    expect(target()).toMatchObject({
+      email: "removed:target",
+      isActive: false,
+      passwordHash: null,
+    });
     expect(target().removedAt).toEqual(expect.any(String));
+    expect(
+      bundle.db.select().from(users).where(eq(users.email, originalEmail)).get(),
+    ).toBeUndefined();
     expect(() => change("reactivate", "target", false)).toThrow(
       /Removed accounts are terminal/i,
     );
@@ -191,7 +199,52 @@ describe("governed account lifecycle", () => {
         .where(eq(authSessions.userId, "target"))
         .get(),
     ).toBeDefined();
+    const removalAudit = bundle.db
+      .select()
+      .from(auditEvents)
+      .where(eq(auditEvents.type, "account.removed"))
+      .get()!;
+    expect(JSON.parse(removalAudit.metadata).data).toMatchObject({
+      targetUserId: "target",
+    });
     expect(bundle.sqlite.pragma("foreign_key_check")).toEqual([]);
+  });
+  it("lets a returning person use a released email for fresh accounts", async () => {
+    const localEmail = target().email;
+    change("remove");
+
+    const returningLocal = await createLocalUser(
+      {
+        displayName: "Returning Local",
+        email: localEmail,
+        password: "returning-local-secret",
+        role: "reviewer",
+      },
+      bundle.db,
+    );
+    expect(returningLocal).toMatchObject({ email: localEmail, isActive: true });
+    expect(returningLocal.id).not.toBe("target");
+
+    addUser("temp-returning");
+    const tempEmail = "temp-returning@example.com";
+    change("remove", "temp-returning");
+    const returningTemporary = await createAccountWithTemporaryPassword(
+      {
+        ...actor,
+        input: {
+          displayName: "Returning Temporary",
+          email: tempEmail,
+          role: "reviewer",
+          reason: "Returned after removal",
+        },
+      },
+      bundle,
+    );
+    expect(returningTemporary.user).toMatchObject({
+      email: tempEmail,
+      isActive: true,
+    });
+    expect(returningTemporary.user.id).not.toBe("temp-returning");
   });
   it("rolls back deactivation and session revocation if audit insertion fails", () => {
     bundle.sqlite.exec(

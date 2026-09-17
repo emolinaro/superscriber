@@ -692,7 +692,7 @@ export async function changeAccountLifecycleAction(
       data,
       notice:
         input.action === "remove"
-          ? "Account access removed. Identity and history retained."
+          ? "Account access removed. Email released; identity and history retained."
           : input.action === "reactivate"
             ? "Account reactivated. Previous sessions remain signed out."
             : "Account deactivated and signed out everywhere. Only an administrator can reactivate it.",

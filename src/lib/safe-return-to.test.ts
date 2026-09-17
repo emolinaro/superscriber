@@ -5,6 +5,7 @@ describe("sanitizeReturnTo", () => {
   it.each([
     ["/workspace", "/workspace"],
     ["/workspace?tab=waiting&sort=updated_asc", "/workspace?tab=waiting&sort=updated_asc"],
+    ["/account", "/account"],
     ["/recordings/rec-1?revision=rev-1", "/recordings/rec-1?revision=rev-1"],
     ["https://evil.test", "/workspace"],
     ["//evil.test/path", "/workspace"],
