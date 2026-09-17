@@ -4,6 +4,11 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-09-17
+
+### Added
+- Added governed account lifecycle controls: an account self-service page, administrator account creation with a generated temporary password that forces a change at first sign-in and is consumed on first use, initiator-aware deactivation so a self-deactivated account revives at sign-in while an administrator-deactivated account stays down until an explicit admin reactivation, and terminal removal that offboards access, clears credentials, releases the email for a fresh account, and preserves the identity and forensic history (PR #67).
+
 ## [0.6.0] - 2026-08-20
 
 ### Added
